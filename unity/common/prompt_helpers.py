@@ -2,8 +2,12 @@ from typing import Callable, Dict, Any, List, Optional, Sequence, Tuple, Type, U
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+from time import perf_counter
 
 from pydantic import BaseModel
+
+from unity.common.startup_timing import log_startup_timing
+from unity.logger import LOGGER
 
 __all__ = [
     "clarification_guidance",
@@ -118,12 +122,25 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     import unify as _unify
     from unity.session_details import SESSION_DETAILS
 
+    _timing_t0 = perf_counter()
+    _step_t0 = _timing_t0
+
+    def _mark_step() -> float:
+        nonlocal _step_t0
+        step_now = perf_counter()
+        elapsed_ms = (step_now - _step_t0) * 1000
+        _step_t0 = step_now
+        return elapsed_ms
+
     _contacts_ctx = (
         f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
     )
+    _context_ms = _mark_step()
 
     # Default to UTC if assistant row/field is unavailable
     tz_name: str = "UTC"
+    rows_count = 0
+    error_type = ""
     try:
         rows = _unify.get_logs(
             context=_contacts_ctx,
@@ -131,32 +148,66 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
             limit=1,
             from_fields=["timezone"],
         )
+        _get_logs_ms = _mark_step()
+        rows_count = len(rows or [])
         if rows:
             val = rows[0].entries.get("timezone")
             if isinstance(val, str) and val.strip():
                 tz_name = val.strip()
     except Exception:
+        _get_logs_ms = _mark_step()
+        error_type = "get_logs"
         # Best-effort only; fall back to UTC
         tz_name = "UTC"
+    _extract_ms = _mark_step()
 
     # Convert UTC now to the target timezone
     utc_now = datetime.now(dt_timezone.utc)
+    _utc_now_ms = _mark_step()
+    zone_error = ""
     try:
         tz_info = ZoneInfo(tz_name)
         local_dt = utc_now.astimezone(tz_info)
         label = tz_name
     except Exception:
+        zone_error = "zoneinfo"
         # Invalid timezone identifier; fall back to UTC
         local_dt = utc_now
         label = "UTC"
+    _zone_convert_ms = _mark_step()
 
     if not as_string:
-        return local_dt
+        result = local_dt
+    elif time_only:
+        result = local_dt.strftime("%I:%M %p ") + label
+    else:
+        result = local_dt.strftime("%A, %B %d, %Y at %I:%M %p ") + label
+    _format_ms = _mark_step()
 
-    if time_only:
-        return local_dt.strftime("%I:%M %p ") + label
+    log_startup_timing(
+        LOGGER,
+        (
+            "⏱️ [StartupTiming] timezone.prompt_now.detail "
+            "total=%.0fms context=%.0fms get_logs=%.0fms extract=%.0fms "
+            "utc_now=%.0fms zone_convert=%.0fms format=%.0fms "
+            "rows=%d tz=%s label=%s as_string=%s time_only=%s error=%s"
+        ),
+        (perf_counter() - _timing_t0) * 1000,
+        _context_ms,
+        _get_logs_ms,
+        _extract_ms,
+        _utc_now_ms,
+        _zone_convert_ms,
+        _format_ms,
+        rows_count,
+        tz_name,
+        label,
+        as_string,
+        time_only,
+        error_type or zone_error or "",
+    )
 
-    return local_dt.strftime("%A, %B %d, %Y at %I:%M %p ") + label
+    return result
 
 
 def tool_name(tools: Dict[str, Callable], needle: str) -> str | None:

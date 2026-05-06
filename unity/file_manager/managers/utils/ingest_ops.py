@@ -213,6 +213,8 @@ def ingest_content_batch(
     add_to_all_context: bool = False,
     execution: Optional[IngestExecutionConfig] = None,
     on_task_complete=None,
+    skip_rows: int = 0,
+    expected_total_rows: Optional[int] = None,
 ) -> IngestResult:
     """Ingest content rows into a context via ``DataManager.ingest()``.
 
@@ -244,12 +246,23 @@ def ingest_content_batch(
         Whether to add rows to cross-assistant aggregation contexts.
     execution : IngestExecutionConfig | None
         Pipeline execution settings.
+    skip_rows : int
+        Number of already-committed source rows when resuming a checkpointed
+        file-ingest task.
+    expected_total_rows : int | None
+        Parser-declared total rows for validation when replaying streamed
+        artifacts.
 
     Returns
     -------
     IngestResult
         Aggregated ingest outcome from DM.
     """
+    if expected_total_rows is not None and skip_rows + len(rows) != expected_total_rows:
+        raise ValueError(
+            f"Content rows contain {skip_rows + len(rows)} rows for "
+            f"{context}, expected {expected_total_rows}",
+        )
     if not rows:
         return IngestResult(context=context)
 
@@ -273,6 +286,8 @@ def ingest_content_batch(
             add_to_all_context=add_to_all_context,
             execution=execution,
             on_task_complete=on_task_complete,
+            skip_rows=skip_rows,
+            expected_total_rows=expected_total_rows,
         )
     except Exception as e:
         logger.error(f"Failed to ingest content batch: {e}")
@@ -299,6 +314,8 @@ def ingest_table_batch(
     infer_untyped_fields: bool = False,
     add_to_all_context: bool = False,
     execution: Optional[IngestExecutionConfig] = None,
+    skip_rows: int = 0,
+    expected_total_rows: Optional[int] = None,
 ) -> IngestResult:
     """Ingest table rows into a context via ``DataManager.ingest()``.
 
@@ -308,6 +325,13 @@ def ingest_table_batch(
         type coercion natively.  This thin wrapper remains only for any
         third-party or deploy scripts that have not yet migrated.
     """
+    if skip_rows:
+        rows = rows[skip_rows:]
+    if expected_total_rows is not None and skip_rows + len(rows) != expected_total_rows:
+        raise ValueError(
+            f"Table rows contain {skip_rows + len(rows)} rows for "
+            f"{context}, expected {expected_total_rows}",
+        )
     if not rows:
         return IngestResult(context=context)
 
@@ -325,6 +349,8 @@ def ingest_table_batch(
             infer_untyped_fields=infer_untyped_fields,
             add_to_all_context=add_to_all_context,
             execution=execution,
+            skip_rows=skip_rows,
+            expected_total_rows=expected_total_rows,
         )
     except Exception as e:
         logger.error(f"Failed to ingest table batch: {e}")

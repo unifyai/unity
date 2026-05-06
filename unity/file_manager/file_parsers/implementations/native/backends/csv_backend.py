@@ -125,24 +125,30 @@ class NativeCsvBackend(BaseFileParserBackend):
                 step.counters["sample_bytes"] = dialect_info["sample_bytes"]
 
             with traced_step(trace, name="scan_csv_schema") as step:
-                lazy_frame = pl.scan_csv(
-                    str(path),
-                    separator=dialect_info["delimiter"],
-                    quote_char=dialect_info["quotechar"],
+                lazy_frame = _scan_csv(path, dialect_info)
+                row_count = int(lazy_frame.select(pl.len()).collect().item())
+                canonical_count = _count_csv_records(
+                    path,
+                    delimiter=str(dialect_info["delimiter"]),
                     has_header=bool(dialect_info["has_header"]),
-                    encoding="utf8-lossy",
-                    infer_schema_length=10_000,
-                    try_parse_dates=True,
-                    null_values=_COMMON_NULL_SENTINELS,
-                    truncate_ragged_lines=True,
-                    ignore_errors=True,
                 )
+                if row_count != canonical_count:
+                    lazy_frame, row_count, quotechar = _repair_csv_scan_count(
+                        path,
+                        dialect_info,
+                        canonical_count,
+                    )
+                    dialect_info["quotechar"] = quotechar
+                    trace.warnings.append(
+                        "CSV lazy scan count differed from csv.reader count; "
+                        f"using quotechar={quotechar!r}",
+                    )
                 schema = lazy_frame.collect_schema()
                 columns = [str(name) for name in schema.names()]
                 step.counters["columns"] = len(columns)
+                step.counters["rows"] = row_count
 
             with traced_step(trace, name="scan_csv_profile") as step:
-                row_count = int(lazy_frame.select(pl.len()).collect().item())
                 sample_limit = max(int(FILE_PARSER_SETTINGS.TABULAR_SAMPLE_ROWS), 0)
                 sample_rows = (
                     _normalize_row_dicts(
@@ -244,6 +250,52 @@ def _detect_csv_dialect(path: Path) -> dict[str, object]:
         "has_header": has_header,
         "sample_bytes": len(sample_bytes),
     }
+
+
+def _scan_csv(path: Path, dialect_info: dict[str, object]) -> pl.LazyFrame:
+    return pl.scan_csv(
+        str(path),
+        separator=str(dialect_info["delimiter"]),
+        quote_char=dialect_info["quotechar"],  # type: ignore[arg-type]
+        has_header=bool(dialect_info["has_header"]),
+        encoding="utf8-lossy",
+        infer_schema_length=10_000,
+        try_parse_dates=True,
+        null_values=_COMMON_NULL_SENTINELS,
+        truncate_ragged_lines=True,
+        ignore_errors=True,
+    )
+
+
+def _count_csv_records(
+    path: Path,
+    *,
+    delimiter: str,
+    has_header: bool,
+) -> int:
+    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as fh:
+        reader = csv.reader(fh, delimiter=delimiter, quotechar='"')
+        count = sum(1 for row in reader if row)
+    return max(count - 1, 0) if has_header and count else count
+
+
+def _repair_csv_scan_count(
+    path: Path,
+    dialect_info: dict[str, object],
+    expected_count: int,
+) -> tuple[pl.LazyFrame, int, str]:
+    candidates = ['"']
+    for quotechar in candidates:
+        candidate_info = dict(dialect_info)
+        candidate_info["quotechar"] = quotechar
+        candidate = _scan_csv(path, candidate_info)
+        count = int(candidate.select(pl.len()).collect().item())
+        if count == expected_count:
+            return candidate, count, quotechar
+    raise ValueError(
+        f"CSV row-count mismatch for {path}: polars={dialect_info['quotechar']!r} "
+        f"does not match csv.reader count {expected_count}",
+    )
 
 
 def _normalize_row_dicts(rows: list[dict[str, object]]) -> list[dict[str, object]]:

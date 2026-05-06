@@ -11,6 +11,7 @@ Each test gets a fresh, isolated Unify context that is cleaned up after the test
 from __future__ import annotations
 
 import pytest
+from unify.utils.http import RequestError
 
 from unity.data_manager.data_manager import DataManager
 from unity.data_manager.types import TableDescription
@@ -375,7 +376,7 @@ def test_filter_return_ids_only():
 
 @_handle_project
 def test_insert_with_unique_keys():
-    """insert_rows into a table with unique_keys should upsert server-side."""
+    """insert_rows into a table with unique_keys should reject duplicates."""
     dm = _fresh_dm()
 
     path = dm.create_table(
@@ -385,11 +386,12 @@ def test_insert_with_unique_keys():
     )
 
     dm.insert_rows(path, [{"sku": "A1", "price": 10.0}])
-    dm.insert_rows(path, [{"sku": "A1", "price": 15.0}])
+    with pytest.raises(RequestError, match="Duplicate composite key"):
+        dm.insert_rows(path, [{"sku": "A1", "price": 15.0}])
 
     rows = dm.filter(path)
     assert len(rows) == 1
-    assert rows[0]["price"] == 15.0
+    assert rows[0]["price"] == 10.0
 
 
 @_handle_project

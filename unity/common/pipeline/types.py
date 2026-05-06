@@ -269,6 +269,8 @@ class IngestCheckpoint(BaseModel):
     chunks_committed: int = 0
     rows_committed: int = 0
     last_updated: str = ""
+    attempt_id: str = ""
+    lease_generation: int | None = None
 
 
 CONTENT_CHECKPOINT_ID = "__content__"
@@ -318,6 +320,7 @@ class IngestRequested(BaseModel):
     job_id: str
     dispatch_id: str = ""
     manifest_key: str = ""
+    parse_outbox_key: str = ""
     target_context: str = ""
     batch_size: int = 500
     attachment_callback: Optional[AttachmentCallback] = None

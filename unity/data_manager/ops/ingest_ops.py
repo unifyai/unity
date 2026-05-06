@@ -28,7 +28,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Literal, Optional, TYPE_CHECKING
 
 import unify as _unify
 
@@ -257,6 +257,8 @@ def _make_insert_chunk_func(
     add_to_all_context: bool = False,
     ids_store: Optional[_InsertedIdsStore] = None,
     task_id: Optional[str] = None,
+    before_insert_chunk: Optional[Callable[..., None]] = None,
+    ignore_duplicate_composite_key_errors: bool = False,
 ):
     """Return a zero-arg callable that inserts a single chunk of rows.
 
@@ -267,10 +269,13 @@ def _make_insert_chunk_func(
     """
 
     def _insert():
+        if before_insert_chunk is not None:
+            before_insert_chunk(task_id=task_id, context=context, chunk=chunk)
         log_ids = insert_rows_impl(
             context,
             chunk,
             add_to_all_context=add_to_all_context,
+            ignore_duplicate_composite_key_errors=ignore_duplicate_composite_key_errors,
         )
         if ids_store is not None and task_id is not None:
             ids_store.put(task_id, log_ids)
@@ -380,6 +385,8 @@ def _build_ingest_graph(
     total_rows: int = 0,
     insert_parallelism: Literal["auto", "serial", "parallel"] = "auto",
     embedding_batch_size: int = 1000,
+    before_insert_chunk: Optional[Callable[..., None]] = None,
+    ignore_duplicate_composite_key_errors: bool = False,
 ) -> TaskGraph:
     """Build a :class:`TaskGraph` for a full ingest operation.
 
@@ -438,6 +445,10 @@ def _build_ingest_graph(
                     add_to_all_context=add_to_all_context,
                     ids_store=ids_store,
                     task_id=task_id,
+                    before_insert_chunk=before_insert_chunk,
+                    ignore_duplicate_composite_key_errors=(
+                        ignore_duplicate_composite_key_errors
+                    ),
                 ),
                 dependencies={prev_insert_id} if serialize_inserts else {create_id},
                 metadata={
@@ -577,6 +588,10 @@ def run_ingest(
     coerce_types: bool = True,
     storage_client=None,
     skip_rows: int = 0,
+    expected_total_rows: int | None = None,
+    private_ingest_key_column: str = "",
+    private_ingest_key_prefix: str = "",
+    before_insert_chunk: Optional[Callable[..., None]] = None,
 ) -> IngestResult:
     """Execute a full ingest pipeline: create table, insert rows, optionally embed.
 
@@ -635,6 +650,10 @@ def run_ingest(
             coerce_types=coerce_types,
             storage_client=storage_client,
             skip_rows=skip_rows,
+            expected_total_rows=expected_total_rows,
+            private_ingest_key_column=private_ingest_key_column,
+            private_ingest_key_prefix=private_ingest_key_prefix,
+            before_insert_chunk=before_insert_chunk,
         )
 
     return _run_ingest_materialised(
@@ -654,6 +673,11 @@ def run_ingest(
         post_ingest=post_ingest,
         on_task_complete=on_task_complete,
         coerce_types=coerce_types,
+        before_insert_chunk=before_insert_chunk,
+        skip_rows=skip_rows,
+        expected_total_rows=expected_total_rows,
+        private_ingest_key_column=private_ingest_key_column,
+        private_ingest_key_prefix=private_ingest_key_prefix,
     )
 
 
@@ -680,8 +704,25 @@ def _run_ingest_materialised(
     post_ingest: Optional[PostIngestConfig] = None,
     on_task_complete=None,
     coerce_types: bool = True,
+    before_insert_chunk: Optional[Callable[..., None]] = None,
+    skip_rows: int = 0,
+    expected_total_rows: int | None = None,
+    private_ingest_key_column: str = "",
+    private_ingest_key_prefix: str = "",
 ) -> IngestResult:
     """Ingest from a fully materialised row list (original code path)."""
+    if expected_total_rows is not None and skip_rows + len(rows) != expected_total_rows:
+        raise ValueError(
+            f"Materialised rows contain {skip_rows + len(rows)} rows for "
+            f"{context}, expected {expected_total_rows}",
+        )
+    if private_ingest_key_column:
+        fields = dict(fields or {})
+        fields.setdefault(private_ingest_key_column, "str")
+        prefix = private_ingest_key_prefix or context
+        for offset, row in enumerate(rows):
+            row[private_ingest_key_column] = f"{prefix}:{skip_rows + offset}"
+
     if not rows:
         return IngestResult(context=context)
 
@@ -760,6 +801,8 @@ def _run_ingest_materialised(
         total_rows=len(rows),
         insert_parallelism=exec_cfg.insert_parallelism,
         embedding_batch_size=exec_cfg.embedding_batch_size,
+        before_insert_chunk=before_insert_chunk,
+        ignore_duplicate_composite_key_errors=bool(private_ingest_key_column),
     )
 
     executor = PipelineExecutor(config=pipeline_cfg, on_task_complete=on_task_complete)
@@ -805,6 +848,10 @@ def _run_ingest_streaming(
     coerce_types: bool = True,
     storage_client=None,
     skip_rows: int = 0,
+    expected_total_rows: int | None = None,
+    private_ingest_key_column: str = "",
+    private_ingest_key_prefix: str = "",
+    before_insert_chunk: Optional[Callable[..., None]] = None,
 ) -> IngestResult:
     """Ingest from a typed streaming handle in bounded-memory chunks.
 
@@ -825,6 +872,12 @@ def _run_ingest_streaming(
     )
     from unity.common.pipeline.row_streaming import iter_table_input_rows
 
+    if expected_total_rows is not None and skip_rows > expected_total_rows:
+        raise ValueError(
+            f"Checkpoint skip_rows={skip_rows} exceeds expected_total_rows="
+            f"{expected_total_rows} for {context}",
+        )
+
     row_iter = iter_table_input_rows(
         handle,
         storage_client=storage_client,
@@ -838,6 +891,11 @@ def _run_ingest_streaming(
     )
 
     if not sample:
+        if expected_total_rows is not None and skip_rows != expected_total_rows:
+            raise ValueError(
+                f"Streaming handle produced {skip_rows} rows for {context}, "
+                f"expected {expected_total_rows}",
+            )
         return IngestResult(context=context)
 
     if coerce_types:
@@ -849,6 +907,9 @@ def _run_ingest_streaming(
             type_map.sample_size,
         )
         fields = _merge_prescan_fields(fields, type_map.column_types)
+    if private_ingest_key_column:
+        fields = dict(fields or {})
+        fields.setdefault(private_ingest_key_column, "str")
 
     # Phase 2: stream batches -- sample rows first, then remainder
     all_rows = itertools.chain(sample, row_iter)
@@ -867,6 +928,21 @@ def _run_ingest_streaming(
     aggregate_coercion: Optional[Dict[str, Any]] = None
 
     for batch in _iter_chunks(all_rows, chunk_size):
+        if (
+            expected_total_rows is not None
+            and skip_rows + total_rows_seen + len(batch) > expected_total_rows
+        ):
+            raise ValueError(
+                f"Streaming handle produced more rows than declared for {context}: "
+                f"seen={skip_rows + total_rows_seen + len(batch)} "
+                f"expected={expected_total_rows}",
+            )
+        if private_ingest_key_column:
+            prefix = private_ingest_key_prefix or context
+            for offset, row in enumerate(batch):
+                source_row_index = skip_rows + total_rows_seen + offset
+                row[private_ingest_key_column] = f"{prefix}:{source_row_index}"
+
         if coerce_types and type_map is not None:
             batch, batch_stats = coerce_batch(batch, type_map)
             _inject_explicit_types(batch, type_map.column_types)
@@ -900,6 +976,8 @@ def _run_ingest_streaming(
             total_rows=total_rows_seen,
             insert_parallelism=exec_cfg.insert_parallelism,
             embedding_batch_size=exec_cfg.embedding_batch_size,
+            before_insert_chunk=before_insert_chunk,
+            ignore_duplicate_composite_key_errors=bool(private_ingest_key_column),
         )
 
         executor = PipelineExecutor(
@@ -918,9 +996,18 @@ def _run_ingest_streaming(
 
         # Only pass description/fields for the first chunk (table creation is idempotent)
         description = None
+        fields = None
 
     duration_ms = (time.perf_counter() - overall_start) * 1000
     result.duration_ms = duration_ms
+    if (
+        expected_total_rows is not None
+        and skip_rows + total_rows_seen != expected_total_rows
+    ):
+        raise ValueError(
+            f"Streaming handle produced {skip_rows + total_rows_seen} rows for "
+            f"{context}, expected {expected_total_rows}",
+        )
 
     if aggregate_coercion is not None:
         result.coercion_stats = aggregate_coercion

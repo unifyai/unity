@@ -168,6 +168,41 @@ def test_csv_dialect_populated_on_extracted_table_and_reused(tmp_path: Path):
 
 
 @_handle_project
+def test_csv_parser_repairs_bad_single_quote_row_count(tmp_path: Path):
+    row_count = int(FILE_PARSER_SETTINGS.TABULAR_INLINE_ROW_LIMIT) + 20
+    csv_path = tmp_path / "single_quote_misdetect.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as fh:
+        fh.write("ID,Notes\n")
+        for index in range(row_count):
+            fh.write(f"{index},Resident's repair note {index}\n")
+
+    forced_bad_dialect = {
+        "delimiter": ",",
+        "quotechar": "'",
+        "encoding": "utf-8",
+        "has_header": True,
+        "sample_bytes": csv_path.stat().st_size,
+    }
+    with patch(
+        "unity.file_manager.file_parsers.implementations.native.backends."
+        "csv_backend._detect_csv_dialect",
+        return_value=forced_bad_dialect,
+    ):
+        result = FileParser().parse(
+            FileParseRequest(
+                logical_path=str(csv_path),
+                source_local_path=str(csv_path),
+            ),
+        )
+
+    assert result.status == "success"
+    table = result.tables[0]
+    assert table.num_rows == row_count
+    assert table.csv_dialect is not None
+    assert table.csv_dialect.quotechar == '"'
+
+
+@_handle_project
 def test_large_xlsx_count_only_tail_produces_correct_num_rows(
     tmp_path: Path,
     write_minimal_xlsx,

@@ -477,8 +477,8 @@ class PipelineExecutor:
             try:
                 self._on_task_complete(task, result)
             except Exception:
-                logger.debug(
-                    "on_task_complete callback failed for %s",
+                logger.exception(
+                    "on_task_complete callback failed for %s; failing pipeline",
                     task.id,
-                    exc_info=True,
                 )
+                raise

@@ -54,12 +54,16 @@ class WorkQueueMessage(BaseModel):
     published_at: str = Field(default_factory=utc_now_iso)
     available_at: str = Field(default_factory=utc_now_iso)
     last_error: str | None = None
+    pubsub_message_id: str = ""
+    source_subscription: str = ""
+    delivery_attempt: int | None = None
 
 
 class ReceivedWorkItem(WorkQueueMessage):
     """Leased queue message returned to a worker."""
 
     receipt_id: str
+    raw_payload: str = ""
     received_at: str = Field(default_factory=utc_now_iso)
     state: QueueMessageState = "leased"
 
