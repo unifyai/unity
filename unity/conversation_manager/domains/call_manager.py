@@ -60,6 +60,7 @@ class CallConfig:
     voice_id: str
     assistant_name: str = ""
     job_name: str = ""
+    is_coordinator: bool = False
 
 
 _BASE_FORWARD_CHANNELS = [
@@ -119,6 +120,7 @@ class LivekitCallManager:
         self.voice_provider = config.voice_provider
         self.voice_id = config.voice_id
         self.assistant_name = config.assistant_name
+        self.is_coordinator = config.is_coordinator
         if config.job_name:
             self.job_name = config.job_name
 
@@ -210,6 +212,7 @@ class LivekitCallManager:
             "assistant_id": self.assistant_id,
             "user_id": self.user_id,
             "assistant_name": self.assistant_name,
+            "is_coordinator": self.is_coordinator,
             "ipc_socket_path": socket_path or "",
         }
         if extra_metadata:

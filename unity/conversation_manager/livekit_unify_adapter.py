@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from collections import deque
 import uuid
-from typing import Any
+from typing import Any, TypeAlias
 
 from livekit.agents import llm
-from livekit.agents.llm import ChatChunk, ChoiceDelta, Tool
+from livekit.agents.llm import ChatChunk, ChoiceDelta
 from livekit.agents.types import (
     DEFAULT_API_CONNECT_OPTIONS,
     NOT_GIVEN,
@@ -24,6 +24,8 @@ from unity.common.llm_client import new_llm_client
 from unity.conversation_manager.tracing import monotonic_ms, now_utc_iso, trace_kv
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
+
+Tool: TypeAlias = llm.FunctionTool | llm.RawFunctionTool
 
 
 class UnifyLLM(llm.LLM):
