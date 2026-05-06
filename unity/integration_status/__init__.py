@@ -208,29 +208,84 @@ def _row_guidance_titles(row: dict) -> list[str]:
     return list(json.loads(row.get("guidance_titles_json") or "[]"))
 
 
+def _read_local_secret_keyset() -> set[str]:
+    """Names of non-empty secrets in the assistant's local Secrets context.
+
+    The local Secrets context is the source of truth for both
+    Orchestra-mirrored OAuth tokens (Google / MS365, written by
+    ``SecretManager._sync_assistant_secrets``) AND directly-pasted
+    integration tokens (HubSpot, EmploymentHero, etc., written by Console).
+
+    Best-effort: returns an empty set if the SecretManager isn't available
+    or the context can't be read.  Never raises.
+    """
+    try:
+        import unify
+        from unity.manager_registry import ManagerRegistry
+
+        sm = ManagerRegistry.get_secret_manager()
+        rows = unify.get_logs(context=sm._ctx)
+    except Exception:
+        return set()
+
+    keyset: set[str] = set()
+    for lg in rows or []:
+        try:
+            entries = lg.entries or {}
+            nm = entries.get("name")
+            val = entries.get("value")
+            if isinstance(nm, str) and nm and isinstance(val, str) and val:
+                keyset.add(nm)
+        except Exception:
+            continue
+    return keyset
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
-def recompute_enablement(*, assistant_id: int, secrets: dict[str, Any]) -> None:
-    """Recompute the enabled set + setup-completeness from the secrets dict.
+def recompute_enablement(
+    *,
+    assistant_id: int,
+    secrets: dict[str, Any] | None = None,
+) -> None:
+    """Recompute the enabled set + setup-completeness for this assistant.
 
-    Called from ``SecretManager._sync_assistant_secrets`` after the dict
-    lands.  Idempotent.  Cheap (~10ms on first call when registry needs
-    fetching, ~1ms thereafter — pure dict ops over the cached registry).
+    Reads the keyset from the assistant's local Secrets context (the
+    SecretManager-managed unify context), which is the single source of
+    truth for both Orchestra-mirrored OAuth tokens AND Console-pasted
+    integration tokens.
 
-    Treats values as "present" iff ``isinstance(v, str) and v != ""``.  This
-    matches how Orchestra returns secrets: pasting an empty string in the
-    Console produces a ``""`` entry that we should treat as not-present.
+    The optional ``secrets`` argument is unioned in for the edge case
+    where a freshly-fetched Orchestra payload hasn't yet been mirrored to
+    the local context — used when called inline from
+    ``_sync_assistant_secrets`` between the fetch and the mirror.  It is
+    purely additive: integration keys that live only in the local context
+    are never excluded just because they're absent from ``secrets``.
+
+    Treats values as "present" iff ``isinstance(v, str) and v != ""``.
+    Idempotent.  Cheap (~10ms on first call when registry needs fetching,
+    ~1ms thereafter — pure dict ops over the cached registry).
     """
     cache = _session_cache()
-    keyset = {k for k, v in (secrets or {}).items() if isinstance(v, str) and v}
+
+    local_keys = _read_local_secret_keyset()
+    orch_supplement = {
+        k for k, v in (secrets or {}).items() if isinstance(v, str) and v
+    }
+    keyset = local_keys | orch_supplement
     cache["secret_names"] = keyset
     logger.info(
-        "[integrations] recompute_enablement: assistant_id=%s keyset_size=%d "
+        "[integrations] recompute_enablement: assistant_id=%s "
+        "local_keyset=%d (%s) orchestra_supplement=%d (%s) final_keyset=%d "
         "loaded_so_far=%s",
         assistant_id,
+        len(local_keys),
+        sorted(local_keys),
+        len(orch_supplement),
+        sorted(orch_supplement - local_keys),
         len(keyset),
         sorted(cache.get("loaded_slugs", set())),
     )

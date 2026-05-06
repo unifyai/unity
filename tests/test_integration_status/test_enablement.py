@@ -49,10 +49,18 @@ def _reset_cache(monkeypatch):
 
     Stubs ``schedule_hot_load`` so ``recompute_enablement`` doesn't spawn
     daemon threads that would race with the test's cache-reset teardown.
-    Tests that specifically care about hot-load scheduling can re-stub via
-    monkeypatch + assert on the calls."""
+
+    Stubs ``_read_local_secret_keyset`` to return an empty set by default
+    so tests that pass ``secrets={...}`` to ``recompute_enablement`` see
+    that argument as the sole keyset source (production reads from the
+    local Secrets context too, but in unit tests that context isn't
+    provisioned).  Individual tests can override via monkeypatch.
+
+    Tests that specifically care about hot-load scheduling or local-context
+    keys can re-stub via monkeypatch + assert on the calls."""
     IS.reset_session_cache()
     monkeypatch.setattr(IS, "schedule_hot_load", lambda slug: None)
+    monkeypatch.setattr(IS, "_read_local_secret_keyset", lambda: set())
     yield
     IS.reset_session_cache()
 

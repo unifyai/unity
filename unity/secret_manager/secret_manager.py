@@ -398,16 +398,20 @@ class SecretManager(BaseSecretManager):
             except Exception:
                 continue
 
-        # Recompute integration enablement now that the secret keyset has
-        # changed.  Best-effort; never blocks the secret-sync return.  This
-        # makes a token added mid-session take effect on the next message
-        # without a session restart.  See ``unity.integration_status``.
+        # Recompute integration enablement.  ``recompute_enablement`` reads
+        # the keyset from the local Secrets context (the source of truth for
+        # both Orchestra-mirrored OAuth tokens — just written above — and
+        # Console-pasted integration tokens that never touch Orchestra).
+        # We still pass ``secrets_dict`` as a supplemental union so that any
+        # Google/MS keys present in the Orchestra payload but not yet
+        # mirrored (race window between fetch and write) are not missed.
+        # Best-effort; never blocks the secret-sync return.
         try:
             from unity.integration_status import recompute_enablement
 
             logger.info(
                 "[integrations] _sync_assistant_secrets: calling "
-                "recompute_enablement(agent_id=%s, secret_keys=%d)",
+                "recompute_enablement(agent_id=%s, orchestra_supplement_keys=%d)",
                 agent_id,
                 len(secrets_dict),
             )

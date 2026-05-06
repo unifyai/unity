@@ -71,9 +71,16 @@ def _eh_discovery_row() -> dict:
 
 @pytest.fixture(autouse=True)
 def _isolate_state(monkeypatch):
-    """Clear cache + discovery between tests so they don't leak state."""
+    """Clear cache + discovery between tests so they don't leak state.
+
+    Also stubs ``_read_local_secret_keyset`` to return an empty set by
+    default so tests that drive ``recompute_enablement`` via ``secrets={}``
+    don't accidentally pull from a real SecretManager (which doesn't exist
+    in unit-test scope).  Tests that care about the local-context path
+    re-stub explicitly."""
     IS.reset_session_cache()
     IS_DISCOVERY.reset_discovery_cache()
+    monkeypatch.setattr(IS, "_read_local_secret_keyset", lambda: set())
     yield
     IS.reset_session_cache()
     IS_DISCOVERY.reset_discovery_cache()
@@ -149,6 +156,69 @@ def test_recompute_does_not_schedule_when_no_required_present(monkeypatch):
 
     assert IS.get_enabled_integrations() == []
     assert spawned == []
+
+
+def test_recompute_enables_integration_from_local_secrets_with_empty_orchestra(
+    monkeypatch,
+):
+    """Regression test for the staging bug diagnosed 2026-05-06.
+
+    Integration tokens (HubSpot etc.) are written by Console directly to
+    the assistant's local Secrets context — they never appear in the
+    Orchestra ``assistant.secrets`` payload.  Before the fix,
+    ``recompute_enablement`` only saw the Orchestra payload, so HubSpot
+    could never be enabled even when the token was actually present in
+    the local context.  This test pins the corrected behaviour: the local
+    keyset alone is sufficient to drive enablement + hot-load scheduling,
+    even when the Orchestra supplement is empty.
+    """
+    _patch_discovery(monkeypatch, [_hubspot_discovery_row()])
+    monkeypatch.setattr(IS, "_read_persisted_registry", lambda: [])
+
+    # Mimic Console having written HUBSPOT_PRIVATE_APP_TOKEN to the local
+    # Secrets context.  Orchestra returns nothing for this assistant.
+    monkeypatch.setattr(
+        IS,
+        "_read_local_secret_keyset",
+        lambda: {"HUBSPOT_PRIVATE_APP_TOKEN"},
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(IS, "schedule_hot_load", lambda slug: spawned.append(slug))
+
+    IS.recompute_enablement(assistant_id=629, secrets={})
+
+    assert IS.get_enabled_integrations() == ["hubspot"]
+    assert spawned == ["hubspot"]
+
+
+def test_recompute_unions_local_keyset_with_orchestra_supplement(monkeypatch):
+    """Both sources contribute.  The local context holds Console-pasted
+    tokens (HubSpot here); the Orchestra supplement carries a key not yet
+    mirrored — both should drive enablement of their respective packages
+    in a single recompute call."""
+    _patch_discovery(monkeypatch, [_hubspot_discovery_row(), _eh_discovery_row()])
+    monkeypatch.setattr(IS, "_read_persisted_registry", lambda: [])
+
+    # Local context: only HubSpot's token.
+    monkeypatch.setattr(
+        IS,
+        "_read_local_secret_keyset",
+        lambda: {"HUBSPOT_PRIVATE_APP_TOKEN"},
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(IS, "schedule_hot_load", lambda slug: spawned.append(slug))
+
+    # Orchestra supplement: EH's two required keys (race window before mirror).
+    IS.recompute_enablement(
+        assistant_id=629,
+        secrets={
+            "EMPLOYMENTHERO_OAUTH_CLIENT_ID": "id",
+            "EMPLOYMENTHERO_OAUTH_CLIENT_SECRET": "secret",
+        },
+    )
+
+    assert sorted(IS.get_enabled_integrations()) == ["employment_hero", "hubspot"]
+    assert sorted(spawned) == ["employment_hero", "hubspot"]
 
 
 def test_recompute_does_not_re_schedule_when_already_loaded(monkeypatch):
