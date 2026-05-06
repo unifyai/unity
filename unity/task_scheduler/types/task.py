@@ -1,7 +1,9 @@
 """Task model: queue membership, scheduling/triggering, priority, and metadata."""
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
 from typing import Optional, List
+
+from unity.common.authorship import AuthoredRow
 
 from .priority import Priority
 from .status import Status
@@ -12,7 +14,7 @@ from .activated_by import ActivatedBy
 from datetime import datetime
 
 
-class TaskBase(BaseModel):
+class TaskBase(AuthoredRow):
     assistant_id: Optional[str] = Field(
         default=None,
         description="Assistant that owns execution state for this task.",

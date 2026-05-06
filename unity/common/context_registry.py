@@ -6,6 +6,7 @@ import unify
 from pydantic import BaseModel
 from unify import create_fields
 
+from unity.common.authorship import SHARED_SCOPED_TABLES, fields_with_authoring
 from unity.common.context_store import _PRIVATE_FIELDS, _create_context_with_retry
 from unity.common.state_managers import BaseStateManager
 from unity.common.tool_outcome import ToolError, ToolErrorException
@@ -19,28 +20,7 @@ PERSONAL_DESTINATION: Final[str] = "personal"
 SPACE_DESTINATION_PREFIX: Final[str] = "space:"
 INVALID_DESTINATION_ERROR: Final[str] = "invalid_destination"
 
-_SHARED_SCOPED_TABLES: Final[frozenset[str]] = frozenset(
-    {
-        "Tasks",
-        "Contacts",
-        "Secrets",
-        "Knowledge",
-        "Guidance",
-        "Functions/Compositional",
-        "Functions/Meta",
-        "Functions/Primitives",
-        "Functions/VirtualEnvs",
-        "FileRecords",
-        "Files",
-        "Data",
-        "BlackList",
-        "Dashboards/Tiles",
-        "Dashboards/Layouts",
-        "Transcripts",
-        "Exchanges",
-        "Images",
-    },
-)
+_SHARED_SCOPED_TABLES: Final[frozenset[str]] = SHARED_SCOPED_TABLES
 
 
 class TableContext(BaseModel):
@@ -198,6 +178,11 @@ class ContextRegistry:
                         f"{current_context}/{foreign_key['references']}"
                     )
                     resolved_foreign_keys.append(fk_copy)
+            context_fields = context.fields
+            if cls._is_shared_scoped(context.name):
+                context_fields = fields_with_authoring(context_fields)
+                context = context.model_copy(update={"fields": context_fields})
+
             data = {
                 "resolved_name": f"{current_context}/{context.name}",
                 "table_context": context,

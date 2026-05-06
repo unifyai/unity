@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from typing import List
-from pydantic import BaseModel, Field, field_validator, model_validator
+
+from pydantic import Field, field_validator, model_validator
+
+from unity.common.authorship import AuthoredRow
+
 from ...image_manager.types import AnnotatedImageRefs
 
 UNASSIGNED = -1
 
 
-class Guidance(BaseModel):
+class Guidance(AuthoredRow):
     guidance_id: int = Field(
         default=UNASSIGNED,
         description="Auto-incrementing unique identifier for the guidance entry",

@@ -6,10 +6,12 @@ Stores metadata about the primitives, custom venvs, and custom functions sync st
 
 from typing import Dict
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from unity.common.authorship import AuthoredRow
 
 
-class FunctionsMeta(BaseModel):
+class FunctionsMeta(AuthoredRow):
     """
     Metadata record for the Functions context.
 

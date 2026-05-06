@@ -1,9 +1,11 @@
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from unity.common.authorship import AuthoredRow
 
 
-class VirtualEnv(BaseModel):
+class VirtualEnv(AuthoredRow):
     """
     Represents a virtual environment configuration stored in the FunctionManager.
 

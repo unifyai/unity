@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import unify
 
+from unity.common.authorship import fields_with_authoring, is_shared_authored_context
+
 if TYPE_CHECKING:
     from unity.data_manager.types.table import TableDescription
 
@@ -64,6 +66,8 @@ def create_table_impl(
         auto_counting=auto_counting,
     )
 
+    if is_shared_authored_context(context):
+        fields = fields_with_authoring(fields)
     if fields:
         unify.create_fields(fields, context=context)
 

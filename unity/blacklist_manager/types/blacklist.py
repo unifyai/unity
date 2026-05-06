@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import ClassVar
 from pydantic import (
-    BaseModel,
     Field,
     model_validator,
     model_serializer,
@@ -10,12 +9,13 @@ from pydantic import (
     SerializerFunctionWrapHandler,
 )
 
+from unity.common.authorship import AuthoredRow
 from unity.conversation_manager.cm_types import Medium
 
 UNASSIGNED = -1
 
 
-class BlackList(BaseModel):
+class BlackList(AuthoredRow):
     """
     Minimal schema representing a single blacklist entry.
 

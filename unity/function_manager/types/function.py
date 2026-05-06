@@ -1,8 +1,10 @@
-from pydantic import BaseModel, Field
+from pydantic import Field
 from typing import List, Optional, Dict, Any, Literal
 
+from unity.common.authorship import AuthoredRow
 
-class Function(BaseModel):
+
+class Function(AuthoredRow):
     """
     Represents a function stored in the FunctionManager.
 

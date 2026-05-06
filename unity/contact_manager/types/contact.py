@@ -11,6 +11,8 @@ from pydantic import (
 )
 from typing import Optional, ClassVar
 
+from unity.common.authorship import AuthoredRow
+
 _log = logging.getLogger(__name__)
 
 UNICODE_NAME_RE = r"^[^\W\d_](?:[^\W\d_]|[ .'-])*$"  # ← one reusable constant
@@ -73,7 +75,7 @@ class ContactDetailsWhatsApp(ContactDetailsBase):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class Contact(BaseModel):
+class Contact(AuthoredRow):
     # Central, single source of truth for shorthand aliases (full → shorthand)
     SHORTHAND_MAP: ClassVar[dict[str, str]] = {
         "contact_id": "cid",
