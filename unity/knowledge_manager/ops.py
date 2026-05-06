@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import unify
 
+from ..common.authorship import strip_authoring_assistant_id
 from ..common.embed_utils import ensure_vector_column
 from .storage import ctx_for_table
 
@@ -108,7 +109,7 @@ def update_rows(
 
     # Pair only ids present in both the request and the backend
     matched: List[tuple[int, Dict[str, Any]]] = [
-        (id_to_log[i], updates[i])
+        (id_to_log[i], strip_authoring_assistant_id(updates[i]))
         for i in unique_ids
         if i in updates and i in id_to_log
     ]

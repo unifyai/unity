@@ -9,6 +9,7 @@ from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
 
 import unify
 from pydantic import BaseModel
+from ..common.authorship import stamp_authoring_assistant_id
 from ..common.embed_utils import ensure_vector_column
 from ..common.log_utils import log as unity_log, _inject_private_fields, _add_to_all
 from ..contact_manager.base import BaseContactManager
@@ -616,6 +617,7 @@ class TranscriptManager(BaseTranscriptManager):
                     **entries,
                     new=True,
                     mutable=True,
+                    stamp_authoring=True,
                     add_to_all_context=self._should_add_to_all_context(
                         transcripts_context,
                     ),
@@ -635,7 +637,9 @@ class TranscriptManager(BaseTranscriptManager):
             else:
                 # Async path: fire-and-forget, don't block on network I/O
                 # Inject private fields (same as sync path via unity_log)
-                entries_with_private = _inject_private_fields(entries)
+                entries_with_private = _inject_private_fields(
+                    stamp_authoring_assistant_id(entries),
+                )
                 entries_with_private["explicit_types"] = {
                     key: {"mutable": True}
                     for key in entries_with_private
@@ -826,6 +830,7 @@ class TranscriptManager(BaseTranscriptManager):
                 **state["entries"],
                 new=True,
                 mutable=True,
+                stamp_authoring=True,
                 add_to_all_context=state["add_to_all"],
             )
             state["handled"] = True
@@ -1509,6 +1514,7 @@ class TranscriptManager(BaseTranscriptManager):
                 medium="",
                 new=True,
                 mutable=True,
+                stamp_authoring=True,
                 add_to_all_context=self._should_add_to_all_context(context),
             )
 
@@ -1626,6 +1632,7 @@ class TranscriptManager(BaseTranscriptManager):
             medium=str(payload.get("medium", "")),
             new=True,
             mutable=True,
+            stamp_authoring=True,
             add_to_all_context=self._should_add_to_all_context(exchanges_context),
         )
 
@@ -1650,6 +1657,7 @@ class TranscriptManager(BaseTranscriptManager):
             **entries,
             new=True,
             mutable=True,
+            stamp_authoring=True,
             add_to_all_context=self._should_add_to_all_context(transcripts_context),
         )
 

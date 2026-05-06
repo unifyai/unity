@@ -344,6 +344,7 @@ class SecretManager(BaseSecretManager):
                         description=description,
                         new=True,
                         mutable=True,
+                        stamp_authoring=True,
                         add_to_all_context=False,
                     )
                 self._env_set(name, value)
@@ -1117,6 +1118,7 @@ class SecretManager(BaseSecretManager):
             **entries,
             new=True,
             mutable=True,
+            stamp_authoring=True,
             add_to_all_context=False,
         )
 

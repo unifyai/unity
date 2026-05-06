@@ -40,6 +40,10 @@ from typing import Any, Dict, List, Optional
 import httpx
 import unify
 
+from unity.common.authorship import (
+    AUTHORING_ASSISTANT_ID_FIELD,
+    current_authoring_assistant_id,
+)
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
@@ -214,6 +218,7 @@ def log(
     new: bool = True,
     mutable: bool = False,
     project: Optional[str] = None,
+    stamp_authoring: bool = False,
     **entries: Any,
 ) -> unify.Log:
     """
@@ -239,6 +244,8 @@ def log(
     unify.Log
         The created log object
     """
+    if stamp_authoring:
+        entries[AUTHORING_ASSISTANT_ID_FIELD] = current_authoring_assistant_id()
     entries = _inject_private_fields(entries)
     result = unify.log(
         project=project,
@@ -263,6 +270,7 @@ def create_logs(
     entries: List[Dict[str, Any]],
     add_to_all_context: bool = False,
     project: Optional[str] = None,
+    stamp_authoring: bool = False,
     **kwargs: Any,
 ) -> Any:
     """
@@ -287,7 +295,22 @@ def create_logs(
         Response from unify.create_logs. Returns a dict with log_event_ids normally,
         or a list of Log objects when batched=True.
     """
-    entries = [_inject_private_fields(e) for e in entries]
+    authoring_assistant_id = (
+        current_authoring_assistant_id() if stamp_authoring else None
+    )
+    entries = [
+        _inject_private_fields(
+            {
+                **entry,
+                **(
+                    {AUTHORING_ASSISTANT_ID_FIELD: authoring_assistant_id}
+                    if stamp_authoring
+                    else {}
+                ),
+            },
+        )
+        for entry in entries
+    ]
     result = unify.create_logs(
         project=project,
         context=context,

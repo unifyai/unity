@@ -36,6 +36,7 @@ from typing import (
 import unify
 from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
+from ..common.authorship import strip_authoring_assistant_id
 from ..common.log_utils import create_logs as unity_create_logs
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.search_utils import table_search_top_k
@@ -2153,6 +2154,7 @@ class FunctionManager(BaseFunctionManager):
                     entries=[
                         {"meta_id": 1, "primitives_hash_by_manager": hash_by_manager},
                     ],
+                    stamp_authoring=True,
                     add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
@@ -2223,6 +2225,7 @@ class FunctionManager(BaseFunctionManager):
             unity_create_logs(
                 context=self._primitives_ctx,
                 entries=entries,
+                stamp_authoring=True,
                 batched=True,
                 recompute_derived=True,
             )
@@ -2356,6 +2359,7 @@ class FunctionManager(BaseFunctionManager):
                 unity_create_logs(
                     context=self._meta_ctx,
                     entries=[{"meta_id": 1, "custom_functions_hash": hash_value}],
+                    stamp_authoring=True,
                     add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
@@ -2398,7 +2402,9 @@ class FunctionManager(BaseFunctionManager):
             raise_if_missing=True,
         )
         # Update all fields except function_id (preserve it)
-        update_data = {k: v for k, v in data.items() if k != "function_id"}
+        update_data = strip_authoring_assistant_id(
+            {k: v for k, v in data.items() if k != "function_id"},
+        )
         unify.update_logs(
             context=self._compositional_ctx,
             logs=[log.id],
@@ -2413,6 +2419,7 @@ class FunctionManager(BaseFunctionManager):
         result = unity_create_logs(
             context=self._compositional_ctx,
             entries=[insert_data],
+            stamp_authoring=True,
             add_to_all_context=self.include_in_multi_assistant_table,
             recompute_derived=True,
         )
@@ -2470,6 +2477,7 @@ class FunctionManager(BaseFunctionManager):
                 unity_create_logs(
                     context=self._meta_ctx,
                     entries=[{"meta_id": 1, "custom_venvs_hash": hash_value}],
+                    stamp_authoring=True,
                     add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
@@ -2510,7 +2518,9 @@ class FunctionManager(BaseFunctionManager):
         )
         if not logs:
             raise ValueError(f"VirtualEnv with ID {venv_id} not found")
-        update_data = {k: v for k, v in data.items() if k != "venv_id"}
+        update_data = strip_authoring_assistant_id(
+            {k: v for k, v in data.items() if k != "venv_id"},
+        )
         unify.update_logs(
             context=self._venvs_ctx,
             logs=[logs[0].id],
@@ -2524,6 +2534,7 @@ class FunctionManager(BaseFunctionManager):
         result = unity_create_logs(
             context=self._venvs_ctx,
             entries=[insert_data],
+            stamp_authoring=True,
             add_to_all_context=self.include_in_multi_assistant_table,
         )
         # unity_create_logs can return either a dict or a list of Log objects
@@ -3091,6 +3102,7 @@ class FunctionManager(BaseFunctionManager):
                 unity_create_logs(
                     context=self._compositional_ctx,
                     entries=entries_to_create,
+                    stamp_authoring=True,
                     batched=True,
                     add_to_all_context=self.include_in_multi_assistant_table,
                     recompute_derived=True,
@@ -3111,7 +3123,10 @@ class FunctionManager(BaseFunctionManager):
                 unify.update_logs(
                     logs=log_ids_to_update,
                     context=self._compositional_ctx,
-                    entries=entries_to_update,
+                    entries=[
+                        strip_authoring_assistant_id(entry)
+                        for entry in entries_to_update
+                    ],
                     overwrite=True,
                 )
             except Exception as e:
@@ -3259,6 +3274,7 @@ class FunctionManager(BaseFunctionManager):
                 unity_create_logs(
                     context=self._compositional_ctx,
                     entries=entries_to_create,
+                    stamp_authoring=True,
                     batched=True,
                     add_to_all_context=self.include_in_multi_assistant_table,
                     recompute_derived=True,
@@ -3279,7 +3295,10 @@ class FunctionManager(BaseFunctionManager):
                 unify.update_logs(
                     logs=log_ids_to_update,
                     context=self._compositional_ctx,
-                    entries=entries_to_update,
+                    entries=[
+                        strip_authoring_assistant_id(entry)
+                        for entry in entries_to_update
+                    ],
                     overwrite=True,
                 )
             except Exception as e:
@@ -4489,6 +4508,7 @@ class FunctionManager(BaseFunctionManager):
         result = unity_create_logs(
             context=self._venvs_ctx,
             entries=[{"venv": venv}],
+            stamp_authoring=True,
             add_to_all_context=self.include_in_multi_assistant_table,
         )
         # unity_create_logs can return either a dict or a list of Log objects
