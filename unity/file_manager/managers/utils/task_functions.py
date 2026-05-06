@@ -325,6 +325,7 @@ def execute_ingest_content(
             "supply exactly one.",
         )
     if content_rows_handle is not None:
+        expected_total_rows = getattr(content_rows_handle, "row_count", None)
         streamed: List[FileContentRow] = []
         for batch in iter_table_input_row_batches(
             content_rows_handle,
@@ -336,11 +337,26 @@ def execute_ingest_content(
                 streamed.append(FileContentRow.model_validate(row))
         content_rows = streamed
     elif content_rows is None:
+        expected_total_rows = None
         content_rows = []
+    else:
+        expected_total_rows = len(content_rows)
+        if skip_rows:
+            content_rows = list(content_rows)[skip_rows:]
 
     logger.debug(
         f"[TaskFn] Ingesting content for {file_path} ({len(content_rows)} rows)",
     )
+
+    if (
+        expected_total_rows is not None
+        and skip_rows + len(content_rows) != expected_total_rows
+    ):
+        raise ValueError(
+            f"Content rows for {file_path} contain "
+            f"{skip_rows + len(content_rows)} rows after resume, "
+            f"expected {expected_total_rows}",
+        )
 
     file_id = get_file_id_from_path(
         data_manager=dm,
@@ -411,6 +427,8 @@ def execute_ingest_content(
         add_to_all_context=file_manager.include_in_multi_assistant_table,
         execution=execution,
         on_task_complete=on_task_complete,
+        skip_rows=skip_rows,
+        expected_total_rows=expected_total_rows,
     )
 
     logger.debug(
@@ -533,8 +551,11 @@ def execute_ingest_table(
 
     rows: Optional[List[Dict[str, Any]]] = None
     handle: Optional[TableInputHandle] = None
+    expected_total_rows = getattr(table_input, "row_count", None)
     if isinstance(table_input, InlineRowsHandle):
         rows = list(table_input.rows)
+        if skip_rows:
+            rows = rows[skip_rows:]
     else:
         handle = table_input
 
@@ -555,6 +576,7 @@ def execute_ingest_table(
         on_task_complete=on_task_complete,
         storage_client=storage_client,
         skip_rows=skip_rows,
+        expected_total_rows=expected_total_rows,
     )
 
     logger.debug(
