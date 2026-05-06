@@ -34,7 +34,6 @@ if sys.platform == "darwin":
 from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
 from livekit.agents import ModelSettings, llm
-from livekit.agents.llm import Tool
 
 from typing import AsyncIterable
 
@@ -252,7 +251,7 @@ class Assistant(Agent):
     async def llm_node(
         self,
         chat_ctx: llm.ChatContext,
-        tools: list[Tool],
+        tools: list[llm.FunctionTool | llm.RawFunctionTool],
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
         """Wait for call connection then delegate to parent LLM."""
@@ -398,6 +397,24 @@ def _load_config_from_metadata(ctx: agents.JobContext) -> dict | None:
         return None
 
 
+def _hydrate_session_details_from_metadata(meta: dict) -> None:
+    """Apply assistant identity fields carried by LiveKit job metadata."""
+    assistant_bio = meta.get("assistant_bio", "")
+    SESSION_DETAILS.assistant.about = assistant_bio
+    SESSION_DETAILS.assistant.is_coordinator = meta.get("is_coordinator", False) is True
+    if meta.get("assistant_id"):
+        try:
+            SESSION_DETAILS.assistant.agent_id = int(meta["assistant_id"])
+        except (ValueError, TypeError):
+            pass
+    if meta.get("user_id"):
+        SESSION_DETAILS.user.id = meta["user_id"]
+    if meta.get("assistant_name"):
+        parts = meta["assistant_name"].split(None, 1)
+        SESSION_DETAILS.assistant.first_name = parts[0] if parts else ""
+        SESSION_DETAILS.assistant.surname = parts[1] if len(parts) > 1 else ""
+
+
 def _configure_child_logging() -> None:
     """Ensure Unity's LOGGER works in LiveKit's pre-warmed child processes.
 
@@ -454,18 +471,7 @@ async def entrypoint(ctx: agents.JobContext):
         assistant_bio = meta.get("assistant_bio", "")
         contact = meta.get("contact", {})
         boss = meta.get("boss", {})
-        SESSION_DETAILS.assistant.about = assistant_bio
-        if meta.get("assistant_id"):
-            try:
-                SESSION_DETAILS.assistant.agent_id = int(meta["assistant_id"])
-            except (ValueError, TypeError):
-                pass
-        if meta.get("user_id"):
-            SESSION_DETAILS.user.id = meta["user_id"]
-        if meta.get("assistant_name"):
-            parts = meta["assistant_name"].split(None, 1)
-            SESSION_DETAILS.assistant.first_name = parts[0] if parts else ""
-            SESSION_DETAILS.assistant.surname = parts[1] if len(parts) > 1 else ""
+        _hydrate_session_details_from_metadata(meta)
     else:
         _log.warning(
             "No job metadata — falling back to env-based config (IPC disabled)",
@@ -784,6 +790,7 @@ async def entrypoint(ctx: agents.JobContext):
         demo_mode=SETTINGS.DEMO_MODE,
         channel=channel,
         user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
+        is_coordinator=SESSION_DETAILS.is_coordinator,
     ).flatten()
     _log.config(f"System prompt ({len(system_prompt)} chars)")
 
