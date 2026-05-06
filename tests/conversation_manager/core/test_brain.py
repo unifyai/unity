@@ -15,25 +15,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-<<<<<<< HEAD
-=======
 from unittest.mock import patch
->>>>>>> b6e403007 (feat(coordinator): teach slow brain setup literacy)
 
 import pytest
 
 from unity.common.prompt_helpers import PromptParts
-<<<<<<< HEAD
-from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
-from unity.conversation_manager.domains import brain as brain_module
-from unity.conversation_manager.domains.brain import BrainSpec
-=======
 from unity.common.context_registry import ContextRegistry
 from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
+from unity.conversation_manager.domains import brain as brain_module
 from unity.conversation_manager.domains.brain import BrainSpec, build_brain_spec
 from unity.manager_registry import ManagerRegistry
 from unity.session_details import SESSION_DETAILS
->>>>>>> b6e403007 (feat(coordinator): teach slow brain setup literacy)
 
 # =============================================================================
 # Helpers
@@ -157,6 +149,7 @@ class TestBrainSpecStateMessage:
             ),
             mode=Mode.TEXT,
             get_active_contact=lambda: {},
+            initialized=True,
             assistant_job_title="",
             assistant_about="",
             computer_fast_path_eligible=False,
