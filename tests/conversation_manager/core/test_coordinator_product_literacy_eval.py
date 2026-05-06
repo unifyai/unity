@@ -15,6 +15,7 @@ from unity.common.single_shot import single_shot_tool_decision
 from unity.common.llm_client import new_llm_client
 from unity.conversation_manager.cm_types.mode import Mode
 from unity.conversation_manager.domains.brain import build_brain_spec
+from unity.conversation_manager.domains.coordinator_tools import CoordinatorPreseedWrite
 from unity.session_details import SESSION_DETAILS, AssistantDetails, SpaceSummary
 
 pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
@@ -49,6 +50,7 @@ _COORDINATOR_TOOLS = (
     "update_assistant_config",
     "list_assistants",
     "list_org_members",
+    "pre_seed_colleague",
     "create_space",
     "delete_space",
     "update_space",
@@ -296,10 +298,32 @@ class _RecordingTools:
 
         return list(_AUTHORIZED_HUMANS)
 
+    def pre_seed_colleague(
+        self,
+        *,
+        target_assistant_id: int,
+        writes: list[CoordinatorPreseedWrite],
+    ) -> dict[str, Any]:
+        """Seed confirmed rows into a reachable colleague's own contexts.
+
+        Args:
+            target_assistant_id: The colleague assistant that should own the rows.
+            writes: Required context batches shaped as
+                ``{"context": "Tasks", "entries": [{...}]}``. Use relative context
+                names only, such as ``Tasks``, ``Knowledge``, or ``Guidance``. Do
+                not use ``Spaces/...`` paths or shared-space destinations here.
+        """
+
+        return {
+            "target_assistant_id": target_assistant_id,
+            "writes": writes,
+        }
+
     def create_space(
         self,
         *,
         name: str,
+        description: str,
         organization_id: int | None = None,
         owner_user_id: str | None = None,
     ) -> dict[str, Any]:
@@ -308,6 +332,7 @@ class _RecordingTools:
         return {
             "space_id": 8101,
             "name": name,
+            "description": description,
             "organization_id": organization_id,
             "owner_user_id": owner_user_id,
         }
@@ -489,7 +514,13 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
             "assistants or spaces before learning enough about how the company works."
         ),
         forbidden_tools=frozenset(
-            {"act", "create_assistant", "create_space", "add_space_member"},
+            {
+                "act",
+                "create_assistant",
+                "create_space",
+                "add_space_member",
+                "pre_seed_colleague",
+            },
         ),
     ),
     CoordinatorScenario(
@@ -543,7 +574,13 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
             "`act`, or create assistants/spaces before confirmation."
         ),
         forbidden_tools=frozenset(
-            {"act", "create_assistant", "create_space", "add_space_member"},
+            {
+                "act",
+                "create_assistant",
+                "create_space",
+                "add_space_member",
+                "pre_seed_colleague",
+            },
         ),
     ),
     CoordinatorScenario(
@@ -629,7 +666,7 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
             "should not create the colleague yet because credential handling and "
             "validation details are still unresolved."
         ),
-        forbidden_tools=frozenset({"create_assistant"}),
+        forbidden_tools=frozenset({"create_assistant", "pre_seed_colleague"}),
     ),
     CoordinatorScenario(
         scenario_id="manufacturing-console-orientation",
@@ -821,6 +858,7 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
                 "remove_space_member",
                 "invite_assistant_to_space",
                 "cancel_space_invitation",
+                "pre_seed_colleague",
             },
         ),
     ),
@@ -981,6 +1019,85 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
         ),
         required_tools=frozenset(
             {"create_assistant", "create_space", "send_unify_message"},
+        ),
+    ),
+    CoordinatorScenario(
+        scenario_id="confirmed-colleague-task-setup",
+        title="Confirmed colleague task setup",
+        business_context=(
+            "A B2B SaaS founder has already chosen the existing Revenue Ops colleague "
+            "as the owner of a renewal-risk workflow."
+        ),
+        turns=(
+            DialogueTurn(
+                "user",
+                "Revenue Ops is assistant 7002. We already agreed it should own the "
+                "weekday renewal-risk summary and the guidance for checking blocked "
+                "enterprise accounts. Please put that setup on Revenue Ops now with "
+                "a `Tasks` write and a `Guidance` or `Knowledge` write.",
+                new=True,
+            ),
+        ),
+        masked_components=(
+            "The target colleague id is explicitly supplied.",
+            "No shared team space has been requested.",
+        ),
+        rubric=(
+            "The response should use `pre_seed_colleague` for assistant 7002 with a "
+            "`writes` payload that includes a `Tasks` entry for the weekday summary "
+            "and a guidance or knowledge entry for blocked enterprise accounts. It "
+            "should not create a space or route the setup through a shared "
+            '`destination="space:<id>"` because the user asked for one colleague to '
+            "own the workflow."
+        ),
+        required_tools=frozenset({"pre_seed_colleague"}),
+        forbidden_tools=frozenset(
+            {"create_space", "add_space_member", "invite_assistant_to_space"},
+        ),
+    ),
+    CoordinatorScenario(
+        scenario_id="confirmed-shared-space-setup",
+        title="Confirmed shared launch workspace setup",
+        business_context=(
+            "A product launch team wants Revenue Ops and Cold Chain Ops to share launch "
+            "guidance from an existing Launch War Room space."
+        ),
+        turns=(
+            DialogueTurn(
+                "user",
+                "Launch War Room space 3103 already has Revenue Ops assistant 7002 "
+                "and Cold Chain Ops assistant 7003 as members. Put the launch "
+                "handoff SOP in that shared space so both colleagues read the same "
+                "source.",
+                new=True,
+            ),
+        ),
+        masked_components=(
+            "A reachable shared space id and assistant ids are supplied.",
+            "The user says membership is already settled.",
+            "The user explicitly wants one shared source across colleagues.",
+        ),
+        rubric=(
+            "The response should treat this as shared-space setup, not colleague "
+            "owned setup. It should use or describe a destination-aware shared write "
+            'such as `destination="space:3103"` for the handoff SOP. It must not call '
+            "`pre_seed_colleague`, because that writes to one colleague's own root."
+        ),
+        required_tools=frozenset({"act"}),
+        forbidden_tools=frozenset(
+            {
+                "pre_seed_colleague",
+                "create_space",
+                "add_space_member",
+                "invite_assistant_to_space",
+            },
+        ),
+        space_summaries=(
+            SpaceSummary(
+                space_id=3103,
+                name="Launch War Room",
+                description="Shared launch coordination memory.",
+            ),
         ),
     ),
     CoordinatorScenario(
@@ -1161,11 +1278,14 @@ def _user_visible_text(result) -> str:
 async def _run_target_decision(
     scenario: CoordinatorScenario,
     llm_config: dict[str, str],
+    tool_source: _RecordingTools | None = None,
 ):
     brain_spec = _build_brain_spec(scenario)
     client = new_llm_client(**llm_config, origin="CoordinatorProductLiteracyEval")
     client.set_system_message(brain_spec.system_prompt.to_list())
-    tools = _RecordingTools().as_tools(is_coordinator=scenario.is_coordinator)
+    tools = (tool_source or _RecordingTools()).as_tools(
+        is_coordinator=scenario.is_coordinator,
+    )
     return await single_shot_tool_decision(
         client,
         brain_spec.state_message(),
@@ -1324,7 +1444,13 @@ async def test_coordinator_refines_requirements_across_discovery_sequence():
             "`act`, and workspace mutation tools."
         ),
         forbidden_tools=frozenset(
-            {"act", "create_assistant", "create_space", "add_space_member"},
+            {
+                "act",
+                "create_assistant",
+                "create_space",
+                "add_space_member",
+                "pre_seed_colleague",
+            },
         ),
     )
     opening_result = await _run_and_verify_scenario(
@@ -1369,7 +1495,13 @@ async def test_coordinator_refines_requirements_across_discovery_sequence():
             "turn into a broad questionnaire, use `act`, or create workspace objects."
         ),
         forbidden_tools=frozenset(
-            {"act", "create_assistant", "create_space", "add_space_member"},
+            {
+                "act",
+                "create_assistant",
+                "create_space",
+                "add_space_member",
+                "pre_seed_colleague",
+            },
         ),
     )
     await _run_and_verify_scenario(
