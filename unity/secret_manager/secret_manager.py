@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import os
 from typing import Any, Callable, Dict, List, Optional, Type
 from pydantic import BaseModel
@@ -9,6 +10,8 @@ from pydantic import BaseModel
 import unify
 from unity.common.llm_client import new_llm_client
 from unity.common.log_utils import log as unity_log
+
+logger = logging.getLogger(__name__)
 import functools
 from ..common.llm_helpers import methods_to_tool_dict
 from ..common.tool_spec import ToolSpec
@@ -181,7 +184,13 @@ class SecretManager(BaseSecretManager):
 
     # --------------------- Internal helpers (assistant secret sync) ---------- #
 
-    OAUTH_SECRET_ALLOWLIST = frozenset(
+    # Built-in OAuth allowlist for Google + Microsoft.  These are always synced
+    # because Communication writes them back to Orchestra independently of the
+    # integration registry (the OAuth callback runs before any deploy-time
+    # registry seeding has had a chance to land).  At runtime, we extend this
+    # set with everything declared by the integration registry — see
+    # ``_resolve_secret_allowlist``.
+    _BUILTIN_OAUTH_SECRET_ALLOWLIST = frozenset(
         {
             "GOOGLE_ACCESS_TOKEN",
             "GOOGLE_REFRESH_TOKEN",
@@ -193,6 +202,37 @@ class SecretManager(BaseSecretManager):
             "MICROSOFT_GRANTED_SCOPES",
         },
     )
+
+    # Backwards-compatible alias.  Existing call sites + tests that read
+    # ``OAUTH_SECRET_ALLOWLIST`` keep working; the value now reflects the
+    # built-in set only and is augmented dynamically via
+    # ``_resolve_secret_allowlist`` at sync time.
+    OAUTH_SECRET_ALLOWLIST = _BUILTIN_OAUTH_SECRET_ALLOWLIST
+
+    @classmethod
+    def _resolve_secret_allowlist(cls) -> frozenset[str]:
+        """Union the built-in OAuth allowlist with secrets declared by every
+        installed integration — both the seeded registry and packages
+        discovered on disk.
+
+        Including disk discovery is what lets a token paste in Console for
+        an integration the deployment didn't declare actually sync from
+        Orchestra.  Without it the token would be filtered out of
+        ``_sync_assistant_secrets`` and never reach the assistant's Secrets
+        context.
+
+        Falls back to the built-in set on any failure (unity_deploy not
+        importable, registry context unreadable, etc.).  Adding a new
+        integration package therefore requires no edit to this file.
+        """
+        try:
+            from unity.integration_status import all_known_secret_names
+
+            return frozenset(
+                cls._BUILTIN_OAUTH_SECRET_ALLOWLIST | all_known_secret_names(),
+            )
+        except Exception:
+            return cls._BUILTIN_OAUTH_SECRET_ALLOWLIST
 
     def _sync_assistant_secrets(self) -> None:
         """Pull OAuth tokens from Orchestra's assistant secrets into the Secrets context.
@@ -207,12 +247,25 @@ class SecretManager(BaseSecretManager):
         from ..session_details import SESSION_DETAILS
 
         agent_id = SESSION_DETAILS.assistant.agent_id
+        logger.info(
+            "[integrations] _sync_assistant_secrets: ENTER agent_id=%s",
+            agent_id,
+        )
         if agent_id is None:
+            logger.info(
+                "[integrations] _sync_assistant_secrets: ABORT agent_id is None",
+            )
             return
 
         base_url = SETTINGS.ORCHESTRA_URL
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
         if not base_url or not admin_key:
+            logger.info(
+                "[integrations] _sync_assistant_secrets: ABORT missing "
+                "Orchestra creds (base_url=%s admin_key_set=%s)",
+                bool(base_url),
+                bool(admin_key),
+            )
             return
 
         try:
@@ -225,17 +278,59 @@ class SecretManager(BaseSecretManager):
                 timeout=15,
             )
             if resp.status_code != 200:
+                logger.warning(
+                    "[integrations] _sync_assistant_secrets: ABORT Orchestra "
+                    "admin returned status=%s for agent_id=%s",
+                    resp.status_code,
+                    agent_id,
+                )
                 return
             payload = resp.json()
             items = payload.get("info", [])
             if not items:
+                logger.warning(
+                    "[integrations] _sync_assistant_secrets: ABORT Orchestra "
+                    "admin returned empty info for agent_id=%s",
+                    agent_id,
+                )
                 return
             secrets_dict: dict = items[0].get("secrets") or {}
         except Exception:
+            logger.exception(
+                "[integrations] _sync_assistant_secrets: ABORT exception "
+                "fetching Orchestra admin for agent_id=%s",
+                agent_id,
+            )
             return
 
+        # Resolve the active allowlist by unioning the built-in OAuth keys
+        # (Google + Microsoft) with everything declared by the integration
+        # registry.  Adding a new integration package adds its secret names
+        # here automatically, no edit to this module.
+        active_allowlist = self._resolve_secret_allowlist()
+
+        orchestra_keys = sorted(secrets_dict.keys())
+        non_empty_keys = sorted(
+            k for k, v in secrets_dict.items() if isinstance(v, str) and v
+        )
+        passed_allowlist = sorted(set(non_empty_keys) & set(active_allowlist))
+        filtered_out = sorted(set(non_empty_keys) - set(active_allowlist))
+        logger.info(
+            "[integrations] _sync_assistant_secrets: agent_id=%s "
+            "orchestra_returned=%d (%s) non_empty=%d allowlist_size=%d "
+            "passed_allowlist=%s filtered_out=%s",
+            agent_id,
+            len(orchestra_keys),
+            orchestra_keys,
+            len(non_empty_keys),
+            len(active_allowlist),
+            passed_allowlist,
+            filtered_out,
+        )
+
+        written = 0
         for name, value in secrets_dict.items():
-            if name not in self.OAUTH_SECRET_ALLOWLIST:
+            if name not in active_allowlist:
                 continue
             if not isinstance(value, str) or not value:
                 continue
@@ -265,10 +360,31 @@ class SecretManager(BaseSecretManager):
                         add_to_all_context=self.include_in_multi_assistant_table,
                     )
                 self._env_set(name, value)
+                written += 1
             except Exception:
+                logger.exception(
+                    "[integrations] _sync_assistant_secrets: failed to upsert "
+                    "secret name=%s",
+                    name,
+                )
                 continue
+        logger.info(
+            "[integrations] _sync_assistant_secrets: agent_id=%s wrote %d "
+            "secret(s) to Secrets context",
+            agent_id,
+            written,
+        )
 
-        for stale_name in self.OAUTH_SECRET_ALLOWLIST - secrets_dict.keys():
+        # Stale-cleanup: only the built-in Google/Microsoft OAuth keys are
+        # owned by THIS sync, so only those may be deleted when missing
+        # from Orchestra's response.  Integration-managed keys (e.g.
+        # EMPLOYMENTHERO_REFRESH_TOKEN) and customer-pasted keys (CLIENT_ID,
+        # CLIENT_SECRET, API tokens) are written into the same Secrets
+        # context by Console's OAuth callback / paste flow and must NOT
+        # be cleaned up here just because Orchestra's secrets payload
+        # omits them — that would silently wipe valid user state every
+        # time the admin endpoint returned a partial or stripped response.
+        for stale_name in self._BUILTIN_OAUTH_SECRET_ALLOWLIST - secrets_dict.keys():
             try:
                 ids = unify.get_logs(
                     context=self._ctx,
@@ -281,6 +397,34 @@ class SecretManager(BaseSecretManager):
                     self._env_remove(stale_name)
             except Exception:
                 continue
+
+        # Recompute integration enablement.  ``recompute_enablement`` reads
+        # the keyset from the local Secrets context (the source of truth for
+        # both Orchestra-mirrored OAuth tokens — just written above — and
+        # Console-pasted integration tokens that never touch Orchestra).
+        # We still pass ``secrets_dict`` as a supplemental union so that any
+        # Google/MS keys present in the Orchestra payload but not yet
+        # mirrored (race window between fetch and write) are not missed.
+        # Best-effort; never blocks the secret-sync return.
+        try:
+            from unity.integration_status import recompute_enablement
+
+            logger.info(
+                "[integrations] _sync_assistant_secrets: calling "
+                "recompute_enablement(agent_id=%s, orchestra_supplement_keys=%d)",
+                agent_id,
+                len(secrets_dict),
+            )
+            recompute_enablement(
+                assistant_id=int(agent_id),
+                secrets=secrets_dict,
+            )
+        except Exception:
+            logger.exception(
+                "[integrations] _sync_assistant_secrets: recompute_enablement "
+                "raised for agent_id=%s",
+                agent_id,
+            )
 
     # --------------------- Internal helpers (.env sync) --------------------- #
     def _dotenv_path(self) -> str:

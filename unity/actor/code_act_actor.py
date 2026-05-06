@@ -40,6 +40,10 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
+from unity.common.task_execution_context import (
+    TaskExecutionDelegate,
+    current_task_execution_delegate,
+)
 from unity.events.event_bus import EVENT_BUS, Event
 from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import methods_to_tool_dict
@@ -339,6 +343,38 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         return None
+
+
+class _CodeActTaskExecutionDelegate:
+    """Route durable task execution through the CodeActActor run that requested it."""
+
+    def __init__(self, actor: "CodeActActor") -> None:
+        self._actor = actor
+
+    async def start_task_run(
+        self,
+        *,
+        task_description: str,
+        entrypoint: int | None,
+        parent_chat_context: list[dict] | None,
+        clarification_up_q: Optional[asyncio.Queue[str]],
+        clarification_down_q: Optional[asyncio.Queue[str]],
+        images: Any | None = None,
+        **kwargs: Any,
+    ) -> SteerableToolHandle:
+        """Start one task run using this actor's CodeAct execution machinery."""
+
+        _ = images
+        return await self._actor.act(
+            task_description,
+            _parent_chat_context=parent_chat_context,
+            _clarification_up_q=clarification_up_q,
+            _clarification_down_q=clarification_down_q,
+            entrypoint=entrypoint,
+            persist=False,
+            _reuse_actor_slot=True,
+            **kwargs,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3457,6 +3493,7 @@ class CodeActActor(BaseCodeActActor):
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
+        _reuse_actor_slot: bool = False,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
@@ -3568,22 +3605,25 @@ class CodeActActor(BaseCodeActActor):
             except Exception:
                 sandbox_envs[ns] = env
 
-        # Concurrency/backpressure guard. If we can't acquire within 30s, treat as resource exhaustion.
+        # Concurrency/backpressure guard for externally started actor runs.
         logger.debug(
-            f"⏱️ [CodeActActor.act +{_act_ms()}] envs copied, acquiring semaphore",
+            f"⏱️ [CodeActActor.act +{_act_ms()}] envs copied, preparing actor slot",
         )
-        try:
-            await asyncio.wait_for(
-                self._act_semaphore.acquire(),
-                timeout=float(getattr(self, "_act_semaphore_timeout_s", 30.0)),
-            )
-        except asyncio.TimeoutError:
-            raise RuntimeError(
-                "CodeActActor is at capacity (too many concurrent sessions). "
-                "Try again later or reduce concurrency.",
-            )
+        acquired_actor_slot = False
+        if not _reuse_actor_slot:
+            try:
+                await asyncio.wait_for(
+                    self._act_semaphore.acquire(),
+                    timeout=float(getattr(self, "_act_semaphore_timeout_s", 30.0)),
+                )
+                acquired_actor_slot = True
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    "CodeActActor is at capacity (too many concurrent sessions). "
+                    "Try again later or reduce concurrency.",
+                )
         logger.debug(
-            f"⏱️ [CodeActActor.act +{_act_ms()}] semaphore acquired, creating sandbox",
+            f"⏱️ [CodeActActor.act +{_act_ms()}] actor slot ready, creating sandbox",
         )
         sandbox = PythonExecutionSession(
             computer_primitives=self._computer_primitives,
@@ -3651,10 +3691,15 @@ class CodeActActor(BaseCodeActActor):
                 _CURRENT_AGENT_CONTEXT.reset(ctx_token)
             except Exception:
                 pass
-            try:
-                self._act_semaphore.release()
-            except Exception:
-                pass
+            if acquired_actor_slot:
+                try:
+                    self._act_semaphore.release()
+                except Exception:
+                    pass
+
+        task_execution_delegate: TaskExecutionDelegate = _CodeActTaskExecutionDelegate(
+            self,
+        )
 
         # If an explicit FunctionManager entrypoint is provided (e.g., TaskScheduler task execution),
         # bypass the CodeAct LLM loop and run the function directly.
@@ -3699,12 +3744,18 @@ class CodeActActor(BaseCodeActActor):
                     res = await res
                 return res
 
-            entry_task = asyncio.create_task(_run_entrypoint())
-            entry_handle = _CodeActEntrypointHandle(
-                entrypoint_id=entrypoint_id,
-                execution_task=entry_task,
-                on_finally=_cleanup,
+            delegate_token = current_task_execution_delegate.set(
+                task_execution_delegate,
             )
+            try:
+                entry_task = asyncio.create_task(_run_entrypoint())
+                entry_handle = _CodeActEntrypointHandle(
+                    entrypoint_id=entrypoint_id,
+                    execution_task=entry_task,
+                    on_finally=_cleanup,
+                )
+            finally:
+                current_task_execution_delegate.reset(delegate_token)
             return entry_handle
 
         # Build the tool set for this call. When can_compose=False the LLM
@@ -3914,26 +3965,32 @@ class CodeActActor(BaseCodeActActor):
                 pass
 
         logger.debug(f"⏱️ [CodeActActor.act +{_act_ms()}] starting async tool loop")
-        handle = start_async_tool_loop(
-            client,
-            request or initial_prompt,
-            tools,
-            loop_id=f"CodeActActor.act",
-            parent_chat_context=_parent_chat_context,
-            interrupt_llm_with_interjections=True,
-            log_steps=True,
-            tool_policy=tool_policy,
-            response_format=response_format,
-            persist=persist,
-            preprocess_msgs=self._preprocess_msgs,
-            prompt_caching=self._prompt_caching,
-            extra_ask_tools=self._get_extra_ask_tools(),
-            extra_compression_tools=(["store_skills"] if effective_can_store else None),
-            clarification_queues=_clar_queues,
-            on_clarification_request=_on_clar_req,
-            on_clarification_answer=_on_clar_ans,
-            on_notify=_on_notify,
-        )
+        delegate_token = current_task_execution_delegate.set(task_execution_delegate)
+        try:
+            handle = start_async_tool_loop(
+                client,
+                request or initial_prompt,
+                tools,
+                loop_id=f"CodeActActor.act",
+                parent_chat_context=_parent_chat_context,
+                interrupt_llm_with_interjections=True,
+                log_steps=True,
+                tool_policy=tool_policy,
+                response_format=response_format,
+                persist=persist,
+                preprocess_msgs=self._preprocess_msgs,
+                prompt_caching=self._prompt_caching,
+                extra_ask_tools=self._get_extra_ask_tools(),
+                extra_compression_tools=(
+                    ["store_skills"] if effective_can_store else None
+                ),
+                clarification_queues=_clar_queues,
+                on_clarification_request=_on_clar_req,
+                on_clarification_answer=_on_clar_ans,
+                on_notify=_on_notify,
+            )
+        finally:
+            current_task_execution_delegate.reset(delegate_token)
         logger.debug(
             f"⏱️ [CodeActActor.act +{_act_ms()}] loop started, returning handle",
         )
@@ -3942,8 +3999,14 @@ class CodeActActor(BaseCodeActActor):
         _original_result = handle.result
 
         async def _result_with_cleanup() -> str:
+            delegate_token = current_task_execution_delegate.set(
+                task_execution_delegate,
+            )
             try:
-                return await _original_result()
+                try:
+                    return await _original_result()
+                finally:
+                    current_task_execution_delegate.reset(delegate_token)
             finally:
                 await _cleanup()
 

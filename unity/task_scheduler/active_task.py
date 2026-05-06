@@ -137,8 +137,8 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         Thin wrapper around an actor-backed active plan handle, keeping the
         corresponding Tasks row in sync when a scheduler is provided.
 
-        Use ``ActiveTask.create(...)`` to construct an instance from a
-        ``BaseActor`` and a task description.
+        Use ``ActiveTask.create(...)`` to start execution through the current
+        run delegate or an explicit fallback actor.
         """
         self._actor_handle = actor_handle
         self._scheduler: Optional["TaskScheduler"] = scheduler
@@ -155,7 +155,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
     @classmethod
     async def create(
         cls,
-        actor: BaseActor,
+        fallback_actor: BaseActor | None,
         *,
         task_description: str,
         _parent_chat_context: Optional[list[dict]] = None,
@@ -169,10 +169,12 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         task_run_provenance: Optional[TaskRunProvenance] = None,
     ) -> "ActiveTask":
         """
-        Create an ActiveTask by starting work on the provided ``actor``.
+        Create an ActiveTask by starting work through a delegate or fallback actor.
 
         This is the preferred constructor: it ensures the underlying active
-        handle is running before returning an instance.
+        handle is running before returning an instance. When a run-scoped task
+        execution delegate is active, ``fallback_actor`` is expected to be ``None``
+        because execution is routed through the delegate instead.
         """
         delegate = current_task_execution_delegate.get()
         try:
@@ -185,7 +187,11 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                     clarification_down_q=_clarification_down_q,
                 )
             else:
-                actor_steerable_handle = await actor.act(
+                if fallback_actor is None:
+                    raise RuntimeError(
+                        "Task execution requires an actor when no run-scoped delegate is active.",
+                    )
+                actor_steerable_handle = await fallback_actor.act(
                     task_description,
                     _parent_chat_context=_parent_chat_context,
                     _clarification_up_q=_clarification_up_q,

@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, create_model
 
+from unity.common.startup_timing import log_startup_timing
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.conversation_manager.runtime_status import (
     deployment_runtime_reconcile_prompt_note,
 )
 from unity.conversation_manager.cm_types import Mode, ScreenshotEntry
+from unity.logger import LOGGER
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -206,13 +209,26 @@ def build_brain_spec(
     """
     from unity.settings import SETTINGS
 
+    _brain_t0 = perf_counter()
+    _last_step = _brain_t0
+
+    def _mark_step() -> float:
+        nonlocal _last_step
+        now = perf_counter()
+        elapsed_ms = (now - _last_step) * 1000
+        _last_step = now
+        return elapsed_ms
+
     prompt = snapshot_state.full_render
+    _prompt_ms = _mark_step()
 
     # Get boss contact (contact_id=1) from ContactManager - the source of truth
     boss_contact = cm.contact_index.get_contact(1) or {}
+    _boss_contact_ms = _mark_step()
     is_internal_call = cm.mode.is_voice and bool(
         (cm.get_active_contact() or {}).get("is_system", False),
     )
+    _active_contact_ms = _mark_step()
     # Prepend the assistant's job title / specialization (if set) to the bio
     # so the voice-call system prompt also reflects what the assistant is
     # specialized for. Keeping this here (rather than threading a new param
@@ -223,6 +239,9 @@ def build_brain_spec(
         _bio_parts.append(f"Role / specialization: {_job_title}.")
     if cm.assistant_about:
         _bio_parts.append(cm.assistant_about)
+    _bio_ms = _mark_step()
+    runtime_setup_note = deployment_runtime_reconcile_prompt_note(cm)
+    _runtime_status_ms = _mark_step()
     system_prompt = build_system_prompt(
         bio="\n".join(_bio_parts),
         contact_id=1,
@@ -240,18 +259,52 @@ def build_brain_spec(
         assistant_has_discord=bool(cm.assistant_discord_bot_id),
         assistant_has_teams=bool(cm.assistant_has_teams),
         user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
-        runtime_setup_note=deployment_runtime_reconcile_prompt_note(cm),
+        runtime_setup_note=runtime_setup_note,
     )
+    _system_prompt_ms = _mark_step()
 
     response_model = _RESPONSE_MODELS[cm.mode]
+    _response_model_ms = _mark_step()
 
     # Validate we can JSON-encode state prompt early (helps catch accidental objects)
     json.dumps({"state_prompt": prompt})
+    _json_validate_ms = _mark_step()
 
-    return BrainSpec(
+    spec = BrainSpec(
         system_prompt=system_prompt,
         state_prompt=prompt,
         response_model=response_model,
         screenshots=screenshots or [],
         screenshot_paths=screenshot_paths or [],
     )
+    _spec_ms = _mark_step()
+
+    log_startup_timing(
+        LOGGER,
+        (
+            "⏱️ [StartupTiming] llm_preamble.brain_spec.detail "
+            "total=%.0fms prompt_ref=%.0fms boss_contact=%.0fms "
+            "active_contact=%.0fms bio=%.0fms runtime_status=%.0fms "
+            "system_prompt=%.0fms response_model=%.0fms json_validate=%.0fms "
+            "spec=%.0fms state_chars=%d system_chars=%d system_parts=%d "
+            "screenshots=%d runtime_note=%s mode=%s"
+        ),
+        (perf_counter() - _brain_t0) * 1000,
+        _prompt_ms,
+        _boss_contact_ms,
+        _active_contact_ms,
+        _bio_ms,
+        _runtime_status_ms,
+        _system_prompt_ms,
+        _response_model_ms,
+        _json_validate_ms,
+        _spec_ms,
+        len(prompt),
+        len(system_prompt.flatten()),
+        len(system_prompt.to_list()),
+        len(screenshots or []),
+        runtime_setup_note is not None,
+        cm.mode,
+    )
+
+    return spec
