@@ -208,12 +208,19 @@ class SecretManager(BaseSecretManager):
 
     @classmethod
     def _resolve_secret_allowlist(cls) -> frozenset[str]:
-        """Union the built-in OAuth allowlist with the integration registry.
+        """Union the built-in OAuth allowlist with secrets declared by every
+        installed integration — both the seeded registry and packages
+        discovered on disk.
 
-        Falls back to just the built-in set when the registry isn't seeded
-        (first deploy after A1, test environments without a registry context).
-        Adding a new integration package therefore requires no edit to this
-        file.
+        Including disk discovery is what lets a token paste in Console for
+        an integration the deployment didn't declare actually sync from
+        Orchestra.  Without it the token would be filtered out of
+        ``_sync_assistant_secrets`` and never reach the assistant's Secrets
+        context.
+
+        Falls back to the built-in set on any failure (unity_deploy not
+        importable, registry context unreadable, etc.).  Adding a new
+        integration package therefore requires no edit to this file.
         """
         try:
             from unity.integration_status import all_known_secret_names

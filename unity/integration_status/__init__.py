@@ -89,6 +89,12 @@ def _empty_cache() -> dict[str, Any]:
         "enabled": {},
         "completeness": {},
         "secret_names": set(),
+        # Hot-load tracking.  ``loaded_slugs`` is set after a successful
+        # hot-load completes for this body; ``loading_slugs`` is the set of
+        # slugs currently being loaded by a daemon thread.  ``schedule_hot_load``
+        # is a no-op when the slug is in either set.
+        "loaded_slugs": set(),
+        "loading_slugs": set(),
     }
 
 
@@ -108,14 +114,26 @@ def reset_session_cache() -> None:
 def _load_registry() -> list[dict[str, Any]]:
     """Pull rows from ``Integrations/Manifests`` once per session, cache.
 
-    Returns ``[]`` when the context isn't seeded yet (e.g. first deploy with
-    A2 live but A1 not yet shipped, or a new deployment whose seed sync
-    hasn't run).  Callers treat empty as "no detection possible — fall
-    through to existing behaviour" rather than "every integration disabled"."""
+    The persisted registry only contains rows for integrations that were
+    declared in the deployment spec (``integrations=[...]``).  An assistant
+    may have credentials for *available* packages that weren't declared —
+    the typical case is a manual token paste in Console.  To bridge that
+    gap we synthesize in-memory rows from disk discovery when the persisted
+    registry is empty.  See :mod:`unity.integration_status.discovery`.
+    """
     cache = _session_cache()
     if cache["registry_loaded"]:
         return cache["registry"]
 
+    rows = _read_persisted_registry()
+    if not rows:
+        rows = _synthesize_rows_from_discovery()
+    cache["registry_loaded"] = True
+    cache["registry"] = rows
+    return rows
+
+
+def _read_persisted_registry() -> list[dict[str, Any]]:
     try:
         import unify
 
@@ -123,17 +141,43 @@ def _load_registry() -> list[dict[str, Any]]:
         ctx = f"{active}/{_REGISTRY_CONTEXT_LEAF}"
         logs = unify.get_logs(context=ctx, limit=1000)
     except Exception:
-        cache["registry_loaded"] = True
-        cache["registry"] = []
-        return cache["registry"]
+        return []
 
     rows: list[dict[str, Any]] = []
     for log in logs or []:
         entries = dict(log.entries or {})
         if entries.get("slug"):
             rows.append(entries)
-    cache["registry_loaded"] = True
-    cache["registry"] = rows
+    return rows
+
+
+def _synthesize_rows_from_discovery() -> list[dict[str, Any]]:
+    """Project disk-discovered packages into registry-row shape.
+
+    These rows live only in the per-body cache; they're never persisted by
+    this module.  After a successful hot-load, the persisted registry gets
+    its real row written by ``hot_load_integration``."""
+    try:
+        from unity.integration_status.discovery import discover_available_packages
+    except Exception:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for pkg in discover_available_packages():
+        rows.append(
+            {
+                "slug": pkg["slug"],
+                "label": pkg["label"],
+                "category": pkg.get("category", ""),
+                "version": pkg.get("version", ""),
+                "tier": pkg.get("tier", ""),
+                "required_secrets_json": json.dumps(pkg.get("required_secrets", [])),
+                "optional_secrets_json": json.dumps(pkg.get("optional_secrets", [])),
+                "function_names_json": json.dumps(pkg.get("function_names", [])),
+                "guidance_titles_json": json.dumps(pkg.get("guidance_titles", [])),
+                "_synthesized": True,
+            },
+        )
     return rows
 
 
@@ -203,8 +247,19 @@ def recompute_enablement(*, assistant_id: int, secrets: dict[str, Any]) -> None:
             "missing_required_secrets": [],  # by definition empty when enabled
         }
 
+    # Detect newly-enabled integrations (in current set but not yet hot-loaded)
+    # and queue a non-blocking background load for each.  schedule_hot_load
+    # spawns a daemon thread so the calling sync path returns immediately.
+    just_enabled = set(enabled.keys()) - cache.get("loaded_slugs", set())
+
     cache["enabled"] = enabled
     cache["completeness"] = completeness
+
+    for slug in just_enabled:
+        try:
+            schedule_hot_load(slug)
+        except Exception:
+            logger.exception("Failed to schedule hot-load for %s", slug)
 
 
 def get_enabled_integrations(_assistant_id: int | None = None) -> list[str]:
@@ -339,9 +394,8 @@ def enabled_summary_for_prompt(_assistant_id: int | None = None) -> str:
         Active integrations:
         - HubSpot (fully_connected)
         - Employment Hero (configured — OAuth Connect not complete; missing
-          EMPLOYMENTHERO_REFRESH_TOKEN, EMPLOYMENTHERO_ORGANISATION_ID,
-          EMPLOYMENTHERO_HUB_DOMAIN.  Tell the user to click Connect in
-          Settings → Integrations.)
+          EMPLOYMENTHERO_REFRESH_TOKEN, EMPLOYMENTHERO_ORGANISATION_ID.
+          Tell the user to click Connect in Settings → Integrations.)
 
         Inactive (token not configured):
         - Salesforce — needs SALESFORCE_CLIENT_ID, SALESFORCE_CLIENT_SECRET.
@@ -411,20 +465,280 @@ def enabled_summary_for_prompt(_assistant_id: int | None = None) -> str:
 
 def all_known_secret_names() -> set[str]:
     """Return the union of every secret name (required + optional) declared
-    by any integration in the registry.
+    by any integration in the registry OR available on disk.
 
     Used by ``SecretManager._sync_assistant_secrets`` as a registry-derived
-    replacement for the hardcoded ``OAUTH_SECRET_ALLOWLIST``.  Falls back to
-    an empty set when the registry isn't seeded; the caller should fall back
-    to its hardcoded allowlist in that case so OAuth flows still sync."""
-    registry = _load_registry()
-    if not registry:
-        return set()
+    replacement for the hardcoded ``OAUTH_SECRET_ALLOWLIST``.  Includes
+    discovery so that secrets for *available* (not-yet-loaded) packages are
+    allowlisted too — this is what makes a token paste in Console actually
+    sync from Orchestra without requiring a deployment-time declaration."""
     out: set[str] = set()
-    for row in registry:
+
+    # Persisted-registry rows (covers integrations the deployment declared).
+    registry = _load_registry()
+    for row in registry or []:
         out |= _row_required(row)
         out |= _row_optional(row)
+
+    # Disk-discovered packages (covers available-but-not-declared ones).
+    try:
+        from unity.integration_status.discovery import discover_available_packages
+
+        for pkg in discover_available_packages():
+            out |= set(pkg.get("required_secrets", []))
+            out |= set(pkg.get("optional_secrets", []))
+    except Exception:
+        # Best-effort; unity_deploy not importable in the running env.
+        pass
+
     return out
+
+
+# ---------------------------------------------------------------------------
+# Hot-load: register an available package's functions + guidance + registry
+# row into the running managers, in the background.
+# ---------------------------------------------------------------------------
+
+
+def schedule_hot_load(slug: str) -> None:
+    """Sync-safe entry point: register the package for ``slug`` in the
+    background.  Returns immediately.
+
+    Spawns a daemon thread that runs ``asyncio.run(hot_load_integration(slug))``
+    so it works from any caller — sync or async, with or without a running
+    event loop (constructor paths in ``SecretManager`` run before the
+    assistant's main loop exists).
+
+    Idempotent: a no-op when the slug is already loaded for this session
+    or already being loaded by an in-flight thread.  Errors during the
+    background load are logged but never propagate to the caller."""
+    import threading
+
+    cache = _session_cache()
+    if slug in cache.setdefault("loaded_slugs", set()):
+        return
+    if slug in cache.setdefault("loading_slugs", set()):
+        return
+
+    cache["loading_slugs"].add(slug)
+
+    def _worker() -> None:
+        try:
+            import asyncio
+
+            asyncio.run(hot_load_integration(slug))
+        except Exception:
+            logger.exception("Hot-load worker failed for slug=%s", slug)
+        finally:
+            try:
+                cache["loading_slugs"].discard(slug)
+            except Exception:
+                pass
+
+    thread = threading.Thread(
+        target=_worker,
+        daemon=True,
+        name=f"integration-hot-load-{slug}",
+    )
+    thread.start()
+
+
+async def hot_load_integration(slug: str) -> None:
+    """Load a package's functions + guidance + registry row.
+
+    Per-step idempotent: re-running for the same slug is a no-op for any
+    sub-step that's already complete.  Each step runs in its own try/except
+    so a partial failure (e.g. one bad function file) doesn't abort the rest.
+    """
+    cache = _session_cache()
+
+    if slug in cache.get("loaded_slugs", set()):
+        return
+
+    try:
+        from unity.integration_status.discovery import get_package_for_slug
+    except Exception:
+        return
+
+    pkg = get_package_for_slug(slug)
+    if pkg is None:
+        logger.warning("hot_load_integration: package %r not on disk", slug)
+        return
+
+    try:
+        _hot_load_guidance(pkg)
+    except Exception:
+        logger.exception("hot_load_integration: guidance step failed for %s", slug)
+
+    try:
+        functions_added = _hot_load_functions(pkg)
+    except Exception:
+        logger.exception("hot_load_integration: functions step failed for %s", slug)
+        functions_added = 0
+
+    try:
+        _hot_load_registry_row(pkg)
+    except Exception:
+        logger.exception("hot_load_integration: registry-row step failed for %s", slug)
+
+    cache.setdefault("loaded_slugs", set()).add(slug)
+
+    # Invalidate the registry cache so subsequent ``_load_registry`` calls
+    # see the persisted row we just wrote (and stop returning the synthesized
+    # variant).
+    cache["registry_loaded"] = False
+    cache["registry"] = []
+
+    logger.info(
+        "Hot-loaded integration slug=%s functions_added=%d guidance=%d",
+        slug,
+        functions_added,
+        len(pkg.get("guidance_titles", [])),
+    )
+
+
+def _hot_load_functions(pkg: dict) -> int:
+    """Add a package's @custom_function callables to FunctionManager.
+
+    Uses per-name insert/update (no orphan-delete pass) so we don't disturb
+    functions registered by the deployment's own ``function_dirs``.  Returns
+    the number of functions actually added or updated.
+    """
+    function_dir = pkg.get("function_dir")
+    if function_dir is None:
+        return 0
+
+    from unity.function_manager.custom_functions import collect_custom_functions
+    from unity.manager_registry import ManagerRegistry
+
+    source_fns = collect_custom_functions(directory=function_dir)
+    if not source_fns:
+        return 0
+
+    fm = ManagerRegistry.get_function_manager()
+    db_fns = fm._get_custom_functions_from_db()
+
+    changed = 0
+    for name, source_data in source_fns.items():
+        try:
+            # ``custom_functions`` retains ``venv_name`` for the deploy-time
+            # sync path that resolves it via the venv catalog.  At hot-load
+            # time we don't manage venvs (none of the in-tree integration
+            # packages declare one); strip the key so the FM insert API
+            # doesn't choke on it.
+            source_data = {k: v for k, v in source_data.items() if k != "venv_name"}
+            if name in db_fns:
+                if db_fns[name].get("custom_hash") != source_data.get("custom_hash"):
+                    fm._update_custom_function(
+                        function_id=db_fns[name]["function_id"],
+                        data=source_data,
+                    )
+                    changed += 1
+            else:
+                fm._insert_custom_function(source_data)
+                changed += 1
+        except Exception:
+            logger.exception("Failed to register function %s", name)
+    return changed
+
+
+def _hot_load_guidance(pkg: dict) -> int:
+    """Add a package's guidance markdown entries to GuidanceManager.
+
+    Per-title check + insert.  Doesn't update an existing entry's content
+    even if the markdown on disk has changed — that's a deploy-time concern
+    (``_sync_guidance`` handles drift via SeedMetaStore).  Returns the
+    number of new entries added.
+    """
+    guidance_dir = pkg.get("guidance_dir")
+    if guidance_dir is None:
+        return 0
+
+    try:
+        from unity_deploy.assistant_deployments.integrations.loader import (
+            _load_guidance,
+        )
+    except Exception:
+        return 0
+
+    from unity.manager_registry import ManagerRegistry
+
+    entries = _load_guidance(guidance_dir)
+    if not entries:
+        return 0
+
+    gm = ManagerRegistry.get_guidance_manager()
+    added = 0
+    for entry in entries:
+        try:
+            existing = gm.filter(filter=f"title == {entry.title!r}", limit=1)
+            if existing:
+                continue
+            gm.add_guidance(title=entry.title, content=entry.content)
+            added += 1
+        except Exception:
+            logger.exception("Failed to register guidance %r", entry.title)
+    return added
+
+
+def _hot_load_registry_row(pkg: dict) -> None:
+    """Persist the integration's registry row into ``Integrations/Manifests``.
+
+    Idempotent on slug: if a row with this slug already exists, update its
+    fields; otherwise insert.  Mirrors what unity-deploy's
+    ``_sync_integration_registry`` would write at deploy time.
+    """
+    try:
+        import unify
+    except Exception:
+        return
+
+    try:
+        active = unify.get_active_context()["read"]
+        ctx = f"{active}/{_REGISTRY_CONTEXT_LEAF}"
+        try:
+            unify.create_context(ctx)
+        except Exception:
+            pass
+    except Exception:
+        return
+
+    row = {
+        "slug": pkg["slug"],
+        "label": pkg["label"],
+        "category": pkg.get("category", ""),
+        "version": pkg.get("version", ""),
+        "tier": pkg.get("tier", ""),
+        "required_secrets_json": json.dumps(pkg.get("required_secrets", [])),
+        "optional_secrets_json": json.dumps(pkg.get("optional_secrets", [])),
+        "function_names_json": json.dumps(pkg.get("function_names", [])),
+        "guidance_titles_json": json.dumps(pkg.get("guidance_titles", [])),
+    }
+
+    try:
+        existing = unify.get_logs(
+            context=ctx,
+            filter=f"slug == {pkg['slug']!r}",
+            limit=1,
+        )
+    except Exception:
+        existing = []
+
+    if existing:
+        try:
+            unify.update_logs(
+                logs=[existing[0].id],
+                context=ctx,
+                entries=[row],
+                overwrite=True,
+            )
+        except Exception:
+            logger.exception("Failed to update registry row for %s", pkg["slug"])
+    else:
+        try:
+            unify.log(context=ctx, **row)
+        except Exception:
+            logger.exception("Failed to insert registry row for %s", pkg["slug"])
 
 
 __all__ = [
@@ -435,6 +749,8 @@ __all__ = [
     "enabled_summary_for_prompt",
     "get_enabled_integrations",
     "get_setup_completeness",
+    "hot_load_integration",
     "recompute_enablement",
     "reset_session_cache",
+    "schedule_hot_load",
 ]

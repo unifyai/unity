@@ -45,8 +45,14 @@ def _row(
 @pytest.fixture(autouse=True)
 def _reset_cache(monkeypatch):
     """Reset the per-session cache and reload the registry from the supplied
-    rows on each test.  Bypasses DataManager entirely."""
+    rows on each test.  Bypasses DataManager entirely.
+
+    Stubs ``schedule_hot_load`` so ``recompute_enablement`` doesn't spawn
+    daemon threads that would race with the test's cache-reset teardown.
+    Tests that specifically care about hot-load scheduling can re-stub via
+    monkeypatch + assert on the calls."""
     IS.reset_session_cache()
+    monkeypatch.setattr(IS, "schedule_hot_load", lambda slug: None)
     yield
     IS.reset_session_cache()
 
@@ -175,7 +181,6 @@ def _eh_row() -> dict:
         optional=[
             "EMPLOYMENTHERO_REFRESH_TOKEN",
             "EMPLOYMENTHERO_ORGANISATION_ID",
-            "EMPLOYMENTHERO_HUB_DOMAIN",
         ],
         function_names=["get_employmenthero_employee"],
         guidance_titles=["Employmenthero Overview"],
@@ -228,7 +233,6 @@ def test_eh_fully_connected_with_full_oauth_set(monkeypatch):
             "EMPLOYMENTHERO_OAUTH_CLIENT_SECRET": "secret",
             "EMPLOYMENTHERO_REFRESH_TOKEN": "rt",
             "EMPLOYMENTHERO_ORGANISATION_ID": "org",
-            "EMPLOYMENTHERO_HUB_DOMAIN": "acme.employmenthero.com",
         },
     )
 
@@ -311,7 +315,20 @@ def test_all_known_secret_names_unions_all_required_and_optional(monkeypatch):
 
 
 def test_all_known_secret_names_empty_when_registry_empty(monkeypatch):
+    """``all_known_secret_names`` unions the persisted registry with disk
+    discovery (added in the hot-load PR).  To assert "empty result", both
+    sources must be patched to empty — otherwise the function legitimately
+    returns disk-discovered packages installed alongside this venv."""
     _seed_registry(monkeypatch, [])
+
+    from unity.integration_status import discovery as IS_DISCOVERY
+
+    monkeypatch.setattr(
+        IS_DISCOVERY,
+        "discover_available_packages",
+        lambda *, force_reload=False: [],
+    )
+
     assert IS.all_known_secret_names() == set()
 
 
