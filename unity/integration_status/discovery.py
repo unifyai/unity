@@ -65,6 +65,11 @@ def discover_available_packages(*, force_reload: bool = False) -> list[dict[str,
 
     rows = _read_packages_from_disk()
     _DISCOVERY_CACHE = rows
+    logger.info(
+        "[integrations] discovery: found %d package(s) on disk: %s",
+        len(rows),
+        sorted(r.get("slug", "?") for r in rows),
+    )
     return rows
 
 
@@ -81,9 +86,10 @@ def _read_packages_from_disk() -> list[dict[str, Any]]:
             _stem_to_title,
         )
     except Exception:
-        logger.debug(
-            "unity_deploy package paths not importable from runtime; "
-            "discovery returning []",
+        logger.warning(
+            "[integrations] discovery: unity_deploy package paths NOT importable "
+            "from runtime; returning []. Hot-load will be disabled for any "
+            "integration that isn't in the persisted registry.",
             exc_info=True,
         )
         return []

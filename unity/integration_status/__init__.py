@@ -126,10 +126,21 @@ def _load_registry() -> list[dict[str, Any]]:
         return cache["registry"]
 
     rows = _read_persisted_registry()
+    persisted_count = len(rows)
+    synthesized = False
     if not rows:
         rows = _synthesize_rows_from_discovery()
+        synthesized = True
     cache["registry_loaded"] = True
     cache["registry"] = rows
+    logger.info(
+        "[integrations] _load_registry: persisted_rows=%d synthesized=%s "
+        "final_count=%d slugs=%s",
+        persisted_count,
+        synthesized,
+        len(rows),
+        sorted(r.get("slug", "?") for r in rows),
+    )
     return rows
 
 
@@ -216,11 +227,23 @@ def recompute_enablement(*, assistant_id: int, secrets: dict[str, Any]) -> None:
     cache = _session_cache()
     keyset = {k for k, v in (secrets or {}).items() if isinstance(v, str) and v}
     cache["secret_names"] = keyset
+    logger.info(
+        "[integrations] recompute_enablement: assistant_id=%s keyset_size=%d "
+        "loaded_so_far=%s",
+        assistant_id,
+        len(keyset),
+        sorted(cache.get("loaded_slugs", set())),
+    )
 
     registry = _load_registry()
     if not registry:
         cache["enabled"] = {}
         cache["completeness"] = {}
+        logger.info(
+            "[integrations] recompute_enablement: registry empty -> nothing to "
+            "enable. assistant_id=%s",
+            assistant_id,
+        )
         return
 
     enabled: dict[str, dict] = {}
@@ -254,6 +277,13 @@ def recompute_enablement(*, assistant_id: int, secrets: dict[str, Any]) -> None:
 
     cache["enabled"] = enabled
     cache["completeness"] = completeness
+
+    logger.info(
+        "[integrations] recompute_enablement: enabled=%s just_enabled=%s "
+        "(scheduling hot-load for just_enabled)",
+        sorted(enabled.keys()),
+        sorted(just_enabled),
+    )
 
     for slug in just_enabled:
         try:
@@ -489,8 +519,17 @@ def all_known_secret_names() -> set[str]:
             out |= set(pkg.get("optional_secrets", []))
     except Exception:
         # Best-effort; unity_deploy not importable in the running env.
-        pass
+        logger.warning(
+            "[integrations] all_known_secret_names: discovery import failed; "
+            "allowlist will be persisted-registry only",
+            exc_info=True,
+        )
 
+    logger.info(
+        "[integrations] all_known_secret_names: total=%d names=%s",
+        len(out),
+        sorted(out),
+    )
     return out
 
 
@@ -516,8 +555,18 @@ def schedule_hot_load(slug: str) -> None:
 
     cache = _session_cache()
     if slug in cache.setdefault("loaded_slugs", set()):
+        logger.info(
+            "[integrations] schedule_hot_load: slug=%s NO-OP (already loaded "
+            "this session)",
+            slug,
+        )
         return
     if slug in cache.setdefault("loading_slugs", set()):
+        logger.info(
+            "[integrations] schedule_hot_load: slug=%s NO-OP (load already in "
+            "flight)",
+            slug,
+        )
         return
 
     cache["loading_slugs"].add(slug)
@@ -541,6 +590,11 @@ def schedule_hot_load(slug: str) -> None:
         name=f"integration-hot-load-{slug}",
     )
     thread.start()
+    logger.info(
+        "[integrations] schedule_hot_load: slug=%s daemon thread spawned " "(name=%s)",
+        slug,
+        thread.name,
+    )
 
 
 async def hot_load_integration(slug: str) -> None:
@@ -553,16 +607,30 @@ async def hot_load_integration(slug: str) -> None:
     cache = _session_cache()
 
     if slug in cache.get("loaded_slugs", set()):
+        logger.info(
+            "[integrations] hot_load_integration: slug=%s NO-OP (already " "loaded)",
+            slug,
+        )
         return
+
+    logger.info("[integrations] hot_load_integration: starting slug=%s", slug)
 
     try:
         from unity.integration_status.discovery import get_package_for_slug
     except Exception:
+        logger.exception(
+            "[integrations] hot_load_integration: discovery module not "
+            "importable for slug=%s",
+            slug,
+        )
         return
 
     pkg = get_package_for_slug(slug)
     if pkg is None:
-        logger.warning("hot_load_integration: package %r not on disk", slug)
+        logger.warning(
+            "[integrations] hot_load_integration: package %r not on disk -> " "abort",
+            slug,
+        )
         return
 
     try:
@@ -590,7 +658,8 @@ async def hot_load_integration(slug: str) -> None:
     cache["registry"] = []
 
     logger.info(
-        "Hot-loaded integration slug=%s functions_added=%d guidance=%d",
+        "[integrations] hot_load_integration: DONE slug=%s functions_added=%d "
+        "guidance_titles_in_pkg=%d",
         slug,
         functions_added,
         len(pkg.get("guidance_titles", [])),
