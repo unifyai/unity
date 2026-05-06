@@ -11,6 +11,8 @@ from typing import Annotated, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from unity.common.authorship import AuthoredRow
+
 # ---------------------------------------------------------------------------
 # Data binding types (discriminated union via ``operation``)
 # ---------------------------------------------------------------------------
@@ -105,7 +107,7 @@ DataBinding = Annotated[
 # ---------------------------------------------------------------------------
 
 
-class TileRecordRow(BaseModel):
+class TileRecordRow(AuthoredRow):
     """Fields inserted into the Dashboards/Tiles Unify context.
 
     ``tile_id`` is omitted because it is auto-counted by the backend.

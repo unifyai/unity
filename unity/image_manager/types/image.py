@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
+
+from unity.common.authorship import AuthoredRow
 
 
-class Image(BaseModel):
+class Image(AuthoredRow):
     image_id: int = Field(
         default=-1,
         description="Unique identifier for the image (auto-incremented)",

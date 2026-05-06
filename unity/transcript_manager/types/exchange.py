@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from typing import Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from unity.common.authorship import AuthoredRow
 
 
-class Exchange(BaseModel):
+class Exchange(AuthoredRow):
     exchange_id: int = Field(
         description="Unique identifier for the exchange/thread",
         ge=0,

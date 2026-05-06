@@ -1,5 +1,4 @@
 from pydantic import (
-    BaseModel,
     Field,
     model_validator,
     model_serializer,
@@ -9,12 +8,13 @@ from pydantic import (
 from datetime import datetime
 from ...image_manager.types import AnnotatedImageRefs
 from typing import ClassVar, Optional
+from unity.common.authorship import AuthoredRow
 from unity.conversation_manager.cm_types import Medium
 
 UNASSIGNED = -1
 
 
-class Message(BaseModel):
+class Message(AuthoredRow):
     message_id: int = Field(description="Unique identifier for the message", ge=-1)
     medium: Medium = Field(
         description="The communication channel used for this message",
@@ -65,6 +65,7 @@ class Message(BaseModel):
         "images": "imgs",
         "attachments": "atts",
         "metadata": "meta",
+        "authoring_assistant_id": "aaid",
     }
 
     @classmethod

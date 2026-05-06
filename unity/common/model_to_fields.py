@@ -82,6 +82,7 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
     Supports per-field overrides via ``json_schema_extra``:
     - ``{"unify_type": "..."}`` — override the inferred Orchestra type
     - ``{"unique": True}`` — mark the field as unique in Orchestra
+    - ``{"mutable": False}`` — mark the field immutable in Orchestra
 
     Examples
     --------
@@ -123,6 +124,8 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
             entry = {"type": _schema_to_column_type(prop)}
 
         entry["mutable"] = True
+        if field_info and isinstance(extra, dict) and "mutable" in extra:
+            entry["mutable"] = bool(extra["mutable"])
 
         if field_info and isinstance(extra, dict) and extra.get("unique"):
             entry["unique"] = True

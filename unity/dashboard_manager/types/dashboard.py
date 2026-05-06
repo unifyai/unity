@@ -10,6 +10,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from unity.common.authorship import AuthoredRow
+
 
 class TilePosition(BaseModel):
     """Position and size of a tile within a dashboard grid (12-column layout).
@@ -35,7 +37,7 @@ class TilePosition(BaseModel):
     h: int = 4
 
 
-class DashboardRecordRow(BaseModel):
+class DashboardRecordRow(AuthoredRow):
     """Fields inserted into the Dashboards/Layouts Unify context.
 
     ``dashboard_id`` is omitted because it is auto-counted by the backend.
