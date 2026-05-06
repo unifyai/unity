@@ -62,13 +62,42 @@ def _get_current_time_in_timezone(tz_name: str) -> str:
     from datetime import datetime, timezone as dt_timezone
     from zoneinfo import ZoneInfo
 
+    _timing_t0 = perf_counter()
     utc_now = datetime.now(dt_timezone.utc)
+    _utc_now_ms = (perf_counter() - _timing_t0) * 1000
+    _step_t0 = perf_counter()
+    success = True
     try:
         tz_info = ZoneInfo(tz_name)
+        _zoneinfo_ms = (perf_counter() - _step_t0) * 1000
+        _step_t0 = perf_counter()
         local_dt = utc_now.astimezone(tz_info)
-        return local_dt.strftime("%I:%M %p").lstrip("0")
+        _astimezone_ms = (perf_counter() - _step_t0) * 1000
+        _step_t0 = perf_counter()
+        result = local_dt.strftime("%I:%M %p").lstrip("0")
     except Exception:
-        return "unknown"
+        success = False
+        _zoneinfo_ms = (perf_counter() - _step_t0) * 1000
+        _astimezone_ms = 0.0
+        _step_t0 = perf_counter()
+        result = "unknown"
+    _format_ms = (perf_counter() - _step_t0) * 1000
+    log_startup_timing(
+        LOGGER,
+        (
+            "⏱️ [StartupTiming] timezone.current_time.detail "
+            "total=%.0fms utc_now=%.0fms zoneinfo=%.0fms astimezone=%.0fms "
+            "format=%.0fms tz=%s success=%s"
+        ),
+        (perf_counter() - _timing_t0) * 1000,
+        _utc_now_ms,
+        _zoneinfo_ms,
+        _astimezone_ms,
+        _format_ms,
+        tz_name,
+        success,
+    )
+    return result
 
 
 _assistant_tz_cache: tuple[float, str | None] | None = None
@@ -88,35 +117,80 @@ def _get_assistant_timezone() -> str | None:
     global _assistant_tz_cache
     import time
 
+    _timing_t0 = perf_counter()
     now = time.monotonic()
+    _monotonic_ms = (perf_counter() - _timing_t0) * 1000
     if _assistant_tz_cache is not None:
         cached_at, cached_val = _assistant_tz_cache
         if now - cached_at < _ASSISTANT_TZ_TTL:
+            log_startup_timing(
+                LOGGER,
+                (
+                    "⏱️ [StartupTiming] timezone.assistant_lookup.detail "
+                    "total=%.0fms monotonic=%.0fms cache_hit=True cache_age=%.0fs "
+                    "context=0ms get_logs=0ms extract=0ms rows=0 tz=%s error="
+                ),
+                (perf_counter() - _timing_t0) * 1000,
+                _monotonic_ms,
+                now - cached_at,
+                cached_val,
+            )
             return cached_val
 
     import unify as _unify
     from unity.session_details import SESSION_DETAILS
 
     result: str | None = None
+    _context_t0 = perf_counter()
     _contacts_ctx = (
         f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
     )
+    _context_ms = (perf_counter() - _context_t0) * 1000
 
+    rows_count = 0
+    error_type = ""
     try:
+        _get_logs_t0 = perf_counter()
         rows = _unify.get_logs(
             context=_contacts_ctx,
             filter="contact_id == 0",
             limit=1,
             from_fields=["timezone"],
         )
+        _get_logs_ms = (perf_counter() - _get_logs_t0) * 1000
+        rows_count = len(rows or [])
+        _extract_t0 = perf_counter()
         if rows:
             val = rows[0].entries.get("timezone")
             if isinstance(val, str) and val.strip():
                 result = val.strip()
     except Exception:
-        pass
+        _get_logs_ms = (perf_counter() - _get_logs_t0) * 1000
+        _extract_t0 = perf_counter()
+        error_type = "get_logs"
+    _extract_ms = (perf_counter() - _extract_t0) * 1000
 
+    _cache_store_t0 = perf_counter()
     _assistant_tz_cache = (now, result)
+    _cache_store_ms = (perf_counter() - _cache_store_t0) * 1000
+    log_startup_timing(
+        LOGGER,
+        (
+            "⏱️ [StartupTiming] timezone.assistant_lookup.detail "
+            "total=%.0fms monotonic=%.0fms cache_hit=False cache_age=0s "
+            "context=%.0fms get_logs=%.0fms extract=%.0fms cache_store=%.0fms "
+            "rows=%d tz=%s error=%s"
+        ),
+        (perf_counter() - _timing_t0) * 1000,
+        _monotonic_ms,
+        _context_ms,
+        _get_logs_ms,
+        _extract_ms,
+        _cache_store_ms,
+        rows_count,
+        result,
+        error_type,
+    )
     return result
 
 
@@ -140,13 +214,26 @@ def _format_timezone_block(
     Returns:
         Formatted timezone block string, or None if no timezone data
     """
+    _timing_t0 = perf_counter()
     if not assistant_tz and not any(tz for _, tz in participants):
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] timezone.format_block.detail "
+                "total=%.0fms early_return=True build_map=0ms current_times=0ms "
+                "format_names=0ms join=0ms participants=%d timezones=0 unknown=%d"
+            ),
+            (perf_counter() - _timing_t0) * 1000,
+            len(participants),
+            len(participants) + 1,
+        )
         return None
 
     # Build timezone -> list of names mapping
     # Include "You" (assistant) in the mapping
     tz_to_names: dict[str, list[str]] = {}
     unknown_names: list[str] = []
+    _build_map_t0 = perf_counter()
 
     if assistant_tz:
         tz_to_names[assistant_tz] = ["You"]
@@ -162,13 +249,32 @@ def _format_timezone_block(
             unknown_names.append(name)
 
     if not tz_to_names and not unknown_names:
+        _build_map_ms = (perf_counter() - _build_map_t0) * 1000
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] timezone.format_block.detail "
+                "total=%.0fms early_return=True build_map=%.0fms "
+                "current_times=0ms format_names=0ms join=0ms participants=%d "
+                "timezones=0 unknown=0"
+            ),
+            (perf_counter() - _timing_t0) * 1000,
+            _build_map_ms,
+            len(participants),
+        )
         return None
+    _build_map_ms = (perf_counter() - _build_map_t0) * 1000
 
     # Format each timezone group
     parts: list[str] = []
+    _current_times_ms = 0.0
+    _format_names_ms = 0.0
     for tz_name in sorted(tz_to_names.keys()):
         names = tz_to_names[tz_name]
+        _current_time_t0 = perf_counter()
         current_time = _get_current_time_in_timezone(tz_name)
+        _current_times_ms += (perf_counter() - _current_time_t0) * 1000
+        _format_names_t0 = perf_counter()
         # Format names: "You", "You and Alice", "You, Alice, and Bob"
         if len(names) == 1:
             names_str = names[0]
@@ -177,7 +283,9 @@ def _format_timezone_block(
         else:
             names_str = ", ".join(names[:-1]) + f", and {names[-1]}"
         parts.append(f"{names_str} {current_time} ({tz_name})")
+        _format_names_ms += (perf_counter() - _format_names_t0) * 1000
 
+    _unknown_format_t0 = perf_counter()
     if unknown_names:
         if len(unknown_names) == 1:
             names_str = unknown_names[0]
@@ -186,11 +294,49 @@ def _format_timezone_block(
         else:
             names_str = ", ".join(unknown_names[:-1]) + f", and {unknown_names[-1]}"
         parts.append(f"{names_str} (unknown timezone)")
+    _format_names_ms += (perf_counter() - _unknown_format_t0) * 1000
 
     if not parts:
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] timezone.format_block.detail "
+                "total=%.0fms early_return=True build_map=%.0fms "
+                "current_times=%.0fms format_names=%.0fms join=0ms "
+                "participants=%d timezones=%d unknown=%d"
+            ),
+            (perf_counter() - _timing_t0) * 1000,
+            _build_map_ms,
+            _current_times_ms,
+            _format_names_ms,
+            len(participants),
+            len(tz_to_names),
+            len(unknown_names),
+        )
         return None
 
-    return "[Now: " + " | ".join(parts) + "]"
+    _join_t0 = perf_counter()
+    rendered = "[Now: " + " | ".join(parts) + "]"
+    _join_ms = (perf_counter() - _join_t0) * 1000
+    log_startup_timing(
+        LOGGER,
+        (
+            "⏱️ [StartupTiming] timezone.format_block.detail "
+            "total=%.0fms early_return=False build_map=%.0fms "
+            "current_times=%.0fms format_names=%.0fms join=%.0fms "
+            "participants=%d timezones=%d unknown=%d chars=%d"
+        ),
+        (perf_counter() - _timing_t0) * 1000,
+        _build_map_ms,
+        _current_times_ms,
+        _format_names_ms,
+        _join_ms,
+        len(participants),
+        len(tz_to_names),
+        len(unknown_names),
+        len(rendered),
+    )
+    return rendered
 
 
 def _get_message_timezone_block(
@@ -231,22 +377,42 @@ def _get_email_timezone_block(
     Returns:
         Formatted timezone block or None
     """
+    _timing_t0 = perf_counter()
     if contact_index is None:
+        log_startup_timing(
+            LOGGER,
+            "⏱️ [StartupTiming] timezone.email_block.detail total=%.0fms no_contact_index=True",
+            (perf_counter() - _timing_t0) * 1000,
+        )
         return None
 
     # Collect all participant emails
+    _collect_t0 = perf_counter()
     all_emails: list[str] = []
     all_emails.extend(message.to or [])
     all_emails.extend(message.cc or [])
     all_emails.extend(message.bcc or [])
+    _collect_ms = (perf_counter() - _collect_t0) * 1000
 
     if not all_emails:
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] timezone.email_block.detail "
+                "total=%.0fms collect=%.0fms lookup_contacts=0ms format_block=0ms "
+                "emails=0 unique=0 contacts_found=0 rendered=False"
+            ),
+            (perf_counter() - _timing_t0) * 1000,
+            _collect_ms,
+        )
         return None
 
     # Look up each contact and build participants list
     participants: list[tuple[str, str | None]] = []
     seen_emails: set[str] = set()
+    contacts_found = 0
 
+    _lookup_t0 = perf_counter()
     for email in all_emails:
         if email.lower() in seen_emails:
             continue
@@ -254,6 +420,7 @@ def _get_email_timezone_block(
 
         contact = contact_index.get_contact(email=email)
         if contact:
+            contacts_found += 1
             first_name = contact.get("first_name") or ""
             surname = contact.get("surname") or ""
             name = f"{first_name} {surname}".strip() or email
@@ -261,14 +428,48 @@ def _get_email_timezone_block(
             participants.append((name, tz))
         else:
             participants.append((email, None))
+    _lookup_ms = (perf_counter() - _lookup_t0) * 1000
 
     if not participants:
+        log_startup_timing(
+            LOGGER,
+            (
+                "⏱️ [StartupTiming] timezone.email_block.detail "
+                "total=%.0fms collect=%.0fms lookup_contacts=%.0fms "
+                "format_block=0ms emails=%d unique=%d contacts_found=%d rendered=False"
+            ),
+            (perf_counter() - _timing_t0) * 1000,
+            _collect_ms,
+            _lookup_ms,
+            len(all_emails),
+            len(seen_emails),
+            contacts_found,
+        )
         return None
 
-    return _format_timezone_block(
+    _format_t0 = perf_counter()
+    rendered = _format_timezone_block(
         assistant_tz=assistant_timezone,
         participants=participants,
     )
+    _format_ms = (perf_counter() - _format_t0) * 1000
+    log_startup_timing(
+        LOGGER,
+        (
+            "⏱️ [StartupTiming] timezone.email_block.detail "
+            "total=%.0fms collect=%.0fms lookup_contacts=%.0fms "
+            "format_block=%.0fms emails=%d unique=%d contacts_found=%d rendered=%s"
+        ),
+        (perf_counter() - _timing_t0) * 1000,
+        _collect_ms,
+        _lookup_ms,
+        _format_ms,
+        len(all_emails),
+        len(seen_emails),
+        contacts_found,
+        rendered is not None,
+    )
+    return rendered
 
 
 # =============================================================================
