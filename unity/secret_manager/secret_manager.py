@@ -311,7 +311,16 @@ class SecretManager(BaseSecretManager):
             except Exception:
                 continue
 
-        for stale_name in active_allowlist - secrets_dict.keys():
+        # Stale-cleanup: only the built-in Google/Microsoft OAuth keys are
+        # owned by THIS sync, so only those may be deleted when missing
+        # from Orchestra's response.  Integration-managed keys (e.g.
+        # EMPLOYMENTHERO_REFRESH_TOKEN) and customer-pasted keys (CLIENT_ID,
+        # CLIENT_SECRET, API tokens) are written into the same Secrets
+        # context by Console's OAuth callback / paste flow and must NOT
+        # be cleaned up here just because Orchestra's secrets payload
+        # omits them — that would silently wipe valid user state every
+        # time the admin endpoint returned a partial or stripped response.
+        for stale_name in self._BUILTIN_OAUTH_SECRET_ALLOWLIST - secrets_dict.keys():
             try:
                 ids = unify.get_logs(
                     context=self._ctx,
