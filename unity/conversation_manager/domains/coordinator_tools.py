@@ -3,13 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Literal
 
 import unify
 from pydantic import BaseModel, ConfigDict, Field
 from unify.utils.http import RequestError
 
 from unity.common.tool_outcome import ToolError
+from unity.coordinator_manager.activity import (
+    activity_entity,
+    coordinator_activity_id,
+    publish_coordinator_activity,
+    safe_activity_text,
+)
+from unity.coordinator_manager.coordinator_manager import CoordinatorOnboardingManager
+from unity.events.types.coordinator_activity import (
+    CoordinatorActivityEntity,
+    CoordinatorActivityPhase,
+    CoordinatorActivityStage,
+    CoordinatorActivitySurface,
+)
 from unity.session_details import SESSION_DETAILS
 
 if TYPE_CHECKING:
@@ -60,6 +74,13 @@ class CoordinatorTools:
         self._known_assistant_ids: set[str] = set()
         self._space_cache: list[dict[str, Any]] | None = None
         self._known_space_ids: set[str] = set()
+        self._activity_metadata: dict[
+            str,
+            tuple[
+                list[CoordinatorActivitySurface],
+                list[CoordinatorActivityEntity | dict[str, Any]],
+            ],
+        ] = {}
 
     def create_assistant(
         self,
@@ -70,6 +91,16 @@ class CoordinatorTools:
     ) -> dict[str, Any] | ToolError:
         """Create a confirmed colleague after exact setup scope is agreed."""
 
+        colleague_name = _display_name(first_name=first_name, surname=surname)
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title=f"Creating {colleague_name} colleague",
+            surfaces=["colleagues"],
+            related_entities=[
+                activity_entity("colleague", name=colleague_name),
+            ],
+        )
         try:
             result = unify.create_assistant(
                 first_name=first_name,
@@ -78,9 +109,23 @@ class CoordinatorTools:
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title=f"Could not create {colleague_name} colleague",
+                error=error,
+            )
+            return error
         self._remember_assistant(result)
         self._clear_assistant_cache()
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title=f"Created {safe_activity_text(_assistant_display_name(result), fallback=colleague_name)} colleague",
+            surfaces=["colleagues"],
+            related_entities=[_assistant_entity(result, fallback=colleague_name)],
+            activity_id=activity_id,
+        )
         return result
 
     def delete_assistant(
@@ -90,20 +135,56 @@ class CoordinatorTools:
     ) -> dict[str, Any] | str | ToolError:
         """Delete a reachable colleague by assistant id."""
 
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Removing colleague",
+            surfaces=["colleagues"],
+            related_entities=[
+                activity_entity("colleague", name="Colleague", entity_id=agent_id),
+            ],
+        )
         reachable = self._assistant_is_reachable(agent_id)
         if isinstance(reachable, dict):
+            self._publish_failure(
+                activity_id,
+                title="Could not remove colleague",
+                error=reachable,
+            )
             return reachable
         if not reachable:
-            return _assistant_not_found(agent_id)
+            error = _assistant_not_found(agent_id)
+            self._publish_failure(
+                activity_id,
+                title="Could not remove colleague",
+                error=error,
+            )
+            return error
         try:
             result = unify.delete_assistant(
                 agent_id,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not remove colleague",
+                error=error,
+            )
+            return error
         self._known_assistant_ids.discard(str(agent_id))
         self._clear_assistant_cache()
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Removed colleague",
+            surfaces=["colleagues"],
+            related_entities=[
+                activity_entity("colleague", name="Colleague", entity_id=agent_id),
+            ],
+            activity_id=activity_id,
+        )
         return result
 
     def update_assistant_config(
@@ -114,11 +195,31 @@ class CoordinatorTools:
     ) -> dict[str, Any] | ToolError:
         """Update configuration for a reachable colleague."""
 
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Updating colleague profile",
+            surfaces=["colleagues"],
+            related_entities=[
+                activity_entity("colleague", name="Colleague", entity_id=agent_id),
+            ],
+        )
         reachable = self._assistant_is_reachable(agent_id)
         if isinstance(reachable, dict):
+            self._publish_failure(
+                activity_id,
+                title="Could not update colleague profile",
+                error=reachable,
+            )
             return reachable
         if not reachable:
-            return _assistant_not_found(agent_id)
+            error = _assistant_not_found(agent_id)
+            self._publish_failure(
+                activity_id,
+                title="Could not update colleague profile",
+                error=error,
+            )
+            return error
         try:
             result = unify.update_assistant_config(
                 agent_id,
@@ -126,9 +227,23 @@ class CoordinatorTools:
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not update colleague profile",
+                error=error,
+            )
+            return error
         self._remember_assistant(result)
         self._clear_assistant_cache()
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Updated colleague profile",
+            surfaces=["colleagues"],
+            related_entities=[_assistant_entity(result, fallback="Colleague")],
+            activity_id=activity_id,
+        )
         return result
 
     def list_assistants(
@@ -184,19 +299,65 @@ class CoordinatorTools:
                 not use ``Spaces/...`` paths or shared-space destinations here.
         """
 
+        surfaces = _surfaces_for_preseed(writes)
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Preparing colleague setup rows",
+            surfaces=surfaces,
+            related_entities=[
+                activity_entity(
+                    "colleague",
+                    name="Colleague",
+                    entity_id=target_assistant_id,
+                ),
+            ],
+        )
         reachable = self._assistant_is_reachable(target_assistant_id)
         if isinstance(reachable, dict):
+            self._publish_failure(
+                activity_id,
+                title="Could not prepare colleague setup rows",
+                error=reachable,
+            )
             return reachable
         if not reachable:
-            return _assistant_not_found(target_assistant_id)
+            error = _assistant_not_found(target_assistant_id)
+            self._publish_failure(
+                activity_id,
+                title="Could not prepare colleague setup rows",
+                error=error,
+            )
+            return error
         try:
-            return unify.pre_seed_colleague(
+            result = unify.pre_seed_colleague(
                 target_assistant_id,
                 _preseed_write_payload(writes),
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not prepare colleague setup rows",
+                error=error,
+            )
+            return error
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Prepared colleague setup rows",
+            surfaces=surfaces,
+            related_entities=[
+                activity_entity(
+                    "colleague",
+                    name="Colleague",
+                    entity_id=target_assistant_id,
+                ),
+            ],
+            activity_id=activity_id,
+        )
+        return result
 
     def create_space(
         self,
@@ -209,6 +370,16 @@ class CoordinatorTools:
         """Create a confirmed team space after exact setup scope is agreed."""
 
         del organization_id, owner_user_id
+        workspace_name = safe_activity_text(name, fallback="Workspace")
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title=f"Creating {workspace_name} workspace",
+            surfaces=["workspaces"],
+            related_entities=[
+                activity_entity("workspace", name=workspace_name),
+            ],
+        )
         try:
             result = unify.create_space(
                 name=name,
@@ -217,28 +388,78 @@ class CoordinatorTools:
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title=f"Could not create {workspace_name} workspace",
+                error=error,
+            )
+            return error
         self._remember_space(result)
         self._clear_space_cache()
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title=f"Created {safe_activity_text(_space_display_name(result), fallback=workspace_name)} workspace",
+            surfaces=["workspaces"],
+            related_entities=[_space_entity(result, fallback=workspace_name)],
+            activity_id=activity_id,
+        )
         return result
 
     def delete_space(self, *, space_id: int) -> dict[str, Any] | ToolError:
         """Delete a reachable team space."""
 
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Removing workspace",
+            surfaces=["workspaces"],
+            related_entities=[
+                activity_entity("workspace", name="Workspace", entity_id=space_id),
+            ],
+        )
         reachable = self._space_is_reachable(space_id)
         if isinstance(reachable, dict):
+            self._publish_failure(
+                activity_id,
+                title="Could not remove workspace",
+                error=reachable,
+            )
             return reachable
         if not reachable:
-            return _space_not_found(space_id)
+            error = _space_not_found(space_id)
+            self._publish_failure(
+                activity_id,
+                title="Could not remove workspace",
+                error=error,
+            )
+            return error
         try:
             result = unify.delete_space(
                 space_id,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not remove workspace",
+                error=error,
+            )
+            return error
         self._known_space_ids.discard(str(space_id))
         self._clear_space_cache()
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Removed workspace",
+            surfaces=["workspaces"],
+            related_entities=[
+                activity_entity("workspace", name="Workspace", entity_id=space_id),
+            ],
+            activity_id=activity_id,
+        )
         return result
 
     def update_space(
@@ -249,11 +470,31 @@ class CoordinatorTools:
     ) -> dict[str, Any] | ToolError:
         """Update a reachable team space after the intended change is agreed."""
 
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Updating workspace",
+            surfaces=["workspaces"],
+            related_entities=[
+                activity_entity("workspace", name="Workspace", entity_id=space_id),
+            ],
+        )
         reachable = self._space_is_reachable(space_id)
         if isinstance(reachable, dict):
+            self._publish_failure(
+                activity_id,
+                title="Could not update workspace",
+                error=reachable,
+            )
             return reachable
         if not reachable:
-            return _space_not_found(space_id)
+            error = _space_not_found(space_id)
+            self._publish_failure(
+                activity_id,
+                title="Could not update workspace",
+                error=error,
+            )
+            return error
         try:
             result = unify.update_space(
                 space_id,
@@ -261,9 +502,23 @@ class CoordinatorTools:
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not update workspace",
+                error=error,
+            )
+            return error
         self._remember_space(result)
         self._clear_space_cache()
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Updated workspace",
+            surfaces=["workspaces"],
+            related_entities=[_space_entity(result, fallback="Workspace")],
+            activity_id=activity_id,
+        )
         return result
 
     def add_space_member(
@@ -274,18 +529,45 @@ class CoordinatorTools:
     ) -> dict[str, Any] | ToolError:
         """Add a reachable assistant to a reachable space after membership is agreed."""
 
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Adding colleague to workspace",
+            surfaces=["membership"],
+            related_entities=_membership_entities(space_id, assistant_id),
+        )
         invalid = self._validate_space_and_assistant(space_id, assistant_id)
         if invalid is not None:
+            self._publish_failure(
+                activity_id,
+                title="Could not add colleague to workspace",
+                error=invalid,
+            )
             return invalid
 
         try:
-            return unify.add_space_member(
+            result = unify.add_space_member(
                 space_id,
                 assistant_id,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not add colleague to workspace",
+                error=error,
+            )
+            return error
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Added colleague to workspace",
+            surfaces=["membership"],
+            related_entities=_membership_entities(space_id, assistant_id),
+            activity_id=activity_id,
+        )
+        return result
 
     def remove_space_member(
         self,
@@ -295,18 +577,45 @@ class CoordinatorTools:
     ) -> dict[str, Any] | ToolError:
         """Remove a reachable assistant from a reachable space."""
 
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Removing colleague from workspace",
+            surfaces=["membership"],
+            related_entities=_membership_entities(space_id, assistant_id),
+        )
         invalid = self._validate_space_and_assistant(space_id, assistant_id)
         if invalid is not None:
+            self._publish_failure(
+                activity_id,
+                title="Could not remove colleague from workspace",
+                error=invalid,
+            )
             return invalid
 
         try:
-            return unify.remove_space_member(
+            result = unify.remove_space_member(
                 space_id,
                 assistant_id,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not remove colleague from workspace",
+                error=error,
+            )
+            return error
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Removed colleague from workspace",
+            surfaces=["membership"],
+            related_entities=_membership_entities(space_id, assistant_id),
+            activity_id=activity_id,
+        )
+        return result
 
     def list_spaces(
         self,
@@ -376,18 +685,48 @@ class CoordinatorTools:
     ) -> dict[str, Any] | ToolError:
         """Invite a reachable assistant's owner to a space after membership is agreed."""
 
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Sending workspace invitation",
+            surfaces=["invitations", "membership"],
+            related_entities=_membership_entities(space_id, assistant_id),
+        )
         invalid = self._validate_space_and_assistant(space_id, assistant_id)
         if invalid is not None:
+            self._publish_failure(
+                activity_id,
+                title="Could not send workspace invitation",
+                error=invalid,
+            )
             return invalid
 
         try:
-            return unify.invite_assistant_to_space(
+            result = unify.invite_assistant_to_space(
                 space_id,
                 assistant_id,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not send workspace invitation",
+                error=error,
+            )
+            return error
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Sent workspace invitation",
+            surfaces=["invitations", "membership"],
+            related_entities=[
+                *_membership_entities(space_id, assistant_id),
+                _invitation_entity(result),
+            ],
+            activity_id=activity_id,
+        )
+        return result
 
     def cancel_space_invitation(self, *, invite_id: int) -> dict[str, Any] | ToolError:
         """Cancel a pending space invitation created by the Coordinator owner.
@@ -396,13 +735,39 @@ class CoordinatorTools:
         the inviter can cancel an invitation.
         """
 
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Cancelling workspace invitation",
+            surfaces=["invitations"],
+            related_entities=[
+                activity_entity("invitation", name="Invitation", entity_id=invite_id),
+            ],
+        )
         try:
-            return unify.cancel_space_invitation(
+            result = unify.cancel_space_invitation(
                 invite_id,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
-            return _request_error_to_tool_error(exc)
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not cancel workspace invitation",
+                error=error,
+            )
+            return error
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Cancelled workspace invitation",
+            surfaces=["invitations"],
+            related_entities=[
+                activity_entity("invitation", name="Invitation", entity_id=invite_id),
+            ],
+            activity_id=activity_id,
+        )
+        return result
 
     def list_pending_invitations(self) -> list[dict[str, Any]] | ToolError:
         """List pending space invitations for the Coordinator owner."""
@@ -411,6 +776,53 @@ class CoordinatorTools:
             return unify.list_pending_invitations(api_key=SESSION_DETAILS.unify_key)
         except RequestError as exc:
             return _request_error_to_tool_error(exc)
+
+    def set_setup_state(
+        self,
+        *,
+        mode: Literal["active", "ready_to_go"],
+        ready_at: datetime | None = None,
+    ) -> dict[str, Any] | ToolError:
+        """Update the Coordinator's setup mode after user-visible progress."""
+
+        return CoordinatorOnboardingManager().set_state(
+            mode=mode,
+            ready_at=ready_at,
+        )
+
+    def add_setup_checklist_item(
+        self,
+        *,
+        title: str,
+        description: str | None = None,
+        kind: str | None = None,
+    ) -> dict[str, Any] | ToolError:
+        """Add one user-facing step to the Coordinator setup checklist."""
+
+        return CoordinatorOnboardingManager().add_checklist_item(
+            title=title,
+            description=description,
+            kind=kind,
+        )
+
+    def update_setup_checklist_item(
+        self,
+        *,
+        item_id: int,
+        status: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        kind: str | None = None,
+    ) -> dict[str, Any] | ToolError:
+        """Update one user-facing step on the Coordinator setup checklist."""
+
+        return CoordinatorOnboardingManager().update_checklist_item(
+            item_id=item_id,
+            status=status,
+            title=title,
+            description=description,
+            kind=kind,
+        )
 
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the Coordinator-only tools for the slow-brain loop."""
@@ -433,6 +845,9 @@ class CoordinatorTools:
             "invite_assistant_to_space": self.invite_assistant_to_space,
             "cancel_space_invitation": self.cancel_space_invitation,
             "list_pending_invitations": self.list_pending_invitations,
+            "set_setup_state": self.set_setup_state,
+            "add_setup_checklist_item": self.add_setup_checklist_item,
+            "update_setup_checklist_item": self.update_setup_checklist_item,
         }
 
     def _assistant_is_reachable(self, agent_id: int) -> bool | ToolError:
@@ -506,6 +921,58 @@ class CoordinatorTools:
         for space in spaces:
             self._remember_space(space)
 
+    def _publish_activity(
+        self,
+        *,
+        phase: CoordinatorActivityPhase,
+        stage: CoordinatorActivityStage,
+        title: str,
+        surfaces: Sequence[CoordinatorActivitySurface],
+        related_entities: Sequence[CoordinatorActivityEntity | dict[str, Any]] = (),
+        activity_id: str | None = None,
+    ) -> str:
+        resolved_activity_id = activity_id or coordinator_activity_id("setup")
+        publish_coordinator_activity(
+            phase=phase,
+            stage=stage,
+            title=title,
+            surfaces=surfaces,
+            related_entities=related_entities,
+            activity_id=resolved_activity_id,
+            correlation_id=resolved_activity_id,
+        )
+        if phase in {"started", "progress", "needs_input", "blocked"}:
+            self._activity_metadata[resolved_activity_id] = (
+                list(dict.fromkeys(surfaces)),
+                list(related_entities),
+            )
+        elif phase in {"completed", "failed"}:
+            self._activity_metadata.pop(resolved_activity_id, None)
+        return resolved_activity_id
+
+    def _publish_failure(
+        self,
+        activity_id: str,
+        *,
+        title: str,
+        error: ToolError,
+    ) -> None:
+        surfaces, related_entities = self._activity_metadata.pop(
+            activity_id,
+            ([], []),
+        )
+        publish_coordinator_activity(
+            phase="failed",
+            stage="implementation",
+            title=title,
+            surfaces=surfaces,
+            related_entities=related_entities,
+            activity_id=activity_id,
+            correlation_id=activity_id,
+            status="error",
+            error=_tool_error_message(error),
+        )
+
 
 def _assistant_not_found(agent_id: int) -> ToolError:
     """Build a tool error for assistant ids outside the reachable set."""
@@ -515,6 +982,104 @@ def _assistant_not_found(agent_id: int) -> ToolError:
         "message": f"Assistant {agent_id} is not reachable by this Coordinator.",
         "details": {"agent_id": agent_id},
     }
+
+
+def _display_name(*, first_name: object, surname: object | None = None) -> str:
+    name = " ".join(str(part or "").strip() for part in (first_name, surname)).strip()
+    return safe_activity_text(name, fallback="New colleague")
+
+
+def _assistant_display_name(assistant: dict[str, Any]) -> str:
+    first_name = assistant.get("first_name") or assistant.get("firstName")
+    surname = (
+        assistant.get("surname")
+        or assistant.get("last_name")
+        or assistant.get("lastName")
+    )
+    return _display_name(first_name=first_name, surname=surname)
+
+
+def _assistant_entity(
+    assistant: dict[str, Any],
+    *,
+    fallback: str,
+):
+    return activity_entity(
+        "colleague",
+        name=_assistant_display_name(assistant) or fallback,
+        entity_id=assistant.get("agent_id")
+        or assistant.get("agentId")
+        or assistant.get("id"),
+    )
+
+
+def _space_display_name(space: dict[str, Any]) -> str:
+    return safe_activity_text(space.get("name"), fallback="Workspace")
+
+
+def _space_entity(
+    space: dict[str, Any],
+    *,
+    fallback: str,
+):
+    return activity_entity(
+        "workspace",
+        name=_space_display_name(space) or fallback,
+        entity_id=space.get("space_id") or space.get("spaceId") or space.get("id"),
+    )
+
+
+def _membership_entities(space_id: int, assistant_id: int):
+    return [
+        activity_entity("workspace", name="Workspace", entity_id=space_id),
+        activity_entity("colleague", name="Colleague", entity_id=assistant_id),
+    ]
+
+
+def _invitation_entity(invitation: dict[str, Any]):
+    return activity_entity(
+        "invitation",
+        name="Invitation",
+        entity_id=(
+            invitation.get("invite_id")
+            or invitation.get("inviteId")
+            or invitation.get("invitation_id")
+            or invitation.get("id")
+        ),
+    )
+
+
+def _surfaces_for_preseed(
+    writes: Sequence[CoordinatorPreseedWrite | dict[str, Any]],
+) -> list[CoordinatorActivitySurface]:
+    surfaces: list[CoordinatorActivitySurface] = []
+    for write in writes:
+        context = (
+            write.context
+            if isinstance(write, CoordinatorPreseedWrite)
+            else write.get("context")
+        )
+        context_name = str(context or "").lower()
+        if context_name.startswith("tasks"):
+            surfaces.append("tasks")
+        elif context_name.startswith("knowledge"):
+            surfaces.append("memory")
+        elif context_name.startswith("guidance"):
+            surfaces.append("guidance")
+        elif context_name.startswith("dashboards"):
+            surfaces.append("dashboards")
+        elif context_name.startswith("functions"):
+            surfaces.append("functions")
+        elif context_name.startswith("data"):
+            surfaces.append("data")
+    return list(dict.fromkeys(surfaces or ["memory"]))
+
+
+def _tool_error_message(error: ToolError) -> str:
+    return safe_activity_text(
+        error.get("message"),
+        fallback="The setup step could not finish.",
+    )
 
 
 def _space_not_found(space_id: int) -> ToolError:

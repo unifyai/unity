@@ -14,6 +14,7 @@ from unity.common.log_utils import log as unity_log
 from unity.common.model_to_fields import model_to_fields
 from unity.common.state_managers import BaseStateManager
 from unity.common.tool_outcome import ToolError, ToolOutcome
+from unity.coordinator_manager.activity import publish_coordinator_activity
 from unity.manager_registry import SingletonABCMeta
 from unity.session_details import SESSION_DETAILS
 
@@ -172,16 +173,22 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
 
         now = _utc_now()
         current = self.get_state()
+        if current is not None and current.get("mode") == mode and ready_at is None:
+            return {"outcome": "coordinator state unchanged", "details": {"mode": mode}}
+
         next_ready_at = ready_at
         if mode == "ready_to_go" and next_ready_at is None:
             next_ready_at = now
+        should_emit_ready = mode == "ready_to_go" and (
+            current is None or current.get("mode") != "ready_to_go"
+        )
 
         if current is None:
             unity_log(
                 context=self._get_state_context(),
                 mode=mode,
-                started_at=now,
-                ready_at=next_ready_at,
+                started_at=_log_datetime(now),
+                ready_at=_log_datetime(next_ready_at),
                 new=True,
                 mutable=True,
                 add_to_all_context=False,
@@ -198,7 +205,10 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
                     "Coordinator state row disappeared before it could be updated.",
                     {},
                 )
-            updates: dict[str, Any] = {"mode": mode, "ready_at": next_ready_at}
+            updates: dict[str, Any] = {
+                "mode": mode,
+                "ready_at": _log_datetime(next_ready_at),
+            }
             unify.update_logs(
                 logs=[ids[0]],
                 context=self._get_state_context(),
@@ -206,6 +216,14 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
                 overwrite=True,
             )
 
+        if should_emit_ready:
+            publish_coordinator_activity(
+                phase="completed",
+                stage="handoff",
+                title="Setup is ready to go",
+                surfaces=["colleagues", "workspaces", "tasks", "credentials"],
+                summary="The setup plan is ready for the user to review and keep tuning.",
+            )
         return {"outcome": "coordinator state updated", "details": {"mode": mode}}
 
     def add_checklist_item(
@@ -231,11 +249,20 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             description=description,
             kind=kind,
             status="pending",
-            created_at=now,
-            updated_at=now,
+            created_at=_log_datetime(now),
+            updated_at=_log_datetime(now),
             new=True,
             mutable=True,
             add_to_all_context=False,
+        )
+        publish_coordinator_activity(
+            phase="progress",
+            stage="requirements",
+            title=f"Added setup step: {title}",
+            surfaces=["tasks"],
+            checklist_item_id=row.entries["item_id"],
+            activity_id=_checklist_activity_id(row.entries["item_id"]),
+            correlation_id=_checklist_activity_id(row.entries["item_id"]),
         )
         return {
             "outcome": "checklist item added",
@@ -281,7 +308,7 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
                 "At least one checklist field must be provided.",
                 {"item_id": item_id},
             )
-        updates["updated_at"] = _utc_now()
+        updates["updated_at"] = _log_datetime(_utc_now())
 
         ids = self._checklist_log_ids(item_id)
         if isinstance(ids, dict):
@@ -293,6 +320,20 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             entries=updates,
             overwrite=True,
         )
+        if status in {"done", "skipped"}:
+            publish_coordinator_activity(
+                phase="completed",
+                stage="handoff" if status == "done" else "requirements",
+                title=(
+                    "Completed setup checklist step"
+                    if status == "done"
+                    else "Skipped setup checklist step"
+                ),
+                surfaces=["tasks"],
+                checklist_item_id=item_id,
+                activity_id=_checklist_activity_id(item_id),
+                correlation_id=_checklist_activity_id(item_id),
+            )
         return {"outcome": "checklist item updated", "details": {"item_id": item_id}}
 
     def delete_checklist_item(self, *, item_id: int) -> ToolOutcome | ToolError:
@@ -364,6 +405,16 @@ def _assistant_display_name(assistant: dict[str, Any]) -> str | None:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _log_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat()
+
+
+def _checklist_activity_id(item_id: int) -> str:
+    return f"checklist-{int(item_id)}"
 
 
 def _tool_error(error_kind: str, message: str, details: Any) -> ToolError:

@@ -42,6 +42,9 @@ class TestCoordinatorTools:
             "invite_assistant_to_space",
             "cancel_space_invitation",
             "list_pending_invitations",
+            "set_setup_state",
+            "add_setup_checklist_item",
+            "update_setup_checklist_item",
         }
 
     def test_list_assistants_uses_owner_key_and_current_sdk_shape(self, monkeypatch):

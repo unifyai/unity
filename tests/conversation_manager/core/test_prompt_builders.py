@@ -169,6 +169,9 @@ class TestCoordinatorPrompt:
         assert 'destination="space:<id>"' in prompt
         assert "remove_space_member" in prompt
         assert "cancel_space_invitation" in prompt
+        assert "custom colleague media" in prompt
+        assert "existing durable URL or GCS path" in prompt
+        assert "cannot upload local files" in prompt
 
         assert "per-body authoring" not in prompt
         assert "I will pull" not in prompt
@@ -195,9 +198,11 @@ class TestCoordinatorPrompt:
         assert "first validation" in prompt
         assert "Requirements brief" in prompt
         assert "Proposed setup" in prompt
-        assert "I ask one high-leverage question per turn" in prompt
+        assert "one high-leverage question at a time" in prompt
         assert "do not turn discovery into a generic intake form" in prompt
-        assert "When enough is known, I stop interviewing" in prompt
+        assert "I am an onboarder, not an interrogator" in prompt
+        assert "whether the user wants to continue with the next integration" in prompt
+        assert "When enough is known, I stop asking" in prompt
 
     def test_coordinator_prompt_fingerholds_integration_secret_setup(self):
         prompt = _build(is_coordinator=True)
