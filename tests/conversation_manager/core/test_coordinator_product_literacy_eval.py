@@ -120,6 +120,7 @@ class CoordinatorScenario:
     mode: Mode = Mode.TEXT
     forbidden_tools: frozenset[str] = field(default_factory=frozenset)
     required_tools: frozenset[str] = field(default_factory=frozenset)
+    required_tool_args: dict[str, tuple[str, ...]] = field(default_factory=dict)
     space_summaries: tuple[SpaceSummary, ...] = ()
 
 
@@ -434,6 +435,8 @@ class _RecordingTools:
         *,
         mode: str,
         ready_at: str | None = None,
+        chat_prompt: str | None = None,
+        chat_prompt_label: str | None = None,
     ) -> dict[str, Any]:
         """Update the Coordinator's setup mode after user-visible progress."""
 
@@ -445,6 +448,8 @@ class _RecordingTools:
         title: str,
         description: str | None = None,
         kind: str | None = None,
+        chat_prompt: str | None = None,
+        chat_prompt_label: str | None = None,
     ) -> dict[str, Any]:
         """Add one user-facing step to the Coordinator setup checklist."""
 
@@ -467,6 +472,8 @@ class _RecordingTools:
         title: str | None = None,
         description: str | None = None,
         kind: str | None = None,
+        chat_prompt: str | None = None,
+        chat_prompt_label: str | None = None,
     ) -> dict[str, Any]:
         """Update one user-facing step on the Coordinator setup checklist."""
 
@@ -1287,11 +1294,16 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
             "checklist item, recommend the best first slice instead of trying to set "
             "up all ten integrations at once, ask one useful next question or "
             "confirmation, and explicitly offer to continue to the next integration "
-            "or pause after the first slice. It should not create assistants, spaces, "
-            "memberships, credentials, or ready state before the setup details are "
-            "confirmed."
+            "or pause after the first slice. The setup-checklist tool call should "
+            "include `chat_prompt` and `chat_prompt_label` that capture the suggested "
+            "reply for continuing, pausing, or choosing the first slice. It should "
+            "not create assistants, spaces, memberships, credentials, or ready state "
+            "before the setup details are confirmed."
         ),
         required_tools=frozenset({"add_setup_checklist_item", "send_unify_message"}),
+        required_tool_args={
+            "add_setup_checklist_item": ("chat_prompt", "chat_prompt_label"),
+        },
         forbidden_tools=frozenset(
             {
                 "create_assistant",
@@ -1594,6 +1606,22 @@ async def _run_and_verify_scenario(
     assert not forbidden_called, _format_failure(scenario, result)
     missing_required = set(scenario.required_tools) - called_tools
     assert not missing_required, _format_failure(scenario, result)
+    for tool_name, required_args in scenario.required_tool_args.items():
+        matching_calls = [tool for tool in result.tools if tool.name == tool_name]
+        assert matching_calls, _format_failure(scenario, result)
+        missing_arg_calls = [
+            {
+                arg_name
+                for arg_name in required_args
+                if not isinstance(tool.args.get(arg_name), str)
+                or not tool.args[arg_name].strip()
+            }
+            for tool in matching_calls
+        ]
+        assert any(not missing for missing in missing_arg_calls), _format_failure(
+            scenario,
+            result,
+        )
 
     if not scenario.is_coordinator:
         assert not (called_tools & set(_COORDINATOR_TOOLS)), _format_failure(

@@ -518,9 +518,9 @@ def _build_coordinator_workspace_tool_listing() -> str:
             "- `invite_assistant_to_space`: Invite a reachable assistant's owner to join a reachable space.",
             "- `cancel_space_invitation`: Cancel a pending invitation I created after explicit confirmation.",
             "- `list_pending_invitations`: List pending space invitations for this Coordinator owner.",
-            "- `add_setup_checklist_item`: Add a concise user-facing setup step when the plan gains a meaningful next action.",
-            "- `update_setup_checklist_item`: Mark setup steps done or skipped, or refine their wording as the user clarifies the plan.",
-            "- `set_setup_state`: Mark setup `ready_to_go` once the useful first version is agreed, created, and ready for the user to keep tuning.",
+            "- `add_setup_checklist_item`: Add a concise user-facing setup step when the plan gains a meaningful next action. Include `chat_prompt` and `chat_prompt_label` only when the activity card should offer a suggested reply for the user's next message.",
+            "- `update_setup_checklist_item`: Mark setup steps done or skipped, or refine their wording as the user clarifies the plan. Include `chat_prompt` and `chat_prompt_label` for follow-up choices such as continuing, pausing, revisiting, or resolving a blocked step.",
+            "- `set_setup_state`: Mark setup `ready_to_go` once the useful first version is agreed, created, and ready for the user to keep tuning. Include a review-oriented `chat_prompt` and `chat_prompt_label` when the handoff should invite the user back into chat.",
         ],
     )
 

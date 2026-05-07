@@ -782,12 +782,16 @@ class CoordinatorTools:
         *,
         mode: Literal["active", "ready_to_go"],
         ready_at: datetime | None = None,
+        chat_prompt: str | None = None,
+        chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Update the Coordinator's setup mode after user-visible progress."""
+        """Update setup mode and optionally attach a handoff suggested reply."""
 
         return CoordinatorOnboardingManager().set_state(
             mode=mode,
             ready_at=ready_at,
+            chat_prompt=chat_prompt,
+            chat_prompt_label=chat_prompt_label,
         )
 
     def add_setup_checklist_item(
@@ -796,13 +800,17 @@ class CoordinatorTools:
         title: str,
         description: str | None = None,
         kind: str | None = None,
+        chat_prompt: str | None = None,
+        chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Add one user-facing step to the Coordinator setup checklist."""
+        """Add one user-facing setup step and optional suggested reply CTA."""
 
         return CoordinatorOnboardingManager().add_checklist_item(
             title=title,
             description=description,
             kind=kind,
+            chat_prompt=chat_prompt,
+            chat_prompt_label=chat_prompt_label,
         )
 
     def update_setup_checklist_item(
@@ -813,8 +821,10 @@ class CoordinatorTools:
         title: str | None = None,
         description: str | None = None,
         kind: str | None = None,
+        chat_prompt: str | None = None,
+        chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Update one user-facing step on the Coordinator setup checklist."""
+        """Update one user-facing setup step and optional suggested reply CTA."""
 
         return CoordinatorOnboardingManager().update_checklist_item(
             item_id=item_id,
@@ -822,6 +832,8 @@ class CoordinatorTools:
             title=title,
             description=description,
             kind=kind,
+            chat_prompt=chat_prompt,
+            chat_prompt_label=chat_prompt_label,
         )
 
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
