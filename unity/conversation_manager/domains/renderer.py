@@ -16,6 +16,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING
 
 from unity.common._async_tool.utils import get_handle_paused_state
+from unity.common.prompt_helpers import get_assistant_timezone
 from unity.common.startup_timing import log_startup_timing
 from unity.conversation_manager.domains.contact_index import (
     ApiMessage,
@@ -96,100 +97,6 @@ def _get_current_time_in_timezone(tz_name: str) -> str:
         _format_ms,
         tz_name,
         success,
-    )
-    return result
-
-
-_assistant_tz_cache: tuple[float, str | None] | None = None
-_ASSISTANT_TZ_TTL = 300  # 5 minutes — timezone changes are very rare
-
-
-def _get_assistant_timezone() -> str | None:
-    """Get the assistant's timezone from contact_id=0.
-
-    Uses a module-level TTL cache to avoid synchronous HTTP round-trips to
-    Orchestra on every render_state() call (which runs in the hot path of the
-    event loop).
-
-    Returns:
-        IANA timezone identifier or None if not available.
-    """
-    global _assistant_tz_cache
-    import time
-
-    _timing_t0 = perf_counter()
-    now = time.monotonic()
-    _monotonic_ms = (perf_counter() - _timing_t0) * 1000
-    if _assistant_tz_cache is not None:
-        cached_at, cached_val = _assistant_tz_cache
-        if now - cached_at < _ASSISTANT_TZ_TTL:
-            log_startup_timing(
-                LOGGER,
-                (
-                    "⏱️ [StartupTiming] timezone.assistant_lookup.detail "
-                    "total=%.0fms monotonic=%.0fms cache_hit=True cache_age=%.0fs "
-                    "context=0ms get_logs=0ms extract=0ms rows=0 tz=%s error="
-                ),
-                (perf_counter() - _timing_t0) * 1000,
-                _monotonic_ms,
-                now - cached_at,
-                cached_val,
-            )
-            return cached_val
-
-    import unify as _unify
-    from unity.session_details import SESSION_DETAILS
-
-    result: str | None = None
-    _context_t0 = perf_counter()
-    _contacts_ctx = (
-        f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
-    )
-    _context_ms = (perf_counter() - _context_t0) * 1000
-
-    rows_count = 0
-    error_type = ""
-    try:
-        _get_logs_t0 = perf_counter()
-        rows = _unify.get_logs(
-            context=_contacts_ctx,
-            filter="contact_id == 0",
-            limit=1,
-            from_fields=["timezone"],
-        )
-        _get_logs_ms = (perf_counter() - _get_logs_t0) * 1000
-        rows_count = len(rows or [])
-        _extract_t0 = perf_counter()
-        if rows:
-            val = rows[0].entries.get("timezone")
-            if isinstance(val, str) and val.strip():
-                result = val.strip()
-    except Exception:
-        _get_logs_ms = (perf_counter() - _get_logs_t0) * 1000
-        _extract_t0 = perf_counter()
-        error_type = "get_logs"
-    _extract_ms = (perf_counter() - _extract_t0) * 1000
-
-    _cache_store_t0 = perf_counter()
-    _assistant_tz_cache = (now, result)
-    _cache_store_ms = (perf_counter() - _cache_store_t0) * 1000
-    log_startup_timing(
-        LOGGER,
-        (
-            "⏱️ [StartupTiming] timezone.assistant_lookup.detail "
-            "total=%.0fms monotonic=%.0fms cache_hit=False cache_age=0s "
-            "context=%.0fms get_logs=%.0fms extract=%.0fms cache_store=%.0fms "
-            "rows=%d tz=%s error=%s"
-        ),
-        (perf_counter() - _timing_t0) * 1000,
-        _monotonic_ms,
-        _context_ms,
-        _get_logs_ms,
-        _extract_ms,
-        _cache_store_ms,
-        rows_count,
-        result,
-        error_type,
     )
     return result
 
@@ -1173,7 +1080,7 @@ class Renderer:
         """
         _render_t0 = perf_counter()
         # Fetch assistant's timezone once for all contacts
-        assistant_timezone = _get_assistant_timezone()
+        assistant_timezone = get_assistant_timezone()
         _timezone_ms = (perf_counter() - _render_t0) * 1000
 
         # Group global thread entries by contact_id
