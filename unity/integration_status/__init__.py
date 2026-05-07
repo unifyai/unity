@@ -114,22 +114,55 @@ def reset_session_cache() -> None:
 def _load_registry() -> list[dict[str, Any]]:
     """Pull rows from ``Integrations/Manifests`` once per session, cache.
 
-    The persisted registry only contains rows for integrations that were
-    declared in the deployment spec (``integrations=[...]``).  An assistant
-    may have credentials for *available* packages that weren't declared —
-    the typical case is a manual token paste in Console.  To bridge that
-    gap we synthesize in-memory rows from disk discovery when the persisted
-    registry is empty.  See :mod:`unity.integration_status.discovery`.
+    Always returns the **union** of two sources, deduped by slug:
+
+    * ``_read_persisted_registry()`` — rows the deployment seed wrote into
+      ``Integrations/Manifests``.  Authoritative for slugs they cover
+      because their ``function_names_json`` was the basis of the
+      FunctionManager rows the deploy pass created; ``enabled_function_ids``
+      relies on that mapping holding.
+    * ``_synthesize_rows_from_discovery()`` — rows projected from every
+      manifest currently on disk under unity-deploy's package roots.
+      Covers packages installed but not declared in any deployment, so
+      auto-detection works for both registered and non-registered
+      assistants — matching the design intent that the integrations sync
+      exists only to auto-detect unity-deploy packages.
+
+    Persisted rows win on slug conflict; disk-only slugs are added on top.
+    A package added to disk after the last deploy seed is detected via the
+    discovery half of the union; once a token paste enables it, hot-load
+    writes the real persisted row so subsequent reads come from the
+    persisted source.
     """
     cache = _session_cache()
     if cache["registry_loaded"]:
         return cache["registry"]
 
-    rows = _read_persisted_registry()
-    if not rows:
-        rows = _synthesize_rows_from_discovery()
+    persisted = _read_persisted_registry()
+    discovered = _synthesize_rows_from_discovery()
+
+    by_slug: dict[str, dict[str, Any]] = {}
+    for row in persisted:
+        slug = row.get("slug")
+        if slug:
+            by_slug[slug] = row
+    for row in discovered:
+        slug = row.get("slug")
+        if slug and slug not in by_slug:
+            by_slug[slug] = row
+
+    rows = list(by_slug.values())
     cache["registry_loaded"] = True
     cache["registry"] = rows
+
+    logger.info(
+        "[integrations] _load_registry: persisted=%d discovered=%d "
+        "merged=%d slugs=%s",
+        len(persisted),
+        len(discovered),
+        len(rows),
+        sorted(by_slug.keys()),
+    )
     return rows
 
 
