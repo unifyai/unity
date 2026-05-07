@@ -128,6 +128,8 @@ class TestCoordinatorPrompt:
         assert "Dana Owner" in prompt
         assert "Coordinator workspace tools" in prompt
         assert "organize colleagues into shared workspaces" in prompt
+        assert "`chat_prompt` and `chat_prompt_label`" in prompt
+        assert "offer a suggested reply" in prompt
         for tool_name in CoordinatorTools(cm=object()).as_tools():
             assert f"`{tool_name}`" in prompt
 
@@ -145,6 +147,7 @@ class TestCoordinatorPrompt:
         assert "I am the Coordinator" not in prompt
         assert "Coordinator workspace tools" not in prompt
         assert "`create_assistant`" not in prompt
+        assert "`chat_prompt` and `chat_prompt_label`" not in prompt
 
     def test_coordinator_persona_carries_product_literacy_and_boundaries(self):
         prompt = _build(is_coordinator=True)

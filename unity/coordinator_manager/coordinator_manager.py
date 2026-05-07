@@ -161,8 +161,10 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         *,
         mode: Literal["active", "ready_to_go"],
         ready_at: datetime | None = None,
+        chat_prompt: str | None = None,
+        chat_prompt_label: str | None = None,
     ) -> ToolOutcome | ToolError:
-        """Create or update the Coordinator onboarding state row."""
+        """Create or update the Coordinator state row and optional handoff CTA."""
 
         if mode not in COORDINATOR_STATE_MODES:
             return _tool_error(
@@ -223,6 +225,8 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
                 title="Setup is ready to go",
                 surfaces=["colleagues", "workspaces", "tasks", "credentials"],
                 summary="The setup plan is ready for the user to review and keep tuning.",
+                chat_prompt=chat_prompt,
+                chat_prompt_label=chat_prompt_label,
             )
         return {"outcome": "coordinator state updated", "details": {"mode": mode}}
 
@@ -232,8 +236,10 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         title: str,
         description: str | None = None,
         kind: str | None = None,
+        chat_prompt: str | None = None,
+        chat_prompt_label: str | None = None,
     ) -> ToolOutcome | ToolError:
-        """Add a pending item to the Coordinator setup checklist."""
+        """Add a pending setup checklist item and optional activity-card CTA."""
 
         if not title.strip():
             return _tool_error(
@@ -263,6 +269,8 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             checklist_item_id=row.entries["item_id"],
             activity_id=_checklist_activity_id(row.entries["item_id"]),
             correlation_id=_checklist_activity_id(row.entries["item_id"]),
+            chat_prompt=chat_prompt,
+            chat_prompt_label=chat_prompt_label,
         )
         return {
             "outcome": "checklist item added",
@@ -277,8 +285,10 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         title: str | None = None,
         description: str | None = None,
         kind: str | None = None,
+        chat_prompt: str | None = None,
+        chat_prompt_label: str | None = None,
     ) -> ToolOutcome | ToolError:
-        """Update mutable fields on one Coordinator checklist item."""
+        """Update one checklist item and optionally emit a user-guidance CTA."""
 
         if status is not None and status not in COORDINATOR_CHECKLIST_STATUSES:
             return _tool_error(
@@ -302,24 +312,27 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             updates["description"] = description
         if kind is not None:
             updates["kind"] = kind
-        if not updates:
+        has_activity_cta = chat_prompt is not None or chat_prompt_label is not None
+        if not updates and not has_activity_cta:
             return _tool_error(
                 "invalid_argument",
                 "At least one checklist field must be provided.",
                 {"item_id": item_id},
             )
-        updates["updated_at"] = _log_datetime(_utc_now())
+        if updates:
+            updates["updated_at"] = _log_datetime(_utc_now())
 
         ids = self._checklist_log_ids(item_id)
         if isinstance(ids, dict):
             return ids
 
-        unify.update_logs(
-            logs=ids,
-            context=self._get_checklist_context(),
-            entries=updates,
-            overwrite=True,
-        )
+        if updates:
+            unify.update_logs(
+                logs=ids,
+                context=self._get_checklist_context(),
+                entries=updates,
+                overwrite=True,
+            )
         if status in {"done", "skipped"}:
             publish_coordinator_activity(
                 phase="completed",
@@ -333,6 +346,24 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
                 checklist_item_id=item_id,
                 activity_id=_checklist_activity_id(item_id),
                 correlation_id=_checklist_activity_id(item_id),
+                chat_prompt=chat_prompt,
+                chat_prompt_label=chat_prompt_label,
+            )
+        elif has_activity_cta:
+            publish_coordinator_activity(
+                phase="needs_input",
+                stage="requirements",
+                title=(
+                    f"Updated setup step: {title}"
+                    if title is not None
+                    else "Updated setup checklist step"
+                ),
+                surfaces=["tasks"],
+                checklist_item_id=item_id,
+                activity_id=_checklist_activity_id(item_id),
+                correlation_id=_checklist_activity_id(item_id),
+                chat_prompt=chat_prompt,
+                chat_prompt_label=chat_prompt_label,
             )
         return {"outcome": "checklist item updated", "details": {"item_id": item_id}}
 
