@@ -329,7 +329,9 @@ class EventBus:
 
     # ── Pub/Sub streaming for Live Actions ────────────────────────────────
     _GCP_PROJECT: str | None = None
-    _ACTION_EVENT_TYPES = frozenset({"ManagerMethod", "ToolLoop"})
+    _ACTION_EVENT_TYPES = frozenset(
+        {"ManagerMethod", "ToolLoop", "CoordinatorActivity"},
+    )
     _pubsub_publisher = None
     _pubsub_streaming_enabled: bool | None = None
 

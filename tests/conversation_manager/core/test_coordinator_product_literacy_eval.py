@@ -62,6 +62,16 @@ _COORDINATOR_TOOLS = (
     "invite_assistant_to_space",
     "cancel_space_invitation",
     "list_pending_invitations",
+    "set_setup_state",
+    "add_setup_checklist_item",
+    "update_setup_checklist_item",
+)
+_SETUP_PROGRESS_TOOLS = frozenset(
+    {
+        "set_setup_state",
+        "add_setup_checklist_item",
+        "update_setup_checklist_item",
+    },
 )
 
 
@@ -135,6 +145,10 @@ class _ContactIndex:
 
 class _RecordingTools:
     """Side-effect-free replicas of the production slow-brain tool surface."""
+
+    def __init__(self) -> None:
+        self._next_checklist_item_id = 1
+        self._checklist: dict[int, dict[str, Any]] = {}
 
     async def send_unify_message(
         self,
@@ -414,6 +428,58 @@ class _RecordingTools:
         """List pending space invitations for the Coordinator owner."""
 
         return [{"invite_id": 4401, "space_id": 3102, "email": "temp@example.com"}]
+
+    def set_setup_state(
+        self,
+        *,
+        mode: str,
+        ready_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Update the Coordinator's setup mode after user-visible progress."""
+
+        return {"outcome": "coordinator state updated", "details": {"mode": mode}}
+
+    def add_setup_checklist_item(
+        self,
+        *,
+        title: str,
+        description: str | None = None,
+        kind: str | None = None,
+    ) -> dict[str, Any]:
+        """Add one user-facing step to the Coordinator setup checklist."""
+
+        item_id = self._next_checklist_item_id
+        self._next_checklist_item_id += 1
+        self._checklist[item_id] = {
+            "item_id": item_id,
+            "title": title,
+            "description": description,
+            "kind": kind,
+            "status": "pending",
+        }
+        return {"outcome": "checklist item added", "details": {"item_id": item_id}}
+
+    def update_setup_checklist_item(
+        self,
+        *,
+        item_id: int,
+        status: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        kind: str | None = None,
+    ) -> dict[str, Any]:
+        """Update one user-facing step on the Coordinator setup checklist."""
+
+        current = self._checklist.setdefault(item_id, {"item_id": item_id})
+        for key, value in {
+            "status": status,
+            "title": title,
+            "description": description,
+            "kind": kind,
+        }.items():
+            if value is not None:
+                current[key] = value
+        return {"outcome": "checklist item updated", "details": {"item_id": item_id}}
 
     def as_tools(self, *, is_coordinator: bool) -> dict[str, Callable[..., Any]]:
         tools: dict[str, Callable[..., Any]] = {
@@ -800,7 +866,7 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
     ),
     CoordinatorScenario(
         scenario_id="salesforce-guided-or-self-serve-setup",
-        title="Salesforce credential setup choice",
+        title="Salesforce integration setup choice",
         business_context=(
             "A B2B services company is setting up a Renewal Desk colleague that will "
             "read Salesforce opportunities, watch renewal dates, and flag expansion "
@@ -1098,6 +1164,149 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
                 name="Launch War Room",
                 description="Shared launch coordination memory.",
             ),
+        ),
+    ),
+    CoordinatorScenario(
+        scenario_id="setup-checklist-update",
+        title="Checklist update after validated first slice",
+        business_context=(
+            "A B2B services company has completed the first Renewal Desk setup slice. "
+            "The Coordinator should keep setup bookkeeping current instead of only "
+            "chatting about the progress."
+        ),
+        turns=(
+            DialogueTurn(
+                "user",
+                "The read-only Salesforce connection is stored, the sample renewal "
+                "risk read matched our spreadsheet, and checklist item 3 is the "
+                "Salesforce validation step. Mark that done, but leave Gainsight and "
+                "Slack for later.",
+                new=True,
+            ),
+        ),
+        masked_components=(
+            "Checklist item 3 already exists and is the Salesforce validation step.",
+            "The user has explicitly said only the first version is ready; later "
+            "integrations remain pending.",
+        ),
+        rubric=(
+            "The response should update setup bookkeeping through "
+            "`update_setup_checklist_item` for item 3 with done status. It should "
+            "keep Gainsight and Slack as later work rather than pretending they are "
+            "done, and it must not create or delete colleagues, spaces, memberships, "
+            "or colleague-owned setup rows. It may mark the first setup slice ready "
+            "if it keeps later integrations explicitly pending."
+        ),
+        required_tools=frozenset({"update_setup_checklist_item"}),
+        forbidden_tools=frozenset(
+            {
+                "create_assistant",
+                "delete_assistant",
+                "update_assistant_config",
+                "create_space",
+                "delete_space",
+                "update_space",
+                "add_space_member",
+                "remove_space_member",
+                "invite_assistant_to_space",
+                "cancel_space_invitation",
+                "pre_seed_colleague",
+            },
+        ),
+    ),
+    CoordinatorScenario(
+        scenario_id="setup-ready-state",
+        title="Coordinator setup state marks first version ready",
+        business_context=(
+            "A Finance Ops onboarding flow has already created the confirmed first "
+            "version and resolved the critical checklist items. The user now wants the "
+            "Coordinator's durable setup state to reflect that handoff point."
+        ),
+        turns=(
+            DialogueTurn(
+                "user",
+                "The Finance Ops colleague is created, the NetSuite read validated, "
+                "and the remaining lower-priority integrations are either done or "
+                "skipped on the checklist. Mark the Coordinator setup state ready to "
+                "go. Do not create or change any colleagues or spaces.",
+                new=True,
+            ),
+        ),
+        masked_components=(
+            "Critical checklist steps are already completed or skipped.",
+            "No colleague, workspace, membership, or setup-row mutation is requested.",
+        ),
+        rubric=(
+            "The response should call `set_setup_state(mode='ready_to_go')` and avoid "
+            "workspace mutations. It may send a concise note, but it should not claim "
+            "future integrations are already live beyond the validated first version."
+        ),
+        required_tools=frozenset({"set_setup_state"}),
+        forbidden_tools=frozenset(
+            {
+                "create_assistant",
+                "delete_assistant",
+                "update_assistant_config",
+                "create_space",
+                "delete_space",
+                "update_space",
+                "add_space_member",
+                "remove_space_member",
+                "invite_assistant_to_space",
+                "cancel_space_invitation",
+                "pre_seed_colleague",
+                "add_setup_checklist_item",
+                "update_setup_checklist_item",
+            },
+        ),
+    ),
+    CoordinatorScenario(
+        scenario_id="multi-integration-onboarding-pacing",
+        title="Multi-integration setup is chunked into humane onboarding",
+        business_context=(
+            "A finance operations leader wants a new Unify rollout across many SaaS "
+            "systems and is worried the setup will take too long in one sitting."
+        ),
+        turns=(
+            DialogueTurn(
+                "user",
+                "We need NetSuite, Stripe, Salesforce, Gainsight, Zendesk, Slack, "
+                "Notion, Google Drive, Jira, and Docusign connected for Finance Ops. "
+                "Please make the setup checklist, start with the best first slice, "
+                "and don't make me sit through all ten integrations if we can pause.",
+                new=True,
+            ),
+        ),
+        masked_components=(
+            "No colleague, workspace, credential scope, or individual integration has "
+            "been confirmed yet.",
+            "The user explicitly wants a checklist and humane pacing.",
+        ),
+        rubric=(
+            "The response should behave like an onboarder: add at least one setup "
+            "checklist item, recommend the best first slice instead of trying to set "
+            "up all ten integrations at once, ask one useful next question or "
+            "confirmation, and explicitly offer to continue to the next integration "
+            "or pause after the first slice. It should not create assistants, spaces, "
+            "memberships, credentials, or ready state before the setup details are "
+            "confirmed."
+        ),
+        required_tools=frozenset({"add_setup_checklist_item", "send_unify_message"}),
+        forbidden_tools=frozenset(
+            {
+                "create_assistant",
+                "delete_assistant",
+                "update_assistant_config",
+                "create_space",
+                "delete_space",
+                "update_space",
+                "add_space_member",
+                "remove_space_member",
+                "invite_assistant_to_space",
+                "cancel_space_invitation",
+                "pre_seed_colleague",
+                "set_setup_state",
+            },
         ),
     ),
     CoordinatorScenario(

@@ -3,6 +3,7 @@ import datetime as dt
 
 from unity.events.event_bus import EventBus, Event
 from unity.events.types.comms import CommsPayload
+from unity.events.types.coordinator_activity import CoordinatorActivityPayload
 from unity.transcript_manager.types.message import Message
 from unity.conversation_manager.cm_types import Medium
 from tests.helpers import _handle_project
@@ -40,10 +41,11 @@ async def test_prefill_populates_comms_deque():
 
     latest = await bus2.search(filter="type == 'Comms'", limit=window)
 
+    latest_timestamps = {rec.timestamp for rec in latest}
     for sent in published:
-        assert any(
-            rec.timestamp == sent.timestamp for rec in latest
-        ), f"Event with ts {sent.timestamp} not found in prefilled window"
+        assert (
+            sent.timestamp in latest_timestamps
+        ), f"Missing timestamp: {sent.timestamp}"
 
 
 @pytest.mark.asyncio
@@ -72,9 +74,7 @@ async def test_non_prefilled_types_still_searchable():
     bus2 = EventBus()
     results = await bus2.search(filter="type == 'Message'", limit=10)
 
-    assert any(
-        r.timestamp == evt.timestamp for r in results
-    ), "Message event not found via backend fallback"
+    assert evt.timestamp in {r.timestamp for r in results}, "Message event not found"
 
 
 @pytest.mark.asyncio
@@ -108,3 +108,49 @@ async def test_row_id_seeded_for_non_prefilled_types():
         f"row_id counter ({next_id}) should be seeded above the "
         f"persisted row_id ({first_row_id})"
     )
+
+
+@pytest.mark.enable_eventbus
+@pytest.mark.asyncio
+@_handle_project
+async def test_coordinator_activity_is_registered_searchable_and_not_prefilled():
+    """CoordinatorActivity persists like other non-prefilled typed events."""
+
+    assert "CoordinatorActivity" not in EventBus._PREFILL_TYPES
+
+    bus = EventBus()
+    captured: list[Event] = []
+
+    async def _capture(events):
+        captured.extend(events)
+
+    await bus.register_callback(
+        event_type="CoordinatorActivity",
+        callback=_capture,
+        every_n=1,
+    )
+    evt = Event(
+        type="CoordinatorActivity",
+        payload=CoordinatorActivityPayload(
+            activity_id="activity-eventbus-1",
+            phase="completed",
+            stage="integration_setup",
+            surfaces=["colleagues"],
+            title="Created Revenue Ops colleague",
+            occurred_at=dt.datetime.now(dt.UTC),
+        ),
+    )
+
+    await bus.publish(evt)
+    await bus.ajoin_callbacks()
+    bus.join_published()
+
+    assert [event.event_id for event in captured] == [evt.event_id]
+
+    reloaded_bus = EventBus()
+    results = await reloaded_bus.search(
+        filter="type == 'CoordinatorActivity'",
+        limit=10,
+    )
+
+    assert evt.event_id in {result.event_id for result in results}
