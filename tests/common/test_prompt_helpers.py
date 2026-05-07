@@ -105,8 +105,10 @@ def test_now_recomputes_current_time_while_reusing_cached_timezone(monkeypatch):
 
 def test_now_falls_back_to_utc_when_timezone_lookup_fails(monkeypatch):
     module = _real_prompt_helpers(monkeypatch)
+    calls = []
 
     def fake_get_logs(**kwargs):
+        calls.append(kwargs)
         raise RuntimeError("backend unavailable")
 
     monkeypatch.setattr(module, "_contacts_context", lambda: "User/Assistant/Contacts")
@@ -120,6 +122,45 @@ def test_now_falls_back_to_utc_when_timezone_lookup_fails(monkeypatch):
 
     assert module.get_assistant_timezone() is None
     assert module.now() == "Thursday, May 07, 2026 at 08:00 AM UTC"
+    assert len(calls) == 2
+
+
+def test_failed_assistant_timezone_lookup_does_not_poison_cache(monkeypatch):
+    module = _real_prompt_helpers(monkeypatch)
+    calls = []
+
+    def fake_get_logs(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("backend unavailable")
+        return [SimpleNamespace(entries={"timezone": "Asia/Karachi"})]
+
+    monkeypatch.setattr(module, "_contacts_context", lambda: "User/Assistant/Contacts")
+    monkeypatch.setattr(module.time, "monotonic", lambda: 1000.0)
+    monkeypatch.setattr("unify.get_logs", fake_get_logs)
+
+    assert module.get_assistant_timezone() is None
+    assert module.get_assistant_timezone() == "Asia/Karachi"
+    assert len(calls) == 2
+
+
+def test_missing_assistant_timezone_row_does_not_poison_cache(monkeypatch):
+    module = _real_prompt_helpers(monkeypatch)
+    calls = []
+
+    def fake_get_logs(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return []
+        return [SimpleNamespace(entries={"timezone": "Asia/Karachi"})]
+
+    monkeypatch.setattr(module, "_contacts_context", lambda: "User/Assistant/Contacts")
+    monkeypatch.setattr(module.time, "monotonic", lambda: 1000.0)
+    monkeypatch.setattr("unify.get_logs", fake_get_logs)
+
+    assert module.get_assistant_timezone() is None
+    assert module.get_assistant_timezone() == "Asia/Karachi"
+    assert len(calls) == 2
 
 
 async def _sample_execute_code(

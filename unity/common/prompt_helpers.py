@@ -195,7 +195,10 @@ def _lookup_assistant_timezone() -> _AssistantTimezoneLookup:
     _extract_ms = (perf_counter() - _extract_t0) * 1000
 
     _cache_store_t0 = perf_counter()
-    _assistant_timezone_cache = (monotonic_now, contacts_ctx, result)
+    # Only cache a real timezone. Startup can briefly query before Contacts are
+    # readable; caching that miss would pin the assistant to UTC for the full TTL.
+    if result is not None:
+        _assistant_timezone_cache = (monotonic_now, contacts_ctx, result)
     _cache_store_ms = (perf_counter() - _cache_store_t0) * 1000
     log_startup_timing(
         LOGGER,
