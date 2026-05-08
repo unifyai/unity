@@ -338,12 +338,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
         from unity.coordinator_manager.coordinator_manager import (
             CoordinatorOnboardingManager,
         )
+        from unity.common.context_registry import ContextRegistry
+        from unity.conversation_manager.domains.managers_utils import (
+            ensure_runtime_context,
+        )
 
+        ensure_runtime_context()
         manager = CoordinatorOnboardingManager()
-        state = manager.get_state()
-        if state is None:
-            return None, None
-        return state, manager.get_checklist()
+        try:
+            state = manager.get_state()
+            if state is None:
+                return None, None
+            return state, manager.get_checklist()
+        except Exception as exc:
+            if ContextRegistry.is_missing_base_context_error(exc):
+                LOGGER.warning(
+                    "Coordinator context unavailable during prompt render; "
+                    "continuing without onboarding state.",
+                )
+                return None, None
+            raise
 
     def get_active_contact(self) -> dict | None:
         """Get the contact for the current active call, or fall back to the boss contact."""

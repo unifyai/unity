@@ -73,14 +73,34 @@ class ContextRegistry:
 
     @classmethod
     def _personal_root(cls, manager_name: str, table_name: str) -> str:
-        base = cls._base_context or cls._get_active_context()
+        base = cls._base_context
+        if not base:
+            try:
+                base = cls._get_active_context()
+            except Exception:
+                base = None
         if not base:
             raise RuntimeError(
                 f"Cannot resolve context for {manager_name}.{table_name}: "
                 "no base context available (ContextRegistry.setup() has not "
                 "run or the active Unify context is empty)",
             )
+        cls._base_context = base
         return base
+
+    @staticmethod
+    def is_missing_base_context_error(exc: BaseException) -> bool:
+        """Return whether *exc* indicates missing root-context setup."""
+        return isinstance(exc, RuntimeError) and (
+            "no base context available" in str(exc)
+        )
+
+    @classmethod
+    def set_base_context(cls, base_context: str) -> None:
+        """Cache an already-resolved base context root for worker tasks."""
+        if not base_context:
+            return
+        cls._base_context = base_context
 
     @classmethod
     def _invalid_destination(

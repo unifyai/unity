@@ -8,6 +8,7 @@ import unity
 
 from unity.logger import LOGGER
 from unity.common.startup_timing import log_startup_timing
+from unity.common.context_registry import ContextRegistry
 from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
 from unity.session_details import SESSION_DETAILS
@@ -33,6 +34,34 @@ event_broker = get_event_broker()
 
 # Cache for pre-hire exchange ID - used to group all pre-hire messages into one exchange
 _pre_hire_exchange_id: int | None = None
+
+
+def ensure_runtime_context(*, strict: bool = False) -> str:
+    """Rebind runtime context in this task and refresh ContextRegistry base."""
+    full_ctx = f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
+    context_set = False
+    try:
+        import unify as _unify
+
+        active_ctx = _unify.get_active_context() or {}
+        if active_ctx.get("read") != full_ctx or active_ctx.get("write") != full_ctx:
+            _unify.set_context(full_ctx, skip_create=True)
+            context_set = True
+    except Exception as exc:
+        if strict:
+            raise
+        LOGGER.warning(
+            f"{ICONS['managers_worker']} [ManagersWorker] Failed to set runtime context to {full_ctx}: {exc}",
+        )
+    if context_set:
+        LOGGER.debug(
+            f"{ICONS['managers_worker']} [ManagersWorker] Runtime context rebound to {full_ctx}",
+        )
+    # Keep a stable base root for worker threads that do not inherit
+    # contextvars from the main loop.
+    ContextRegistry.set_base_context(full_ctx)
+    return full_ctx
+
 
 # Thought: This entire file could actually be turned into a mixin class
 
@@ -857,6 +886,7 @@ async def log_message(
     local_message_id: int | None = None,
 ) -> None:
     """Log a message via TranscriptManager."""
+    ensure_runtime_context()
     event_name = event.__class__.__name__
     LOGGER.debug(f"{DEFAULT_ICON} publishing transcript {event_name}")
     event_name = event_name.lower()
@@ -1357,6 +1387,7 @@ async def listen_to_operations(cm: "ConversationManager") -> None:
     """
     # Wait for initialization to complete
     await wait_for_initialization(cm)
+    ensure_runtime_context()
 
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] Operations listener started, processing queue...",
@@ -1938,13 +1969,8 @@ async def init_conv_manager(
                 perf_counter() - _t0,
             )
 
-            import unify as _unify
-
-            full_ctx = (
-                f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
-            )
             _t0 = perf_counter()
-            _unify.set_context(full_ctx, skip_create=True)
+            ensure_runtime_context(strict=True)
             log_startup_timing(
                 LOGGER,
                 "⏱️ [StartupTiming] managers.init_conv_manager.reapply_context duration=%.2fs",
