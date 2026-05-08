@@ -135,6 +135,63 @@ def get_result(out: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Test: Runtime OAuth token helper exposed to real actor execute_code
+# ---------------------------------------------------------------------------
+
+
+class _FakeOAuthSecretManager:
+    def __init__(self) -> None:
+        self.calls: list[Any] = []
+        self.secrets = {
+            "MICROSOFT_ACCESS_TOKEN": "microsoft:fresh-token",
+            "MICROSOFT_TOKEN_EXPIRES_AT": "2999-01-01T00:00:00+00:00",
+            "GOOGLE_ACCESS_TOKEN": "google:fresh-token",
+            "GOOGLE_TOKEN_EXPIRES_AT": "2999-01-01T00:00:00+00:00",
+        }
+
+    def sync_assistant_secrets_if_stale(self, **kwargs: Any) -> bool:
+        self.calls.append(("sync", kwargs))
+        return True
+
+    def _get_secret_value(self, name: str) -> str | None:
+        self.calls.append(("secret", name))
+        return self.secrets.get(name)
+
+
+@pytest.mark.asyncio
+async def test_execute_code_oauth_helper_uses_parent_secret_manager(
+    execute_code_tool: tuple[Any, Primitives],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execute_code, _ = execute_code_tool
+    fake_secret_manager = _FakeOAuthSecretManager()
+    monkeypatch.setattr(
+        ManagerRegistry,
+        "get_secret_manager",
+        lambda: fake_secret_manager,
+    )
+
+    out = await execute_code(
+        "mock scenario: call rotating OAuth token helper for multiple providers",
+        """
+microsoft_token = get_oauth_access_token("microsoft", min_ttl_seconds=123)
+google_token = get_oauth_access_token("google", min_ttl_seconds=456)
+assert microsoft_token == "microsoft:fresh-token"
+assert google_token == "google:fresh-token"
+print("TOKEN_OK")
+""",
+        language="python",
+        state_mode="stateless",
+    )
+
+    assert get_error(out) is None
+    assert "TOKEN_OK" in get_stdout_text(out)
+    assert ("secret", "MICROSOFT_ACCESS_TOKEN") in fake_secret_manager.calls
+    assert ("secret", "GOOGLE_ACCESS_TOKEN") in fake_secret_manager.calls
+    assert any(call[0] == "sync" for call in fake_secret_manager.calls)
+
+
+# ---------------------------------------------------------------------------
 # Test: Basic stdout capture from primitives.*.ask().result()
 # ---------------------------------------------------------------------------
 

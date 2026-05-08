@@ -11,6 +11,8 @@ import asyncio
 import ast
 import contextvars
 import logging
+import json
+import shlex
 import sys
 import traceback
 import types
@@ -38,6 +40,25 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _with_shell_env_overlay(
+    command: str,
+    env_overlay: dict[str, str],
+    *,
+    language: str,
+) -> str:
+    if not env_overlay:
+        return command
+    if language == "powershell":
+        assignments = "\n".join(
+            f"$env:{key} = {json.dumps(value)}" for key, value in env_overlay.items()
+        )
+    else:
+        assignments = "\n".join(
+            f"export {key}={shlex.quote(value)}" for key, value in env_overlay.items()
+        )
+    return f"{assignments}\n{command}"
 
 
 # ---------------------------------------------------------------------------
@@ -780,6 +801,22 @@ class SessionExecutor:
         if computer_primitives is None:
             computer_primitives = self._computer_primitives
 
+        def _runtime_oauth_env_overlay() -> dict[str, str]:
+            # The parent execute_code boundary already performs the generic
+            # debounced secret sync.  This overlay is the subprocess-specific
+            # bridge: venv and shell sessions may be long-lived, so they need
+            # current rotating OAuth env vars injected for each execution.
+            if self._function_manager is None:
+                return {}
+            getter = getattr(
+                self._function_manager,
+                "_get_runtime_oauth_env_overlay",
+                None,
+            )
+            if getter is None:
+                return {}
+            return getter()
+
         async def _execute_in_python_session(
             sb: PythonExecutionSession,
         ) -> Dict[str, Any]:
@@ -881,6 +918,10 @@ class SessionExecutor:
                 # Wrap arbitrary code in a function definition so venv_runner can execute it.
                 implementation = _wrap_code_as_async_function(code)
                 if state_mode == "stateful":
+                    # Persistent venv workers keep their process environment
+                    # across calls.  Pass the OAuth overlay so SDK/default-env
+                    # credential paths see fresh access tokens without the actor
+                    # manually exporting anything.
                     out = await self._venv_pool.execute_in_venv(
                         venv_id=int(venv_id),
                         implementation=implementation,
@@ -891,6 +932,7 @@ class SessionExecutor:
                         computer_primitives=computer_primitives,
                         function_manager=self._function_manager,
                         timeout=self._timeout,
+                        env_overlay=_runtime_oauth_env_overlay(),
                     )
                     return {
                         **out,
@@ -916,6 +958,9 @@ class SessionExecutor:
                         session_id=int(session_id),
                         timeout=10.0,
                     )
+                    # Read-only venv execution runs in a one-shot subprocess
+                    # seeded from persistent state, but still receives the same
+                    # runtime OAuth overlay before code executes.
                     out = await self._function_manager.execute_in_venv(
                         venv_id=int(venv_id),
                         implementation=implementation,
@@ -924,6 +969,7 @@ class SessionExecutor:
                         initial_state=initial_state,
                         primitives=primitives,
                         computer_primitives=computer_primitives,
+                        env_overlay=_runtime_oauth_env_overlay(),
                     )
                     return {
                         **out,
@@ -1047,11 +1093,21 @@ class SessionExecutor:
                 language=language,  # type: ignore[arg-type]
                 session_id=int(session_id),
             )
+            # Shells are especially prone to stale env because exports persist
+            # inside the session.  We both pass an env overlay to the pool and
+            # prepend explicit assignments to the command so the current command
+            # and future commands in the same shell agree on the refreshed token
+            # values.
             res = await self._shell_pool.execute(
                 language=language,  # type: ignore[arg-type]
-                command=code,
+                command=_with_shell_env_overlay(
+                    code,
+                    _runtime_oauth_env_overlay(),
+                    language=str(language),
+                ),
                 session_id=int(session_id),
                 timeout=self._timeout,
+                env=_runtime_oauth_env_overlay(),
             )
             return {
                 "stdout": res.stdout,

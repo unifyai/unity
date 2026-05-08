@@ -2025,6 +2025,15 @@ class CodeActActor(BaseCodeActActor):
             - **session_created**: True if a new session was created by this call.
             - **duration_ms**: Execution duration in milliseconds.
 
+            Runtime credential helpers
+            --------------------------
+            Python execution globals include
+            ``get_oauth_access_token(provider)`` for refresh-token backed OAuth
+            providers when a provider SDK, client, or direct HTTP request needs
+            an explicit access token. Static API keys and provider SDKs that
+            read credentials from the environment may still use ``os.environ``
+            after checking available secret names.
+
             For in-process Python execution with rich output, the result is wrapped in an
             ExecutionResult object (a Pydantic model implementing FormattedToolResult).
             """
@@ -2088,6 +2097,23 @@ class CodeActActor(BaseCodeActActor):
             notification_q = _notification_up_q
             sandbox_id = None
             try:
+                try:
+                    from unity.manager_registry import ManagerRegistry
+
+                    # Keep generated code's normal environment-based credential
+                    # path fresh at the execution boundary.  The SecretManager
+                    # gate is debounced, so repeated execute_code calls only pay
+                    # a cheap timestamp check within the TTL window.
+                    ManagerRegistry.get_secret_manager().sync_assistant_secrets_if_stale(
+                        ttl_seconds=60.0,
+                        reason="execute_code",
+                    )
+                except Exception:
+                    logger.warning(
+                        "execute_code assistant secret sync failed",
+                        exc_info=True,
+                    )
+
                 _rs = self._resolve_session(
                     state_mode=state_mode,
                     language=str(language),
