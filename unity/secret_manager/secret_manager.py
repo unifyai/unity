@@ -184,12 +184,16 @@ class SecretManager(BaseSecretManager):
 
     # --------------------- Internal helpers (assistant secret sync) ---------- #
 
-    # Built-in OAuth allowlist for Google + Microsoft.  These are always synced
-    # because Communication writes them back to Orchestra independently of the
-    # integration registry (the OAuth callback runs before any deploy-time
-    # registry seeding has had a chance to land).  At runtime, we extend this
-    # set with everything declared by the integration registry — see
-    # ``_resolve_secret_allowlist``.
+    # Allowlist for ``_sync_assistant_secrets``.  Limited to OAuth tokens that
+    # Communication writes to Orchestra's ``AssistantSecret`` table after each
+    # Google / Microsoft OAuth callback — those are the only secrets THIS sync
+    # is responsible for transporting.  Console-pasted integration secrets
+    # (HubSpot, Employment Hero, Matterport, Webex, Salesforce …) live in the
+    # ``/Secrets`` context directly and reach ``os.environ`` via
+    # ``_sync_dotenv``.  They neither need nor go through this sync; mixing
+    # them in here causes the cleanup loop to wipe them, which is the bug
+    # ``61141bba2`` patched.  Concern separation enforced explicitly: keep
+    # this allowlist OAuth-only so the bug class can't reappear.
     _BUILTIN_OAUTH_SECRET_ALLOWLIST = frozenset(
         {
             "GOOGLE_ACCESS_TOKEN",
@@ -203,44 +207,25 @@ class SecretManager(BaseSecretManager):
         },
     )
 
-    # Backwards-compatible alias.  Existing call sites + tests that read
-    # ``OAUTH_SECRET_ALLOWLIST`` keep working; the value now reflects the
-    # built-in set only and is augmented dynamically via
-    # ``_resolve_secret_allowlist`` at sync time.
+    # Backwards-compatible alias for the (small number of) call sites and
+    # tests that read ``OAUTH_SECRET_ALLOWLIST`` directly.  Identical to
+    # the built-in set above.
     OAUTH_SECRET_ALLOWLIST = _BUILTIN_OAUTH_SECRET_ALLOWLIST
 
-    @classmethod
-    def _resolve_secret_allowlist(cls) -> frozenset[str]:
-        """Union the built-in OAuth allowlist with secrets declared by every
-        installed integration — both the seeded registry and packages
-        discovered on disk.
-
-        Including disk discovery is what lets a token paste in Console for
-        an integration the deployment didn't declare actually sync from
-        Orchestra.  Without it the token would be filtered out of
-        ``_sync_assistant_secrets`` and never reach the assistant's Secrets
+    def _sync_assistant_secrets(self) -> None:
+        """Pull Google / Microsoft OAuth tokens from Orchestra's
+        ``AssistantSecret`` table into the assistant's local ``Secrets``
         context.
 
-        Falls back to the built-in set on any failure (unity_deploy not
-        importable, registry context unreadable, etc.).  Adding a new
-        integration package therefore requires no edit to this file.
-        """
-        try:
-            from unity.integration_status import all_known_secret_names
+        Communication writes those tokens via REST (``/assistant/{id}/secret``)
+        from the OAuth callback.  This sync mirrors them locally so the
+        Actor can use them in code-first plans, and writes them to
+        ``os.environ`` via ``_env_set`` so subprocesses see them too.
 
-            return frozenset(
-                cls._BUILTIN_OAUTH_SECRET_ALLOWLIST | all_known_secret_names(),
-            )
-        except Exception:
-            return cls._BUILTIN_OAUTH_SECRET_ALLOWLIST
-
-    def _sync_assistant_secrets(self) -> None:
-        """Pull OAuth tokens from Orchestra's assistant secrets into the Secrets context.
-
-        Communication stores OAuth tokens (Google/Microsoft) as assistant-level
-        secrets in Orchestra after each OAuth callback.  This method reads those
-        secrets via the admin API and upserts them into the ``Secrets`` context
-        so the Actor can discover and use them in code-first plans.
+        **Scope is intentionally narrow.**  Console-pasted integration
+        secrets live in the ``/Secrets`` context directly; they reach env
+        via :meth:`_sync_dotenv`.  This method does not know or care about
+        them — see ``_BUILTIN_OAUTH_SECRET_ALLOWLIST``.
 
         Best-effort: failures are logged and silently swallowed.
         """
@@ -274,11 +259,10 @@ class SecretManager(BaseSecretManager):
         except Exception:
             return
 
-        # Resolve the active allowlist by unioning the built-in OAuth keys
-        # (Google + Microsoft) with everything declared by the integration
-        # registry.  Adding a new integration package adds its secret names
-        # here automatically, no edit to this module.
-        active_allowlist = self._resolve_secret_allowlist()
+        # Allowlist is intentionally OAuth-only — see the
+        # ``_BUILTIN_OAUTH_SECRET_ALLOWLIST`` docstring above for why
+        # integration secrets do NOT flow through this sync.
+        active_allowlist = self._BUILTIN_OAUTH_SECRET_ALLOWLIST
 
         written = 0
         for name, value in secrets_dict.items():
@@ -323,15 +307,16 @@ class SecretManager(BaseSecretManager):
             written,
         )
 
-        # Stale-cleanup: only the built-in Google/Microsoft OAuth keys are
-        # owned by THIS sync, so only those may be deleted when missing
-        # from Orchestra's response.  Integration-managed keys (e.g.
-        # EMPLOYMENTHERO_REFRESH_TOKEN) and customer-pasted keys (CLIENT_ID,
-        # CLIENT_SECRET, API tokens) are written into the same Secrets
-        # context by Console's OAuth callback / paste flow and must NOT
-        # be cleaned up here just because Orchestra's secrets payload
-        # omits them — that would silently wipe valid user state every
-        # time the admin endpoint returned a partial or stripped response.
+        # Stale-cleanup: only the built-in Google / Microsoft OAuth keys
+        # are owned by THIS sync, so only those may be deleted when
+        # missing from Orchestra's response.  Console-pasted secrets
+        # (HubSpot, Matterport, etc.) and OAuth-managed integration
+        # tokens (EMPLOYMENTHERO_REFRESH_TOKEN, etc.) live in the same
+        # local Secrets context but are NOT this sync's responsibility,
+        # so they must not be cleaned up here just because Orchestra's
+        # secrets payload omits them — that would silently wipe valid
+        # user state every time the admin endpoint returned a partial
+        # or stripped response.
         for stale_name in self._BUILTIN_OAUTH_SECRET_ALLOWLIST - secrets_dict.keys():
             try:
                 ids = unify.get_logs(
@@ -345,24 +330,6 @@ class SecretManager(BaseSecretManager):
                     self._env_remove(stale_name)
             except Exception:
                 continue
-
-        # Recompute integration enablement.  ``recompute_enablement`` reads
-        # the keyset from the local Secrets context (the source of truth for
-        # both Orchestra-mirrored OAuth tokens — just written above — and
-        # Console-pasted integration tokens that never touch Orchestra).
-        # We still pass ``secrets_dict`` as a supplemental union so that any
-        # Google/MS keys present in the Orchestra payload but not yet
-        # mirrored (race window between fetch and write) are not missed.
-        # Best-effort; never blocks the secret-sync return.
-        try:
-            from unity.integration_status import recompute_enablement
-
-            recompute_enablement(
-                assistant_id=int(agent_id),
-                secrets=secrets_dict,
-            )
-        except Exception:
-            pass
 
     # --------------------- Internal helpers (.env sync) --------------------- #
     def _dotenv_path(self) -> str:
