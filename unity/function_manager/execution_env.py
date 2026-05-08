@@ -259,11 +259,13 @@ def create_execution_globals() -> Dict[str, Any]:
     )
     from unity.common.llm_client import new_llm_client
     from unity.common.reasoning import reason
+    from unity.common.runtime_oauth import get_oauth_access_token
 
     globals_dict["SteerableToolHandle"] = SteerableToolHandle
     globals_dict["start_async_tool_loop"] = start_async_tool_loop
     globals_dict["new_llm_client"] = new_llm_client
     globals_dict["reason"] = reason
+    globals_dict["get_oauth_access_token"] = get_oauth_access_token
     globals_dict["unillm"] = unillm
 
     return globals_dict

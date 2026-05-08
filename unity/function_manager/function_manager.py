@@ -414,6 +414,7 @@ class _VenvConnection:
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
         timeout: Optional[float] = None,
+        env_overlay: Optional[Dict[str, str]] = None,
     ) -> dict:
         """
         Execute a function in the persistent venv subprocess.
@@ -446,6 +447,7 @@ class _VenvConnection:
                     "implementation": implementation,
                     "call_kwargs": call_kwargs,
                     "is_async": is_async,
+                    "env_overlay": env_overlay or {},
                 },
             )
 
@@ -507,6 +509,16 @@ class _VenvConnection:
                             result,
                         ),
                     }
+                if namespace == "runtime" and method == "get_oauth_access_token":
+                    from unity.common.runtime_oauth import get_oauth_access_token
+
+                    provider = kwargs.get("provider")
+                    min_ttl_seconds = int(kwargs.get("min_ttl_seconds", 300))
+                    result = get_oauth_access_token(
+                        provider,
+                        min_ttl_seconds=min_ttl_seconds,
+                    )
+                    return {"type": "rpc_result", "id": request_id, "result": result}
                 if namespace == "computer" and computer_primitives is not None:
                     fn = getattr(computer_primitives, method, None)
                 elif primitives is not None:
@@ -709,6 +721,7 @@ class VenvPool:
         computer_primitives: Optional[Any] = None,
         function_manager: "FunctionManager",
         timeout: Optional[float] = None,
+        env_overlay: Optional[Dict[str, str]] = None,
     ) -> dict:
         """
         Execute a function in a persistent venv subprocess.
@@ -751,6 +764,7 @@ class VenvPool:
                 primitives=primitives,
                 computer_primitives=computer_primitives,
                 timeout=timeout,
+                env_overlay=env_overlay,
             )
             # Update last_used best-effort
             md = self._metadata.get(key)
@@ -779,6 +793,7 @@ class VenvPool:
                     primitives=primitives,
                     computer_primitives=computer_primitives,
                     timeout=timeout,
+                    env_overlay=env_overlay,
                 )
             raise
 
@@ -1645,6 +1660,23 @@ class FunctionManager(BaseFunctionManager):
         # ------------------------------------------------------------------ #
         # Dict[session_id, Dict[str, Any]] - persistent globals per session
         self._in_process_sessions: Dict[int, Dict[str, Any]] = {}
+
+    def _get_runtime_oauth_env_overlay(self) -> Dict[str, str]:
+        """Build the rotating OAuth env overlay for venv/shell execution.
+
+        This is intentionally routed through ``unity.common.runtime_oauth``
+        rather than SecretManager so provider metadata, expiry semantics, and
+        runtime helper behavior stay in one place.  Failures should not block
+        unrelated function execution; explicit token calls can still surface a
+        provider-specific error when the actor really needs a token.
+        """
+        try:
+            from unity.common.runtime_oauth import get_refresh_token_oauth_env_overlay
+
+            return get_refresh_token_oauth_env_overlay()
+        except Exception:
+            logger.warning("Failed to build OAuth env overlay", exc_info=True)
+            return {}
 
     @property
     def primitive_scope(self) -> PrimitiveScope:
@@ -4607,6 +4639,16 @@ class FunctionManager(BaseFunctionManager):
 
             return self._make_json_serializable(await reason(**kwargs))
 
+        if manager_name == "runtime" and method_name == "get_oauth_access_token":
+            from unity.common.runtime_oauth import get_oauth_access_token
+
+            provider = kwargs.get("provider")
+            min_ttl_seconds = int(kwargs.get("min_ttl_seconds", 300))
+            return get_oauth_access_token(
+                provider,
+                min_ttl_seconds=min_ttl_seconds,
+            )
+
         # Handle computer primitives
         if manager_name == "computer":
             if computer_primitives is None:
@@ -4649,6 +4691,7 @@ class FunctionManager(BaseFunctionManager):
         initial_state: Optional[Dict[str, Any]] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
+        env_overlay: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Execute a function implementation in a custom virtual environment.
@@ -4688,6 +4731,7 @@ class FunctionManager(BaseFunctionManager):
             "implementation": implementation,
             "call_kwargs": call_kwargs,
             "is_async": is_async,
+            "env_overlay": env_overlay or self._get_runtime_oauth_env_overlay(),
         }
         if initial_state is not None:
             execute_payload["initial_state"] = initial_state
