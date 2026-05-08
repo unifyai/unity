@@ -128,22 +128,36 @@ def _read_local_secret_keyset() -> set[str]:
 
 
 def register_available_integrations() -> None:
-    """Walk disk packages and register each one's functions + guidance with
-    the runtime managers.
+    """Walk disk packages and register each ENABLED one's functions +
+    guidance with the runtime managers.
 
-    **Synchronous and idempotent.**  In production, callers schedule this
-    as a background task via :func:`schedule_register_available_integrations`
-    so the fast-brain conversation loop can come online without waiting
-    for the (potentially many-hundreds-of-ms) function/guidance inserts
-    to finish.  Direct synchronous use is fine for tests and CLI tools.
+    **Gated by enablement.**  Only packages whose required secrets are
+    present in the local ``/Secrets`` keyset are registered — this
+    prevents every package on disk from polluting FunctionManager /
+    GuidanceManager for assistants that never opted into them (e.g. an
+    assistant whose deployment declares only HubSpot shouldn't pick up
+    Matterport, Webex, etc. tools just because their packages happen to
+    be on disk).  Packages with no declared required secrets are
+    always-on and are registered unconditionally.
 
-    Replaces the May-2026 per-slug daemon-thread hot-load mechanism.
-    Adding a new package to disk now requires a session restart — which
-    matches how every other deployment artifact (manifests, scenarios,
-    guidance) behaves.  No cross-thread context-state races (single
-    thread when backgrounded), no recursive manager construction (no
-    re-entry into ``SecretManager``), no token-paste-triggered side
-    effects.
+    Deployment-declared packages whose secrets aren't pasted yet are
+    still loaded by the deploy seed via ``_sync_functions`` /
+    ``_sync_guidance``; this register pass is idempotent over those.
+
+    **Synchronous and idempotent.**  In production, callers schedule
+    this as a background task via
+    :func:`schedule_register_available_integrations` so the fast-brain
+    conversation loop can come online without waiting for the
+    (potentially many-hundreds-of-ms) inserts to finish.  Direct
+    synchronous use is fine for tests and CLI tools.
+
+    Mid-session token paste does **not** auto-register the integration
+    today — adding a secret after startup means the package's functions
+    won't appear until the next session.  The pre-May ``schedule_hot_load``
+    mechanism handled this lazily but at the cost of a daemon-thread
+    bug class we removed; lazy mid-session registration can come back
+    as a separate, single-thread, debounced helper if the UX gap shows
+    up in practice.
     """
     cache = _session_cache()
 
@@ -161,9 +175,15 @@ def register_available_integrations() -> None:
         logger.info("[integrations] register: no packages discovered on disk")
         return
 
+    # Gate registration on the local secret keyset.  Computed once per
+    # call rather than per-package so we don't re-hit the SecretManager
+    # context for each disk package.
+    keyset = _read_local_secret_keyset()
+
     total_funcs = 0
     total_guidance = 0
     registered_now: list[str] = []
+    skipped_no_secrets: list[str] = []
 
     for pkg in packages:
         slug = pkg.get("slug") or ""
@@ -171,6 +191,15 @@ def register_available_integrations() -> None:
             continue
         already_registered = cache.setdefault("registered_slugs", set())
         if slug in already_registered:
+            continue
+
+        required = set(pkg.get("required_secrets", []))
+        # A package with required_secrets is registered only when the
+        # user has configured every one of them.  Packages with NO
+        # required secrets (always-on / read-only) are registered
+        # unconditionally.
+        if required and not required.issubset(keyset):
+            skipped_no_secrets.append(slug)
             continue
 
         try:
@@ -193,9 +222,11 @@ def register_available_integrations() -> None:
         registered_now.append(slug)
 
     logger.info(
-        "[integrations] register: packages=%d new=%s functions=%d guidance=%d",
+        "[integrations] register: discovered=%d registered=%s "
+        "skipped_no_secrets=%s functions=%d guidance=%d",
         len(packages),
         sorted(registered_now),
+        sorted(skipped_no_secrets),
         total_funcs,
         total_guidance,
     )
