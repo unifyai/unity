@@ -4,6 +4,8 @@ import asyncio
 import functools
 import logging
 import os
+from threading import Lock
+from time import monotonic
 from typing import Any, Callable, Dict, List, Optional, Type
 from pydantic import BaseModel
 
@@ -57,6 +59,9 @@ class SecretManager(BaseSecretManager):
         super().__init__()
         self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Secrets")
+        self._assistant_secret_sync_lock = Lock()
+        self._last_assistant_secret_sync_success_at: float | None = None
+        self._last_assistant_secret_sync_failure_at: float | None = None
 
         # Ensure storage/schema exists deterministically (idempotent)
         self._provision_storage()
@@ -212,22 +217,35 @@ class SecretManager(BaseSecretManager):
     # the built-in set above.
     OAUTH_SECRET_ALLOWLIST = _BUILTIN_OAUTH_SECRET_ALLOWLIST
 
+    @classmethod
+    def _resolve_secret_allowlist(cls) -> frozenset[str]:
+        """Return assistant-secret names owned by runtime OAuth sync.
+
+        The set is intentionally limited to refresh-token OAuth metadata.
+        Console-pasted integration credentials already live in the local
+        ``Secrets`` context and reach ``os.environ`` through ``_sync_dotenv``.
+        """
+        try:
+            from unity.common.runtime_oauth import refresh_token_oauth_secret_names
+
+            return cls._BUILTIN_OAUTH_SECRET_ALLOWLIST | refresh_token_oauth_secret_names()
+        except Exception:
+            return cls._BUILTIN_OAUTH_SECRET_ALLOWLIST
+
     def _sync_assistant_secrets(self) -> None:
-        """Pull Google / Microsoft OAuth tokens from Orchestra's
-        ``AssistantSecret`` table into the assistant's local ``Secrets``
-        context.
+        """Mirror runtime OAuth assistant secrets from Orchestra into local state.
 
-        Communication writes those tokens via REST (``/assistant/{id}/secret``)
-        from the OAuth callback.  This sync mirrors them locally so the
-        Actor can use them in code-first plans, and writes them to
-        ``os.environ`` via ``_env_set`` so subprocesses see them too.
+        Orchestra is the platform source of truth for assistant-level OAuth
+        secrets written outside this Unity process. Communication refresh jobs
+        persist updated access tokens there; this method pulls those values into
+        Unity's local ``Secrets`` context, then updates ``.env``/``os.environ``
+        so generated code and provider SDKs can use normal environment-based
+        credential discovery.
 
-        **Scope is intentionally narrow.**  Console-pasted integration
-        secrets live in the ``/Secrets`` context directly; they reach env
-        via :meth:`_sync_dotenv`.  This method does not know or care about
-        them — see ``_BUILTIN_OAUTH_SECRET_ALLOWLIST``.
-
-        Best-effort: failures are logged and silently swallowed.
+        The sync is intentionally allowlisted. We mirror refresh-token OAuth
+        keys, but we do not copy arbitrary assistant secrets into the runtime.
+        Failures are best-effort: callers use ``sync_assistant_secrets_if_stale``
+        as the observable gate.
         """
         from ..session_details import SESSION_DETAILS
 
@@ -259,10 +277,10 @@ class SecretManager(BaseSecretManager):
         except Exception:
             return
 
-        # Allowlist is intentionally OAuth-only — see the
-        # ``_BUILTIN_OAUTH_SECRET_ALLOWLIST`` docstring above for why
-        # integration secrets do NOT flow through this sync.
-        active_allowlist = self._BUILTIN_OAUTH_SECRET_ALLOWLIST
+        # Allowlist is intentionally OAuth-only; integration secrets do not flow
+        # through this sync because they already live in the local Secrets
+        # context and are exported by _sync_dotenv.
+        active_allowlist = self._resolve_secret_allowlist()
 
         written = 0
         for name, value in secrets_dict.items():
@@ -307,17 +325,10 @@ class SecretManager(BaseSecretManager):
             written,
         )
 
-        # Stale-cleanup: only the built-in Google / Microsoft OAuth keys
-        # are owned by THIS sync, so only those may be deleted when
-        # missing from Orchestra's response.  Console-pasted secrets
-        # (HubSpot, Matterport, etc.) and OAuth-managed integration
-        # tokens (EMPLOYMENTHERO_REFRESH_TOKEN, etc.) live in the same
-        # local Secrets context but are NOT this sync's responsibility,
-        # so they must not be cleaned up here just because Orchestra's
-        # secrets payload omits them — that would silently wipe valid
-        # user state every time the admin endpoint returned a partial
-        # or stripped response.
-        for stale_name in self._BUILTIN_OAUTH_SECRET_ALLOWLIST - secrets_dict.keys():
+        # Stale-cleanup is limited to the OAuth secrets owned by this sync.
+        # Console-pasted integration credentials live in the same local Secrets
+        # context but are not removed based on the admin assistant payload.
+        for stale_name in active_allowlist - secrets_dict.keys():
             try:
                 ids = unify.get_logs(
                     context=self._ctx,
@@ -330,6 +341,89 @@ class SecretManager(BaseSecretManager):
                     self._env_remove(stale_name)
             except Exception:
                 continue
+
+    def sync_assistant_secrets_if_stale(
+        self,
+        ttl_seconds: float = 60.0,
+        *,
+        force: bool = False,
+        reason: str = "runtime",
+        failure_cooldown_seconds: float = 10.0,
+    ) -> bool:
+        """Pull assistant secrets through one debounced runtime sync gate.
+
+        This is the single runtime entry point for keeping Unity's local secret
+        state close to Orchestra without adding a network round trip to every
+        actor operation.  Normal callers, including ``execute_code``, call with
+        ``force=False`` and therefore only perform the expensive Orchestra pull
+        once per ``ttl_seconds`` window.  Forced callers use this when freshness
+        matters more than debounce, such as SecretManager construction,
+        ``primitives.secrets.ask(...)``, assistant-update events, or an OAuth
+        helper detecting a missing/near-expiry access token.
+
+        Returns ``True`` only when this invocation actually ran the sync work.
+        Returns ``False`` when the success debounce or failure cooldown skipped
+        work, or when the wrapped sync raised an exception.
+        """
+        now = monotonic()
+        if not force:
+            last_success = self._last_assistant_secret_sync_success_at
+            if last_success is not None and now - last_success < ttl_seconds:
+                return False
+            last_failure = self._last_assistant_secret_sync_failure_at
+            if (
+                last_failure is not None
+                and now - last_failure < failure_cooldown_seconds
+            ):
+                return False
+
+        with self._assistant_secret_sync_lock:
+            now = monotonic()
+            if not force:
+                last_success = self._last_assistant_secret_sync_success_at
+                if last_success is not None and now - last_success < ttl_seconds:
+                    return False
+                last_failure = self._last_assistant_secret_sync_failure_at
+                if (
+                    last_failure is not None
+                    and now - last_failure < failure_cooldown_seconds
+                ):
+                    return False
+            try:
+                self._sync_assistant_secrets()
+                self._sync_dotenv()
+            except Exception:
+                self._last_assistant_secret_sync_failure_at = monotonic()
+                logger.warning(
+                    "[integrations] assistant secret sync failed reason=%s",
+                    reason,
+                    exc_info=True,
+                )
+                return False
+            self._last_assistant_secret_sync_success_at = monotonic()
+            self._last_assistant_secret_sync_failure_at = None
+            logger.info(
+                "[integrations] assistant secret sync complete reason=%s",
+                reason,
+            )
+            return True
+
+    def _get_secret_value(self, name: str) -> str | None:
+        try:
+            rows = unify.get_logs(
+                context=self._ctx,
+                filter=f"name == {name!r}",
+                limit=1,
+                from_fields=["name", "value"],
+            )
+            if rows:
+                value = (rows[0].entries or {}).get("value")
+                if isinstance(value, str) and value:
+                    return value
+        except Exception:
+            pass
+        value = os.environ.get(name)
+        return value if value else None
 
     # --------------------- Internal helpers (.env sync) --------------------- #
     def _dotenv_path(self) -> str:
@@ -382,8 +476,7 @@ class SecretManager(BaseSecretManager):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write("")
 
-        self._sync_assistant_secrets()
-        self._sync_dotenv()
+        self.sync_assistant_secrets_if_stale(force=True, reason="secret_manager_init")
 
     @staticmethod
     def _parse_env_lines(lines: List[str]) -> Dict[str, int]:
@@ -536,17 +629,7 @@ class SecretManager(BaseSecretManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        # Pull OAuth tokens from Orchestra → Secrets context, then sync
-        # all secrets (including freshly-synced OAuth tokens) into .env
-        # so they're available through os.environ before the Actor reads them.
-        try:
-            self._sync_assistant_secrets()
-        except Exception:
-            pass
-        try:
-            self._sync_dotenv()
-        except Exception:
-            pass
+        self.sync_assistant_secrets_if_stale(force=True, reason="secret_ask")
 
         # First, replace any known raw secret values with placeholders
         try:
