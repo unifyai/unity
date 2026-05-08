@@ -878,3 +878,163 @@ class TestSubPennyBalanceDeadlock:
 
         assert result.allowed is False
         assert "insufficient credits" in result.reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# METERED-mode bypass (managed-billing)
+#
+# METERED accounts pay by monthly invoice via Orchestra's
+# ``monthly_metered_invoicer`` rather than via a pre-paid wallet.
+# Their wallet balance intentionally stays at $0 (``deduct_credits``
+# does not mutate it on METERED), so the legacy credit-balance gate
+# would block every
+# LLM call. The callback must skip the gate when the spend response
+# carries ``billing_mode == "METERED"``.
+# ---------------------------------------------------------------------------
+
+
+def _metered_response(
+    *,
+    cumulative_spend: float = 0.0,
+    limit: float | None = None,
+    credit_balance: float | None = 0.0,
+) -> dict:
+    """Build a spend response that mirrors a METERED account."""
+    data: dict = {
+        "cumulative_spend": cumulative_spend,
+        "limit": limit,
+        "billing_mode": "METERED",
+    }
+    if credit_balance is not None:
+        data["credit_balance"] = credit_balance
+    return data
+
+
+class TestMeteredBypassesCreditGate:
+    """METERED accounts have credit_balance=0 by design and must not be gated."""
+
+    @pytest.mark.asyncio
+    async def test_metered_zero_balance_allows(self):
+        """METERED + balance=$0 must allow (the canonical case)."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        resp = _metered_response(credit_balance=0.0)
+        with _patch_context():
+            with _patch_spend_client(resp):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is True
+
+    @pytest.mark.asyncio
+    async def test_metered_negative_balance_allows(self):
+        """METERED + small negative balance (rounding/in-flight) must allow."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        resp = _metered_response(credit_balance=-0.42)
+        with _patch_context():
+            with _patch_spend_client(resp):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is True
+
+    @pytest.mark.asyncio
+    async def test_metered_org_zero_balance_allows(self):
+        """Same in org context: METERED org account isn't gated on balance."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        resp = _metered_response(credit_balance=0.0)
+        with _patch_context(org_id=789):
+            with _patch_spend_client(resp):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is True
+
+    @pytest.mark.asyncio
+    async def test_metered_still_enforces_spending_cap(self):
+        """METERED accounts are still subject to spending caps."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        resp = _metered_response(
+            cumulative_spend=200.0,
+            limit=100.0,
+            credit_balance=0.0,
+        )
+        with _patch_context():
+            with _patch_spend_client(resp):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is False
+        assert "spending limit exceeded" in result.reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_credits_mode_explicit_still_gates(self):
+        """billing_mode=CREDITS keeps the legacy gate active."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        data = {
+            "cumulative_spend": 0.0,
+            "limit": None,
+            "credit_balance": 0.0,
+            "billing_mode": "CREDITS",
+        }
+        with _patch_context():
+            with _patch_spend_client(data):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is False
+        assert "insufficient credits" in result.reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_missing_billing_mode_defaults_to_legacy_gate(self):
+        """Old Orchestra builds without billing_mode keep CREDITS-mode behaviour.
+
+        Backward compat: a partial Orchestra rollout shouldn't loosen
+        the gate. ``billing_mode`` only bypasses the check when the
+        endpoint explicitly says ``"METERED"``.
+        """
+        from unity.spending_limits import check_spending_limits_callback
+
+        # No "billing_mode" key at all → should still gate at $0
+        resp = _make_spend_response(credit_balance=0.0)
+        assert "billing_mode" not in resp
+        with _patch_context():
+            with _patch_spend_client(resp):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is False
+
+    @pytest.mark.asyncio
+    async def test_metered_resolution_when_only_one_endpoint_returns_it(self):
+        """billing_mode discovered on any endpoint suffices to bypass.
+
+        Mixed responses (assistant endpoint pre-rollout, user endpoint
+        post-rollout) shouldn't gate the call: the first non-None
+        billing_mode wins, matching how credit_balance is resolved.
+        """
+        from unity.spending_limits import check_spending_limits_callback
+
+        legacy = {"cumulative_spend": 0.0, "limit": None, "credit_balance": 0.0}
+        modern = _metered_response(credit_balance=0.0)
+        methods = {
+            "get_assistant_spend": legacy,
+            "get_user_spend": modern,
+        }
+        with _patch_context():
+            with _patch_spend_client(methods):
+                result = await check_spending_limits_callback(
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
+                )
+
+        assert result.allowed is True
