@@ -112,6 +112,26 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
 
 
 @pytest.mark.timeout(30)
+def test_code_act_prompt_teaches_refresh_token_oauth_helper():
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments={},
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "def reason(" in prompt
+    assert (
+        "def get_oauth_access_token(provider: str, *, "
+        "min_ttl_seconds: int = 300) -> str"
+    ) in prompt
+    assert 'get_oauth_access_token("microsoft")' in prompt
+    assert 'get_oauth_access_token("google")' in prompt
+    assert "refresh-token backed OAuth" in prompt
+    assert "Do not print, log, return, or store the token value." in prompt
+    assert "provider sdk/default credential behavior" in prompt.lower()
+
+
+@pytest.mark.timeout(30)
 def test_code_act_prompt_includes_comms_namespace_and_docstrings():
     from unity.actor.environments.state_managers import StateManagerEnvironment
     from unity.function_manager.primitives import PrimitiveScope, Primitives
