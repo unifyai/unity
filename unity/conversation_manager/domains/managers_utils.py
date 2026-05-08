@@ -1211,7 +1211,7 @@ async def sync_assistant_secrets() -> None:
     from unity.manager_registry import ManagerRegistry
 
     sm = ManagerRegistry.get_secret_manager()
-    sm._sync_assistant_secrets()
+    sm.sync_assistant_secrets_if_stale(force=True, reason="assistant_update")
 
 
 # Contact updates
