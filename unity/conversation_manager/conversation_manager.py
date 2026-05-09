@@ -1,7 +1,8 @@
 import asyncio
-from typing import Any, Optional
 import contextlib
+import json
 from datetime import datetime
+from typing import Any, Optional
 
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON
@@ -52,6 +53,40 @@ from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 from unity.conversation_manager.medium_scripts.common import FastBrainLogger
 
 MAX_CONV_MANAGER_MSGS = 50
+RECENT_TOOL_EXECUTIONS_LIMIT = 20
+RECENT_TOOL_PREVIEW_CHARS = 500
+COMMISSIONING_MUTATION_TOOL_NAMES = frozenset(
+    {
+        "create_assistant",
+        "delete_assistant",
+        "update_assistant_config",
+        "pre_seed_colleague",
+        "create_space",
+        "delete_space",
+        "update_space",
+        "add_space_member",
+        "remove_space_member",
+        "invite_assistant_to_space",
+        "cancel_space_invitation",
+        "set_setup_state",
+        "add_setup_checklist_item",
+        "update_setup_checklist_item",
+        "commission_colleague_into_workspace",
+    },
+)
+COMMISSIONING_OUTBOUND_FOLLOWUP_EVENTS = frozenset(
+    {
+        "SMSSent",
+        "WhatsAppMessageSent",
+        "EmailSent",
+        "UnifyMessageSent",
+        "ApiMessageSent",
+        "DiscordMessageSent",
+        "DiscordChannelMessageSent",
+        "TeamsMessageSent",
+        "TeamsChannelMessageSent",
+    },
+)
 
 
 def _render_action_context(
@@ -247,6 +282,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._llm_run_seq: int = 0
         self._llm_gen: int = 0
         self._outbound_suppress_gen: int = -1
+        self._active_llm_trace_meta: dict[str, Any] | None = None
+        self._recent_tool_executions: list[dict[str, Any]] = []
+        self._recent_commissioning_successes: dict[str, int] = {}
 
         # WhatsApp messages that were sent via greeting template (outside 24h
         # window). When the contact replies, the brain is notified so it can
@@ -287,6 +325,100 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.notifications_bar.notifications = [
             n for i, n in enumerate(notifs) if n.pinned or i >= snap_n
         ]
+
+    @staticmethod
+    def _tool_result_is_error(result: Any) -> bool:
+        return isinstance(result, dict) and "error_kind" in result
+
+    @staticmethod
+    def _preview_value(
+        value: Any,
+        *,
+        max_chars: int = RECENT_TOOL_PREVIEW_CHARS,
+    ) -> str:
+        try:
+            rendered = json.dumps(value, sort_keys=True, default=str)
+        except Exception:
+            rendered = repr(value)
+        if len(rendered) <= max_chars:
+            return rendered
+        return rendered[: max_chars - 3] + "..."
+
+    @staticmethod
+    def _commissioning_tool_fingerprint(
+        tool_name: str,
+        tool_args: dict[str, Any] | None,
+    ) -> str:
+        stable_args = json.dumps(tool_args or {}, sort_keys=True, default=str)
+        return f"{tool_name}:{stable_args}"
+
+    def _is_immediate_commissioning_followup(self, origin_event_name: str) -> bool:
+        return origin_event_name in COMMISSIONING_OUTBOUND_FOLLOWUP_EVENTS
+
+    def suppress_duplicate_commissioning_tool(
+        self,
+        *,
+        tool_name: str,
+        tool_args: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Suppress immediate duplicate commissioning calls from outbound follow-ups."""
+        if tool_name not in COMMISSIONING_MUTATION_TOOL_NAMES:
+            return None
+        trace_meta = self._active_llm_trace_meta or {}
+        origin_event_name = str(trace_meta.get("origin_event_name") or "")
+        if not self._is_immediate_commissioning_followup(origin_event_name):
+            return None
+        fingerprint = self._commissioning_tool_fingerprint(tool_name, tool_args)
+        last_success_gen = self._recent_commissioning_successes.get(fingerprint)
+        if last_success_gen != self._llm_gen - 1:
+            return None
+        return {
+            "error_kind": "duplicate_suppressed",
+            "message": (
+                "Skipped duplicate commissioning tool call from immediate outbound "
+                "follow-up event."
+            ),
+            "details": {
+                "tool_name": tool_name,
+                "origin_event_name": origin_event_name,
+            },
+        }
+
+    def _record_recent_tool_executions(
+        self,
+        *,
+        tools: list[Any],
+        trace_meta: dict[str, Any],
+    ) -> None:
+        origin_event_name = str(trace_meta.get("origin_event_name") or "")
+        for tool_exec in tools:
+            tool_name = str(getattr(tool_exec, "name", ""))
+            tool_args = getattr(tool_exec, "args", {}) or {}
+            tool_result = getattr(tool_exec, "result", None)
+            self._recent_tool_executions.append(
+                {
+                    "generation": self._llm_gen,
+                    "origin_event_name": origin_event_name,
+                    "tool_name": tool_name,
+                    "args_preview": self._preview_value(tool_args),
+                    "result_preview": self._preview_value(tool_result),
+                },
+            )
+            if (
+                tool_name in COMMISSIONING_MUTATION_TOOL_NAMES
+                and not self._tool_result_is_error(tool_result)
+            ):
+                fingerprint = self._commissioning_tool_fingerprint(tool_name, tool_args)
+                self._recent_commissioning_successes[fingerprint] = self._llm_gen
+        if len(self._recent_tool_executions) > RECENT_TOOL_EXECUTIONS_LIMIT:
+            self._recent_tool_executions = self._recent_tool_executions[
+                -RECENT_TOOL_EXECUTIONS_LIMIT:
+            ]
+        for fingerprint, generation in list(
+            self._recent_commissioning_successes.items(),
+        ):
+            if generation < self._llm_gen - 1:
+                del self._recent_commissioning_successes[fingerprint]
 
     @property
     def assistant_has_teams(self) -> bool:
@@ -1278,6 +1410,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self.in_flight_actions,
             self.completed_actions,
             self.last_snapshot,
+            recent_tool_executions=self._recent_tool_executions,
             assistant_screen_share_active=self.assistant_screen_share_active,
             user_screen_share_active=self.user_screen_share_active,
             user_webcam_active=self.user_webcam_active,
@@ -1475,6 +1608,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             len(tools),
             len(messages),
         )
+        self._active_llm_trace_meta = trace_meta
         try:
             result = await single_shot_tool_decision(
                 client,
@@ -1490,6 +1624,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 },
             )
         finally:
+            self._active_llm_trace_meta = None
             if hasattr(client, "_pending_thinking_log"):
                 client._pending_thinking_log.emit_fallback()
             _EVENT_SOURCE.reset(_source_token)
@@ -1504,6 +1639,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             _rl_ms(),
             run_id,
             tool_names,
+        )
+        self._record_recent_tool_executions(
+            tools=result.tools,
+            trace_meta=trace_meta or {},
         )
 
         # Extract structured output (thoughts)
@@ -2117,6 +2256,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self.in_flight_actions,
                 self.completed_actions,
                 self.last_snapshot,
+                recent_tool_executions=self._recent_tool_executions,
                 assistant_screen_share_active=self.assistant_screen_share_active,
                 user_screen_share_active=self.user_screen_share_active,
                 user_webcam_active=self.user_webcam_active,

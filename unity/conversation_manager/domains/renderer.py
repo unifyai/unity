@@ -593,6 +593,7 @@ class Renderer:
         in_flight_actions: dict = None,
         completed_actions: dict = None,
         last_snapshot: datetime = None,
+        recent_tool_executions: list[dict[str, Any]] | None = None,
         max_pinned_notifications: int = 50,
         max_contact_medium_messages: int = 25,
         max_action_history_events: int = 20,
@@ -681,6 +682,9 @@ class Renderer:
             max_history=max_completed_action_history_events,
         )
         _completed_ms = _mark_step()
+        recent_tools_render = self.render_recent_tool_executions(
+            recent_tool_executions,
+        )
         convs_render = self.render_active_conversations(
             contact_index,
             last_snapshot=last_snapshot,
@@ -699,6 +703,7 @@ class Renderer:
                 notif_render,
                 actions_render,
                 completed_render,
+                recent_tools_render,
                 convs_render,
             ]
             if s
@@ -1125,6 +1130,30 @@ class Renderer:
                     )
 
         out += "</in_flight_actions>"
+        return out
+
+    def render_recent_tool_executions(
+        self,
+        recent_tool_executions: list[dict[str, Any]] | None,
+        max_items: int = 12,
+    ) -> str:
+        """Render a bounded summary of recently executed tools."""
+        out = "<recent_tool_executions>\n"
+        if not recent_tool_executions:
+            out += "No recent tool executions.\n"
+            out += "</recent_tool_executions>"
+            return out
+
+        for entry in recent_tool_executions[-max_items:]:
+            tool_name = str(entry.get("tool_name") or "unknown")
+            generation = str(entry.get("generation") or "?")
+            origin_event = str(entry.get("origin_event_name") or "-")
+            args_preview = str(entry.get("args_preview") or "{}")
+            result_preview = str(entry.get("result_preview") or "null")
+            out += f"- generation={generation} origin={origin_event} tool={tool_name}\n"
+            out += f"  args={args_preview}\n"
+            out += f"  result={result_preview}\n"
+        out += "</recent_tool_executions>"
         return out
 
     def render_active_conversations(

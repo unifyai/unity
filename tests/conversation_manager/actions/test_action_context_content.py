@@ -726,7 +726,7 @@ class TestContextContent:
             cm.notifications_bar,
             cm.in_flight_actions,
             cm.completed_actions,
-            cm.last_snapshot,
+            last_snapshot=cm.last_snapshot,
         )
         brain_spec = build_brain_spec(cm, snapshot_state=snapshot_state)
         state_content = brain_spec.state_prompt

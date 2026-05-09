@@ -886,6 +886,34 @@ class TestRenderStateWithTracking:
         assert "America/New_York" in result.full_render
         assert "America/Los_Angeles" in result.full_render
 
+    def test_render_state_includes_recent_tool_executions(
+        self,
+        renderer,
+        contact_index,
+        notification_bar,
+    ):
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_state(
+            contact_index,
+            notification_bar,
+            in_flight_actions={},
+            recent_tool_executions=[
+                {
+                    "generation": 2,
+                    "origin_event_name": "SMSSent",
+                    "tool_name": "create_space",
+                    "args_preview": '{"name":"Ops HQ"}',
+                    "result_preview": '{"space_id":11}',
+                },
+            ],
+            last_snapshot=last_snapshot,
+        )
+
+        assert "<recent_tool_executions>" in result.full_render
+        assert "tool=create_space" in result.full_render
+        assert "origin=SMSSent" in result.full_render
+
     def test_tracks_notifications(self, renderer, contact_index, notification_bar):
         """Notifications are tracked with identity."""
         ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)

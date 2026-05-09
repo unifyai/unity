@@ -208,3 +208,102 @@ async def test_wait_sets_outbound_suppress_generation():
     assert (
         cm._outbound_suppress_gen == 7
     ), "wait(delay=N) should also set the suppression flag"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_run_llm_records_recent_tool_executions_for_follow_up_turns(
+    initialized_cm,
+):
+    cm = initialized_cm.cm
+    cm._recent_tool_executions = []
+    cm._recent_commissioning_successes = {}
+
+    fake_result = _make_multi_tool_result(
+        ("create_space", {"name": "Ops HQ"}, {"space_id": 11, "name": "Ops HQ"}),
+    )
+    with patch(
+        "unity.conversation_manager.conversation_manager.single_shot_tool_decision",
+        AsyncMock(return_value=fake_result),
+    ):
+        await cm._run_llm(trace_meta={"origin_event_name": "SMSSent"})
+
+    assert len(cm._recent_tool_executions) >= 1
+    last = cm._recent_tool_executions[-1]
+    assert last["tool_name"] == "create_space"
+    assert last["origin_event_name"] == "SMSSent"
+    assert "space_id" in last["result_preview"]
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_run_llm_carries_recent_tool_executions_into_next_turn_prompt(
+    initialized_cm,
+):
+    cm = initialized_cm.cm
+    captured_messages = []
+
+    async def fake_single_shot(*args, **kwargs):
+        messages = args[1]
+        captured_messages.append(messages)
+        if len(captured_messages) == 1:
+            return _make_multi_tool_result(
+                (
+                    "create_space",
+                    {"name": "Ops HQ"},
+                    {"space_id": 11, "name": "Ops HQ"},
+                ),
+            )
+        return SingleShotResult(tools=[], text_response="noop", structured_output=None)
+
+    with patch(
+        "unity.conversation_manager.conversation_manager.single_shot_tool_decision",
+        AsyncMock(side_effect=fake_single_shot),
+    ):
+        await cm._run_llm(trace_meta={"origin_event_name": "SMSSent"})
+        await cm._run_llm(trace_meta={"origin_event_name": "SMSReceived"})
+
+    assert len(captured_messages) == 2
+    second_turn_text = "\n".join(
+        str(message.get("content")) for message in captured_messages[1]
+    )
+    assert "<recent_tool_executions>" in second_turn_text
+    assert "tool=create_space" in second_turn_text
+
+
+def test_duplicate_commissioning_suppression_only_blocks_immediate_followups():
+    from unity.conversation_manager.conversation_manager import ConversationManager
+
+    cm = ConversationManager.__new__(ConversationManager)
+    cm._llm_gen = 7
+    tool_args = {"first_name": "Ops", "surname": "Bot", "config": None}
+    fingerprint = cm._commissioning_tool_fingerprint("create_assistant", tool_args)
+    cm._recent_commissioning_successes = {fingerprint: 6}
+    cm._active_llm_trace_meta = {"origin_event_name": "SMSSent"}
+
+    suppressed = cm.suppress_duplicate_commissioning_tool(
+        tool_name="create_assistant",
+        tool_args=tool_args,
+    )
+
+    assert suppressed is not None
+    assert suppressed["error_kind"] == "duplicate_suppressed"
+    assert suppressed["details"]["origin_event_name"] == "SMSSent"
+
+    cm._recent_commissioning_successes = {}
+    assert (
+        cm.suppress_duplicate_commissioning_tool(
+            tool_name="create_assistant",
+            tool_args=tool_args,
+        )
+        is None
+    )
+
+    cm._active_llm_trace_meta = {"origin_event_name": "SMSReceived"}
+    assert (
+        cm.suppress_duplicate_commissioning_tool(
+            tool_name="create_assistant",
+            tool_args=tool_args,
+        )
+        is None
+    )
