@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import pytest
+import requests
 
 import unify
-from unity.common.context_store import TableStore
+from unify.utils.http import RequestError
+from unity.common.context_store import TableStore, _create_context_with_retry
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +35,7 @@ def test_ensure_creates_and_idempotent(monkeypatch):
         auto_counting=None,
         description=None,
         foreign_keys=None,
+        project=None,
     ):
         calls["create_context"] += 1
         # Basic argument sanity
@@ -92,3 +95,23 @@ def test_get_columns_transforms(monkeypatch):
     # Assert mapping and the exact call arguments
     assert cols == {"first_name": "str", "contact_id": "int", "_internal": "dict"}
     assert seen == {"project_name": "proj-Z", "context": "Org/Contacts"}
+
+
+def test_ensure_context_treats_400_context_already_exists_as_success(monkeypatch):
+    response = requests.Response()
+    response.status_code = 400
+    response._content = b"A context with this name already exists in the project."
+
+    monkeypatch.setattr(
+        unify,
+        "create_context",
+        lambda *_, **__: (_ for _ in ()).throw(
+            RequestError("https://api.unify.ai", "POST", response),
+        ),
+    )
+
+    _create_context_with_retry(
+        "Org/Coordinator/Checklist",
+        unique_keys={"item_id": "int"},
+        auto_counting={"item_id": None},
+    )

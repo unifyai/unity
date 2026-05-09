@@ -82,6 +82,44 @@ class CoordinatorTools:
             ],
         ] = {}
 
+    @staticmethod
+    def _derived_colleague_job_title(
+        *,
+        first_name: str,
+        surname: str | None,
+    ) -> str | None:
+        """Return a role-style job title inferred from commissioning inputs."""
+        candidate = (surname or "").strip()
+        if not candidate:
+            return None
+        if " " in first_name.strip():
+            return candidate
+        return None
+
+    def _assistant_defaults_from_coordinator(
+        self,
+        *,
+        first_name: str,
+        surname: str | None,
+        config: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Build coordinator-inherited defaults for colleague creation."""
+        merged = dict(config or {})
+        coordinator_timezone = (SESSION_DETAILS.assistant.timezone or "").strip()
+        coordinator_nationality = (SESSION_DETAILS.assistant.nationality or "").strip()
+        if not merged.get("timezone") and coordinator_timezone:
+            merged["timezone"] = coordinator_timezone
+        if not merged.get("nationality") and coordinator_nationality:
+            merged["nationality"] = coordinator_nationality
+        if not merged.get("job_title"):
+            derived_job_title = self._derived_colleague_job_title(
+                first_name=first_name,
+                surname=surname,
+            )
+            if derived_job_title:
+                merged["job_title"] = derived_job_title
+        return merged or None
+
     def create_assistant(
         self,
         *,
@@ -101,6 +139,11 @@ class CoordinatorTools:
         if suppression is not None:
             return suppression
 
+        assistant_config = self._assistant_defaults_from_coordinator(
+            first_name=first_name,
+            surname=surname,
+            config=config,
+        )
         colleague_name = _display_name(first_name=first_name, surname=surname)
         activity_id = self._publish_activity(
             phase="started",
@@ -115,7 +158,7 @@ class CoordinatorTools:
             result = unify.create_assistant(
                 first_name=first_name,
                 surname=surname,
-                config=config,
+                config=assistant_config,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
@@ -933,13 +976,21 @@ class CoordinatorTools:
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
         """Update setup mode and optionally attach a handoff suggested reply."""
-
-        return CoordinatorOnboardingManager().set_state(
-            mode=mode,
-            ready_at=ready_at,
-            chat_prompt=chat_prompt,
-            chat_prompt_label=chat_prompt_label,
-        )
+        try:
+            return CoordinatorOnboardingManager().set_state(
+                mode=mode,
+                ready_at=ready_at,
+                chat_prompt=chat_prompt,
+                chat_prompt_label=chat_prompt_label,
+            )
+        except RequestError as exc:
+            return _request_error_to_tool_error(exc)
+        except Exception as exc:
+            return {
+                "error_kind": "internal",
+                "message": "Failed to update coordinator setup state.",
+                "details": {"error": str(exc)},
+            }
 
     def add_setup_checklist_item(
         self,
@@ -951,14 +1002,22 @@ class CoordinatorTools:
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
         """Add one user-facing setup step and optional suggested reply CTA."""
-
-        return CoordinatorOnboardingManager().add_checklist_item(
-            title=title,
-            description=description,
-            kind=kind,
-            chat_prompt=chat_prompt,
-            chat_prompt_label=chat_prompt_label,
-        )
+        try:
+            return CoordinatorOnboardingManager().add_checklist_item(
+                title=title,
+                description=description,
+                kind=kind,
+                chat_prompt=chat_prompt,
+                chat_prompt_label=chat_prompt_label,
+            )
+        except RequestError as exc:
+            return _request_error_to_tool_error(exc)
+        except Exception as exc:
+            return {
+                "error_kind": "internal",
+                "message": "Failed to add setup checklist item.",
+                "details": {"error": str(exc)},
+            }
 
     def update_setup_checklist_item(
         self,
@@ -972,16 +1031,24 @@ class CoordinatorTools:
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
         """Update one user-facing setup step and optional suggested reply CTA."""
-
-        return CoordinatorOnboardingManager().update_checklist_item(
-            item_id=item_id,
-            status=status,
-            title=title,
-            description=description,
-            kind=kind,
-            chat_prompt=chat_prompt,
-            chat_prompt_label=chat_prompt_label,
-        )
+        try:
+            return CoordinatorOnboardingManager().update_checklist_item(
+                item_id=item_id,
+                status=status,
+                title=title,
+                description=description,
+                kind=kind,
+                chat_prompt=chat_prompt,
+                chat_prompt_label=chat_prompt_label,
+            )
+        except RequestError as exc:
+            return _request_error_to_tool_error(exc)
+        except Exception as exc:
+            return {
+                "error_kind": "internal",
+                "message": "Failed to update setup checklist item.",
+                "details": {"error": str(exc)},
+            }
 
     def _suppress_duplicate_commissioning_tool(
         self,
@@ -1052,11 +1119,16 @@ class CoordinatorTools:
             self._remember_assistant(assistant)
             return {"status": "reused", "assistant": assistant}
 
+        resolved_assistant_config = self._assistant_defaults_from_coordinator(
+            first_name=assistant_first_name,
+            surname=assistant_surname,
+            config=assistant_config,
+        )
         try:
             created = unify.create_assistant(
                 first_name=assistant_first_name,
                 surname=assistant_surname,
-                config=assistant_config,
+                config=resolved_assistant_config,
                 create_infra=False,
                 api_key=SESSION_DETAILS.unify_key,
             )
@@ -1495,8 +1567,40 @@ def _request_error_to_tool_error(exc: RequestError) -> ToolError:
         error_kind = "internal"
 
     response_text = getattr(response, "text", "") or str(exc)
+    message = response_text
+    details: dict[str, Any] = {"status_code": status_code}
+
+    detail_payload: Any = None
+    if response is not None:
+        try:
+            response_payload = response.json()
+        except Exception:
+            response_payload = None
+        if isinstance(response_payload, dict):
+            detail_payload = response_payload.get("detail")
+
+    if isinstance(detail_payload, dict):
+        message = safe_activity_text(
+            detail_payload.get("message"),
+            fallback=safe_activity_text(
+                detail_payload.get("error"),
+                fallback=response_text,
+            ),
+        )
+        existing_id = detail_payload.get("existing_id")
+        if isinstance(existing_id, int):
+            details["existing_id"] = existing_id
+        error_code = detail_payload.get("error")
+        if isinstance(error_code, str) and error_code.strip():
+            details["error"] = error_code
+        nested_details = detail_payload.get("details")
+        if isinstance(nested_details, dict):
+            details.update(nested_details)
+    elif isinstance(detail_payload, str) and detail_payload.strip():
+        message = detail_payload
+
     return {
         "error_kind": error_kind,
-        "message": response_text,
-        "details": {"status_code": status_code},
+        "message": message,
+        "details": details,
     }

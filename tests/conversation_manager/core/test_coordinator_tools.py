@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import requests
+import pytest
 from types import SimpleNamespace
 
 from unify.utils.http import RequestError
@@ -11,6 +12,12 @@ from unity.conversation_manager.domains.coordinator_tools import (
     _preseed_write_payload,
 )
 from unity.session_details import SESSION_DETAILS
+
+_SETUP_WRAPPER_METHOD_BY_TOOL = {
+    "set_setup_state": "set_state",
+    "add_setup_checklist_item": "add_checklist_item",
+    "update_setup_checklist_item": "update_checklist_item",
+}
 
 
 class TestCoordinatorTools:
@@ -144,6 +151,165 @@ class TestCoordinatorTools:
 
         assert result["error_kind"] == "permission_denied"
         assert result["details"]["status_code"] == 403
+
+    def test_create_assistant_merges_defaults_without_overwriting_explicit_config(
+        self,
+        monkeypatch,
+    ):
+        SESSION_DETAILS.assistant.timezone = "Asia/Karachi"
+        SESSION_DETAILS.assistant.nationality = "United States"
+        calls = []
+
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.create_assistant",
+            lambda **kwargs: calls.append(kwargs) or {"agent_id": 42},
+        )
+
+        result = CoordinatorTools(cm=object()).create_assistant(
+            first_name="Avery",
+            surname="Parker",
+            config={
+                "timezone": "Europe/Berlin",
+                "about": "Handles escalation triage",
+            },
+        )
+
+        assert result == {"agent_id": 42}
+        assert calls == [
+            {
+                "first_name": "Avery",
+                "surname": "Parker",
+                "config": {
+                    "timezone": "Europe/Berlin",
+                    "about": "Handles escalation triage",
+                    "nationality": "United States",
+                },
+                "api_key": "owner-key",
+            },
+        ]
+
+    def test_create_assistant_derives_job_title_from_surname_for_multiword_first_name(
+        self,
+        monkeypatch,
+    ):
+        SESSION_DETAILS.assistant.timezone = "Asia/Karachi"
+        SESSION_DETAILS.assistant.nationality = "United States"
+        calls = []
+
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.create_assistant",
+            lambda **kwargs: calls.append(kwargs) or {"agent_id": 42},
+        )
+
+        CoordinatorTools(cm=object()).create_assistant(
+            first_name="Sarah Chen",
+            surname="Recruiter",
+        )
+
+        assert calls[0]["config"] == {
+            "timezone": "Asia/Karachi",
+            "nationality": "United States",
+            "job_title": "Recruiter",
+        }
+
+    def test_create_assistant_conflict_parses_detail_payload_with_existing_id(
+        self,
+        monkeypatch,
+    ):
+        def failing_create_assistant(**_):
+            response = requests.Response()
+            response.status_code = 409
+            response._content = (
+                b'{"detail":{"error":"assistant_already_exists","message":"Assistant '
+                b'with this name already exists in this scope.","existing_id":1939}}'
+            )
+            raise RequestError("https://api.unify.ai", "POST", response)
+
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.create_assistant",
+            failing_create_assistant,
+        )
+
+        result = CoordinatorTools(cm=object()).create_assistant(first_name="Ops")
+
+        assert result["error_kind"] == "conflict"
+        assert (
+            result["message"]
+            == "Assistant with this name already exists in this scope."
+        )
+        assert result["details"]["status_code"] == 409
+        assert result["details"]["existing_id"] == 1939
+        assert result["details"]["error"] == "assistant_already_exists"
+
+    @pytest.mark.parametrize(
+        ("tool_name", "tool_kwargs"),
+        [
+            ("set_setup_state", {"mode": "active"}),
+            ("add_setup_checklist_item", {"title": "Connect CRM"}),
+            ("update_setup_checklist_item", {"item_id": 7, "status": "done"}),
+        ],
+    )
+    def test_setup_wrappers_convert_request_errors_to_tool_errors(
+        self,
+        monkeypatch,
+        tool_name,
+        tool_kwargs,
+    ):
+        response = requests.Response()
+        response.status_code = 400
+        response._content = b"invalid payload"
+
+        monkeypatch.setattr(
+            "unity.coordinator_manager.coordinator_manager."
+            f"CoordinatorOnboardingManager.{_SETUP_WRAPPER_METHOD_BY_TOOL[tool_name]}",
+            lambda *_, **__: (_ for _ in ()).throw(
+                RequestError("https://api.unify.ai", "POST", response),
+            ),
+        )
+
+        result = getattr(CoordinatorTools(cm=object()), tool_name)(**tool_kwargs)
+
+        assert result["error_kind"] == "invalid_argument"
+        assert result["details"]["status_code"] == 400
+
+    @pytest.mark.parametrize(
+        ("tool_name", "tool_kwargs", "expected_message"),
+        [
+            (
+                "set_setup_state",
+                {"mode": "active"},
+                "Failed to update coordinator setup state.",
+            ),
+            (
+                "add_setup_checklist_item",
+                {"title": "Connect CRM"},
+                "Failed to add setup checklist item.",
+            ),
+            (
+                "update_setup_checklist_item",
+                {"item_id": 7, "status": "done"},
+                "Failed to update setup checklist item.",
+            ),
+        ],
+    )
+    def test_setup_wrappers_convert_unexpected_errors_to_internal_tool_errors(
+        self,
+        monkeypatch,
+        tool_name,
+        tool_kwargs,
+        expected_message,
+    ):
+        monkeypatch.setattr(
+            "unity.coordinator_manager.coordinator_manager."
+            f"CoordinatorOnboardingManager.{_SETUP_WRAPPER_METHOD_BY_TOOL[tool_name]}",
+            lambda *_, **__: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        result = getattr(CoordinatorTools(cm=object()), tool_name)(**tool_kwargs)
+
+        assert result["error_kind"] == "internal"
+        assert result["message"] == expected_message
+        assert result["details"]["error"] == "boom"
 
     def test_pre_seed_colleague_forwards_confirmed_writes_after_reachability(
         self,
@@ -679,3 +845,44 @@ class TestCoordinatorTools:
 
         assert result["error_kind"] == "conflict"
         assert result["details"]["matches"] == [42, 43]
+
+    def test_commission_colleague_into_workspace_applies_same_assistant_defaults(
+        self,
+        monkeypatch,
+    ):
+        SESSION_DETAILS.assistant.timezone = "Asia/Karachi"
+        SESSION_DETAILS.assistant.nationality = "United States"
+        create_calls = []
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_assistants",
+            lambda **_: [],
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.create_assistant",
+            lambda **kwargs: create_calls.append(kwargs)
+            or {"agent_id": 42, "first_name": "Sarah Chen", "surname": "Recruiter"},
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_spaces",
+            lambda **_: [{"space_id": 11, "name": "Hiring Desk"}],
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_space_members",
+            lambda *_, **__: [{"assistant_id": 42}],
+        )
+
+        result = CoordinatorTools(cm=object()).commission_colleague_into_workspace(
+            assistant_first_name="Sarah Chen",
+            assistant_surname="Recruiter",
+            space_name="Hiring Desk",
+            space_description="Hiring workspace for sourcing and interview loops.",
+        )
+
+        assert result["assistant"]["status"] == "created"
+        assert result["space"]["status"] == "reused"
+        assert result["membership"]["status"] == "already_member"
+        assert create_calls[0]["config"] == {
+            "timezone": "Asia/Karachi",
+            "nationality": "United States",
+            "job_title": "Recruiter",
+        }

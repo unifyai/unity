@@ -33,6 +33,16 @@ def _is_transient(exc: _UnifyRequestError) -> bool:
     return status == 429 or status >= 500
 
 
+def _is_already_exists_context_error(exc: _UnifyRequestError) -> bool:
+    """Return whether the backend reported an idempotent context-exists conflict."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status != 400:
+        return False
+    text = (getattr(response, "text", "") or "").lower()
+    return "already exists" in text and "context" in text
+
+
 def _create_context_with_retry(
     name: str,
     *,
@@ -62,6 +72,8 @@ def _create_context_with_retry(
             )
             return
         except _UnifyRequestError as exc:
+            if _is_already_exists_context_error(exc):
+                return
             if not _is_transient(exc):
                 raise
             last_exc = exc
