@@ -15,7 +15,10 @@ from unity.common.single_shot import single_shot_tool_decision
 from unity.common.llm_client import new_llm_client
 from unity.conversation_manager.cm_types.mode import Mode
 from unity.conversation_manager.domains.brain import build_brain_spec
-from unity.conversation_manager.domains.coordinator_tools import CoordinatorPreseedWrite
+from unity.conversation_manager.domains.coordinator_tools import (
+    CoordinatorPreseedWrite,
+    CoordinatorTools,
+)
 from unity.session_details import SESSION_DETAILS, AssistantDetails, SpaceSummary
 
 pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
@@ -59,6 +62,7 @@ _COORDINATOR_TOOLS = (
     "list_spaces",
     "list_space_members",
     "list_spaces_for_assistant",
+    "commission_colleague_into_workspace",
     "invite_assistant_to_space",
     "cancel_space_invitation",
     "list_pending_invitations",
@@ -66,13 +70,26 @@ _COORDINATOR_TOOLS = (
     "add_setup_checklist_item",
     "update_setup_checklist_item",
 )
-_SETUP_PROGRESS_TOOLS = frozenset(
-    {
-        "set_setup_state",
-        "add_setup_checklist_item",
-        "update_setup_checklist_item",
-    },
+_COMMISSIONING_PRIMITIVE_TOOLS = frozenset(
+    {"create_assistant", "create_space", "add_space_member"},
 )
+_COMMISSIONING_COMPOSITE_TOOLS = frozenset({"commission_colleague_into_workspace"})
+
+
+def test_eval_coordinator_tool_surface_matches_runtime() -> None:
+    """Keep eval coordinator tool expectations in lockstep with runtime tools."""
+
+    runtime_tools = set(CoordinatorTools(cm=object()).as_tools())
+    assert set(_COORDINATOR_TOOLS) == runtime_tools
+
+
+def _expanded_forbidden_tools(forbidden_tools: set[str]) -> set[str]:
+    """Expand forbidden tool sets with composite workspace mutations when needed."""
+
+    expanded = set(forbidden_tools)
+    if expanded & _COMMISSIONING_PRIMITIVE_TOOLS:
+        expanded |= _COMMISSIONING_COMPOSITE_TOOLS
+    return expanded
 
 
 class ScenarioVerdict(BaseModel):
@@ -120,6 +137,7 @@ class CoordinatorScenario:
     mode: Mode = Mode.TEXT
     forbidden_tools: frozenset[str] = field(default_factory=frozenset)
     required_tools: frozenset[str] = field(default_factory=frozenset)
+    required_tool_alternatives: tuple[frozenset[str], ...] = ()
     required_tool_args: dict[str, tuple[str, ...]] = field(default_factory=dict)
     space_summaries: tuple[SpaceSummary, ...] = ()
 
@@ -409,6 +427,48 @@ class _RecordingTools:
         """List spaces for a reachable assistant."""
 
         return [{"assistant_id": assistant_id, "space_id": 3101, "name": "CashOps"}]
+
+    def commission_colleague_into_workspace(
+        self,
+        *,
+        assistant_first_name: str,
+        assistant_surname: str | None = None,
+        space_name: str,
+        space_description: str,
+        assistant_config: dict[str, Any] | None = None,
+        assistant_id: int | None = None,
+        space_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Commission one colleague into one workspace in a single coordinator step."""
+
+        resolved_assistant_id = assistant_id or 7005
+        resolved_space_id = space_id or 3104
+        return {
+            "assistant": {
+                "status": "existing" if assistant_id else "created",
+                "assistant_id": resolved_assistant_id,
+                "assistant": {
+                    "agent_id": resolved_assistant_id,
+                    "first_name": assistant_first_name,
+                    "surname": assistant_surname,
+                    "config": assistant_config,
+                },
+            },
+            "space": {
+                "status": "existing" if space_id else "created",
+                "space_id": resolved_space_id,
+                "space": {
+                    "space_id": resolved_space_id,
+                    "name": space_name,
+                    "description": space_description,
+                },
+            },
+            "membership": {
+                "status": "created",
+                "space_id": resolved_space_id,
+                "assistant_id": resolved_assistant_id,
+            },
+        }
 
     def invite_assistant_to_space(
         self,
@@ -1090,8 +1150,10 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
             "digests are owned by the pod colleagues/tasks, and that the shared "
             "read-only credential belongs in the pod's Secrets surface."
         ),
-        required_tools=frozenset(
-            {"create_assistant", "create_space", "send_unify_message"},
+        required_tools=frozenset({"send_unify_message"}),
+        required_tool_alternatives=(
+            frozenset({"create_assistant", "create_space"}),
+            frozenset({"commission_colleague_into_workspace"}),
         ),
     ),
     CoordinatorScenario(
@@ -1535,6 +1597,13 @@ async def _verify_scenario(
         "active_contact_id": _BOSS_CONTACT["contact_id"],
         "masked_components": scenario.masked_components,
         "rubric": scenario.rubric,
+        "forbidden_tools": sorted(
+            _expanded_forbidden_tools(set(scenario.forbidden_tools)),
+        ),
+        "required_tools": sorted(scenario.required_tools),
+        "required_tool_alternatives": [
+            sorted(alternative) for alternative in scenario.required_tool_alternatives
+        ],
         "candidate_user_visible_text": _user_visible_text(result),
         "candidate_structured_thoughts": (
             getattr(result.structured_output, "thoughts", "")
@@ -1579,8 +1648,13 @@ def _format_failure(
     payload = {
         "scenario_id": scenario.scenario_id,
         "title": scenario.title,
-        "forbidden_tools": sorted(scenario.forbidden_tools),
+        "forbidden_tools": sorted(
+            _expanded_forbidden_tools(set(scenario.forbidden_tools)),
+        ),
         "required_tools": sorted(scenario.required_tools),
+        "required_tool_alternatives": [
+            sorted(alternative) for alternative in scenario.required_tool_alternatives
+        ],
         "tool_calls": _tool_payloads(result),
         "user_visible_text": _user_visible_text(result),
         "structured_thoughts": (
@@ -1602,10 +1676,17 @@ async def _run_and_verify_scenario(
         llm_config=llm_config,
     )
     called_tools = {tool.name for tool in result.tools}
-    forbidden_called = called_tools & set(scenario.forbidden_tools)
+    forbidden_tools = _expanded_forbidden_tools(set(scenario.forbidden_tools))
+    forbidden_called = called_tools & forbidden_tools
     assert not forbidden_called, _format_failure(scenario, result)
     missing_required = set(scenario.required_tools) - called_tools
     assert not missing_required, _format_failure(scenario, result)
+    if scenario.required_tool_alternatives:
+        alternatives_satisfied = any(
+            alternative.issubset(called_tools)
+            for alternative in scenario.required_tool_alternatives
+        )
+        assert alternatives_satisfied, _format_failure(scenario, result)
     for tool_name, required_args in scenario.required_tool_args.items():
         matching_calls = [tool for tool in result.tools if tool.name == tool_name]
         assert matching_calls, _format_failure(scenario, result)

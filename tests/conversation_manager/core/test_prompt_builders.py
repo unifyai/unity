@@ -242,6 +242,151 @@ class TestCoordinatorPrompt:
         assert "Team Coordinator" not in coordinator_prompt
         assert "I cannot forward it automatically" not in coordinator_prompt
 
+    def test_base_and_coordinator_keep_distinct_literacy_sections(self):
+        base_prompt = _build()
+        coordinator_prompt = _build(is_coordinator=True)
+
+        assert "Console knowledge" in base_prompt
+        assert "Unify system literacy" not in base_prompt
+        assert "Unify system literacy" in coordinator_prompt
+        assert "Console knowledge" not in coordinator_prompt
+
+    def test_concurrency_guidance_is_split_by_role(self):
+        base_prompt = _build()
+        coordinator_prompt = _build(is_coordinator=True)
+
+        assert "Concurrent action and acknowledgment" in base_prompt
+        assert "Coordinator parallel tool discipline" not in base_prompt
+
+        assert "Coordinator parallel tool discipline" in coordinator_prompt
+        assert "Concurrent action and acknowledgment" not in coordinator_prompt
+        assert "Dependent calls must be staged" in coordinator_prompt
+        assert "`commission_colleague_into_workspace`" in coordinator_prompt
+        assert "handles one colleague per call" in coordinator_prompt
+
+
+class TestPromptSectionOwnershipMatrix:
+    """Role/mode/org combinations keep prompt section ownership boundaries stable."""
+
+    def test_system_prompt_section_ownership_matrix(self):
+        cases = (
+            {
+                "name": "regular_non_demo_no_org",
+                "kwargs": {},
+                "present": (
+                    "Act capabilities\n----------------",
+                    "Concurrent action and acknowledgment\n------------------------------------",
+                ),
+                "absent": (
+                    "I am the Coordinator",
+                    "**Coordinator workspace tools:**",
+                    "Authorized humans\n-----------------",
+                    "Team Coordinator\n----------------",
+                    "Demo mode\n---------",
+                    "Coordinator parallel tool discipline\n----------------------------------",
+                ),
+            },
+            {
+                "name": "regular_non_demo_with_org",
+                "kwargs": {"org_coordinator_name": "Avery Coordinator"},
+                "present": (
+                    "Act capabilities\n----------------",
+                    "Concurrent action and acknowledgment\n------------------------------------",
+                    "Team Coordinator\n----------------",
+                ),
+                "absent": (
+                    "I am the Coordinator",
+                    "**Coordinator workspace tools:**",
+                    "Authorized humans\n-----------------",
+                    "Demo mode\n---------",
+                    "Coordinator parallel tool discipline\n----------------------------------",
+                ),
+            },
+            {
+                "name": "regular_demo_no_org",
+                "kwargs": {"demo_mode": True},
+                "present": ("Demo mode\n---------",),
+                "absent": (
+                    "I am the Coordinator",
+                    "**Coordinator workspace tools:**",
+                    "Authorized humans\n-----------------",
+                    "Act capabilities\n----------------",
+                    "Team Coordinator\n----------------",
+                    "Coordinator parallel tool discipline\n----------------------------------",
+                    "Concurrent action and acknowledgment\n------------------------------------",
+                ),
+            },
+            {
+                "name": "regular_demo_with_org",
+                "kwargs": {
+                    "demo_mode": True,
+                    "org_coordinator_name": "Avery Coordinator",
+                },
+                "present": (
+                    "Demo mode\n---------",
+                    "Team Coordinator\n----------------",
+                ),
+                "absent": (
+                    "I am the Coordinator",
+                    "**Coordinator workspace tools:**",
+                    "Authorized humans\n-----------------",
+                    "Act capabilities\n----------------",
+                    "Coordinator parallel tool discipline\n----------------------------------",
+                    "Concurrent action and acknowledgment\n------------------------------------",
+                ),
+            },
+            {
+                "name": "coordinator_non_demo_with_org",
+                "kwargs": {
+                    "is_coordinator": True,
+                    "org_coordinator_name": "Avery Coordinator",
+                },
+                "present": (
+                    "I am the Coordinator",
+                    "**Coordinator workspace tools:**",
+                    "Authorized humans\n-----------------",
+                    "Act capabilities\n----------------",
+                    "Coordinator parallel tool discipline\n----------------------------------",
+                ),
+                "absent": (
+                    "Team Coordinator\n----------------",
+                    "Demo mode\n---------",
+                    "Concurrent action and acknowledgment\n------------------------------------",
+                ),
+            },
+            {
+                "name": "coordinator_demo_with_org",
+                "kwargs": {
+                    "is_coordinator": True,
+                    "demo_mode": True,
+                    "org_coordinator_name": "Avery Coordinator",
+                },
+                "present": (
+                    "I am the Coordinator",
+                    "**Coordinator workspace tools:**",
+                    "Authorized humans\n-----------------",
+                    "Demo mode\n---------",
+                ),
+                "absent": (
+                    "Team Coordinator\n----------------",
+                    "Act capabilities\n----------------",
+                    "Coordinator parallel tool discipline\n----------------------------------",
+                    "Concurrent action and acknowledgment\n------------------------------------",
+                ),
+            },
+        )
+
+        for case in cases:
+            prompt = _build(**case["kwargs"])
+            for marker in case["present"]:
+                assert (
+                    marker in prompt
+                ), f"{case['name']} missing expected marker: {marker}"
+            for marker in case["absent"]:
+                assert (
+                    marker not in prompt
+                ), f"{case['name']} unexpectedly contains marker: {marker}"
+
 
 class TestCoordinatorVoicePrompt:
     """Coordinator voice calls get compact role guidance, not slow-brain literacy."""
@@ -349,6 +494,29 @@ class TestCommunicationGuidelinesAdapt:
         assert "I can send SMS, unify messages, calls" in prompt
         assert "I can send SMS, emails" not in prompt
 
+    def test_teams_workspace_actions_are_not_marked_contact_addressed(self):
+        prompt = _build(
+            assistant_has_phone=True,
+            assistant_has_email=True,
+            assistant_has_teams=True,
+        )
+        contact_actions = prompt.split("**Contact actions:**")[1].split(
+            "- If the contact is NOT in active_conversations at all",
+        )[0]
+        contact_addressed_line = next(
+            line
+            for line in contact_actions.splitlines()
+            if "Contact-addressed communication tools" in line
+        )
+
+        assert "send_teams_message" in contact_addressed_line
+        assert "create_teams_channel" not in contact_addressed_line
+        assert "create_teams_meet" not in contact_addressed_line
+        assert (
+            "`create_teams_channel` and `create_teams_meet` are Teams workspace actions"
+            in contact_actions
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests – external app integration
@@ -405,6 +573,10 @@ class TestProactiveMeetingOffers:
 
     def test_proactive_meeting_absent_in_demo_mode(self):
         prompt = _build(demo_mode=True)
+        assert "Proactive meeting offers" not in prompt
+
+    def test_proactive_meeting_absent_for_coordinator(self):
+        prompt = _build(is_coordinator=True)
         assert "Proactive meeting offers" not in prompt
 
 
