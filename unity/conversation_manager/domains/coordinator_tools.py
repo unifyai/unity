@@ -90,6 +90,16 @@ class CoordinatorTools:
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any] | ToolError:
         """Create a confirmed colleague after exact setup scope is agreed."""
+        suppression = self._suppress_duplicate_commissioning_tool(
+            tool_name="create_assistant",
+            tool_args={
+                "first_name": first_name,
+                "surname": surname,
+                "config": config,
+            },
+        )
+        if suppression is not None:
+            return suppression
 
         colleague_name = _display_name(first_name=first_name, surname=surname)
         activity_id = self._publish_activity(
@@ -368,6 +378,17 @@ class CoordinatorTools:
         owner_user_id: str | None = None,
     ) -> dict[str, Any] | ToolError:
         """Create a confirmed team space after exact setup scope is agreed."""
+        suppression = self._suppress_duplicate_commissioning_tool(
+            tool_name="create_space",
+            tool_args={
+                "name": name,
+                "description": description,
+                "organization_id": organization_id,
+                "owner_user_id": owner_user_id,
+            },
+        )
+        if suppression is not None:
+            return suppression
 
         del organization_id, owner_user_id
         workspace_name = safe_activity_text(name, fallback="Workspace")
@@ -528,6 +549,12 @@ class CoordinatorTools:
         assistant_id: int,
     ) -> dict[str, Any] | ToolError:
         """Add a reachable assistant to a reachable space after membership is agreed."""
+        suppression = self._suppress_duplicate_commissioning_tool(
+            tool_name="add_space_member",
+            tool_args={"space_id": space_id, "assistant_id": assistant_id},
+        )
+        if suppression is not None:
+            return suppression
 
         activity_id = self._publish_activity(
             phase="started",
@@ -565,6 +592,126 @@ class CoordinatorTools:
             title="Added colleague to workspace",
             surfaces=["membership"],
             related_entities=_membership_entities(space_id, assistant_id),
+            activity_id=activity_id,
+        )
+        return result
+
+    def commission_colleague_into_workspace(
+        self,
+        *,
+        assistant_first_name: str,
+        assistant_surname: str | None = None,
+        space_name: str,
+        space_description: str,
+        assistant_config: dict[str, Any] | None = None,
+        assistant_id: int | None = None,
+        space_id: int | None = None,
+    ) -> dict[str, Any] | ToolError:
+        """Create/reuse a colleague and workspace, then ensure membership."""
+        suppression = self._suppress_duplicate_commissioning_tool(
+            tool_name="commission_colleague_into_workspace",
+            tool_args={
+                "assistant_first_name": assistant_first_name,
+                "assistant_surname": assistant_surname,
+                "space_name": space_name,
+                "space_description": space_description,
+                "assistant_config": assistant_config,
+                "assistant_id": assistant_id,
+                "space_id": space_id,
+            },
+        )
+        if suppression is not None:
+            return suppression
+
+        colleague_name = _display_name(
+            first_name=assistant_first_name,
+            surname=assistant_surname,
+        )
+        workspace_name = safe_activity_text(space_name, fallback="Workspace")
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title=f"Commissioning {colleague_name} into {workspace_name}",
+            surfaces=["colleagues", "workspaces", "membership"],
+            related_entities=[
+                activity_entity(
+                    "colleague",
+                    name=colleague_name,
+                    entity_id=assistant_id,
+                ),
+                activity_entity("workspace", name=workspace_name, entity_id=space_id),
+            ],
+        )
+        assistant_step = self._resolve_or_create_commission_assistant(
+            assistant_first_name=assistant_first_name,
+            assistant_surname=assistant_surname,
+            assistant_config=assistant_config,
+            assistant_id=assistant_id,
+        )
+        if _is_tool_error(assistant_step):
+            self._publish_failure(
+                activity_id,
+                title=f"Could not commission {colleague_name} into {workspace_name}",
+                error=assistant_step,
+            )
+            return assistant_step
+
+        assistant_row = assistant_step["assistant"]
+        resolved_assistant_id = int(assistant_row["agent_id"])
+        space_step = self._resolve_or_create_commission_space(
+            space_name=space_name,
+            space_description=space_description,
+            space_id=space_id,
+        )
+        if _is_tool_error(space_step):
+            self._publish_failure(
+                activity_id,
+                title=f"Could not commission {colleague_name} into {workspace_name}",
+                error=space_step,
+            )
+            return space_step
+
+        space_row = space_step["space"]
+        resolved_space_id = int(space_row["space_id"])
+        membership_step = self._ensure_commission_membership(
+            space_id=resolved_space_id,
+            assistant_id=resolved_assistant_id,
+        )
+        if _is_tool_error(membership_step):
+            self._publish_failure(
+                activity_id,
+                title=f"Could not commission {colleague_name} into {workspace_name}",
+                error=membership_step,
+            )
+            return membership_step
+
+        result = {
+            "assistant": {
+                "status": assistant_step["status"],
+                "assistant_id": resolved_assistant_id,
+                "assistant": assistant_row,
+            },
+            "space": {
+                "status": space_step["status"],
+                "space_id": resolved_space_id,
+                "space": space_row,
+            },
+            "membership": {
+                "status": membership_step["status"],
+                "space_id": resolved_space_id,
+                "assistant_id": resolved_assistant_id,
+            },
+        }
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title=f"Commissioned {safe_activity_text(_assistant_display_name(assistant_row), fallback=colleague_name)} into {safe_activity_text(_space_display_name(space_row), fallback=workspace_name)}",
+            surfaces=["colleagues", "workspaces", "membership"],
+            related_entities=[
+                _assistant_entity(assistant_row, fallback=colleague_name),
+                _space_entity(space_row, fallback=workspace_name),
+                *_membership_entities(resolved_space_id, resolved_assistant_id),
+            ],
             activity_id=activity_id,
         )
         return result
@@ -836,6 +983,187 @@ class CoordinatorTools:
             chat_prompt_label=chat_prompt_label,
         )
 
+    def _suppress_duplicate_commissioning_tool(
+        self,
+        *,
+        tool_name: str,
+        tool_args: dict[str, Any],
+    ) -> ToolError | None:
+        suppressor = getattr(self._cm, "suppress_duplicate_commissioning_tool", None)
+        if not callable(suppressor):
+            return None
+        suppression = suppressor(tool_name=tool_name, tool_args=tool_args)
+        if _is_tool_error(suppression):
+            return suppression
+        return None
+
+    def _resolve_or_create_commission_assistant(
+        self,
+        *,
+        assistant_first_name: str,
+        assistant_surname: str | None,
+        assistant_config: dict[str, Any] | None,
+        assistant_id: int | None,
+    ) -> dict[str, Any] | ToolError:
+        if assistant_id is not None:
+            listed = self.list_assistants(agent_id=assistant_id)
+            if _is_tool_error(listed):
+                return listed
+            if not listed:
+                return _assistant_not_found(assistant_id)
+            if len(listed) > 1:
+                return _tool_conflict(
+                    message=(
+                        "Multiple assistants matched the provided assistant_id while "
+                        "commissioning."
+                    ),
+                    details={"assistant_id": assistant_id, "matches": len(listed)},
+                )
+            assistant = listed[0]
+            self._remember_assistant(assistant)
+            return {"status": "reused", "assistant": assistant}
+
+        listed = self.list_assistants()
+        if _is_tool_error(listed):
+            return listed
+        matches = [
+            assistant
+            for assistant in listed
+            if _assistant_name_matches(
+                assistant,
+                first_name=assistant_first_name,
+                surname=assistant_surname,
+            )
+        ]
+        if len(matches) > 1:
+            return _tool_conflict(
+                message=(
+                    "Multiple existing assistants matched the requested name. "
+                    "Pass assistant_id to disambiguate."
+                ),
+                details={
+                    "assistant_first_name": assistant_first_name,
+                    "assistant_surname": assistant_surname,
+                    "matches": [row.get("agent_id") for row in matches],
+                },
+            )
+        if len(matches) == 1:
+            assistant = matches[0]
+            self._remember_assistant(assistant)
+            return {"status": "reused", "assistant": assistant}
+
+        try:
+            created = unify.create_assistant(
+                first_name=assistant_first_name,
+                surname=assistant_surname,
+                config=assistant_config,
+                create_infra=False,
+                api_key=SESSION_DETAILS.unify_key,
+            )
+        except RequestError as exc:
+            return _request_error_to_tool_error(exc)
+        self._clear_assistant_cache()
+        self._remember_assistant(created)
+        return {"status": "created", "assistant": created}
+
+    def _resolve_or_create_commission_space(
+        self,
+        *,
+        space_name: str,
+        space_description: str,
+        space_id: int | None,
+    ) -> dict[str, Any] | ToolError:
+        if space_id is not None:
+            listed = self.list_spaces()
+            if _is_tool_error(listed):
+                return listed
+            matches = [
+                space for space in listed if str(space.get("space_id")) == str(space_id)
+            ]
+            if not matches:
+                return _space_not_found(space_id)
+            if len(matches) > 1:
+                return _tool_conflict(
+                    message=(
+                        "Multiple spaces matched the provided space_id while "
+                        "commissioning."
+                    ),
+                    details={"space_id": space_id, "matches": len(matches)},
+                )
+            space = matches[0]
+            self._remember_space(space)
+            return {"status": "reused", "space": space}
+
+        listed = self.list_spaces()
+        if _is_tool_error(listed):
+            return listed
+        matches = [
+            space
+            for space in listed
+            if _space_name_matches(space, space_name=space_name)
+        ]
+        if len(matches) > 1:
+            return _tool_conflict(
+                message=(
+                    "Multiple existing spaces matched the requested name. "
+                    "Pass space_id to disambiguate."
+                ),
+                details={
+                    "space_name": space_name,
+                    "matches": [row.get("space_id") for row in matches],
+                },
+            )
+        if len(matches) == 1:
+            space = matches[0]
+            self._remember_space(space)
+            return {"status": "reused", "space": space}
+
+        try:
+            created = unify.create_space(
+                name=space_name,
+                description=space_description,
+                organization_id=SESSION_DETAILS.org_id,
+                api_key=SESSION_DETAILS.unify_key,
+            )
+        except RequestError as exc:
+            return _request_error_to_tool_error(exc)
+        self._clear_space_cache()
+        self._remember_space(created)
+        return {"status": "created", "space": created}
+
+    def _ensure_commission_membership(
+        self,
+        *,
+        space_id: int,
+        assistant_id: int,
+    ) -> dict[str, Any] | ToolError:
+        listed = self.list_space_members(space_id=space_id)
+        if _is_tool_error(listed):
+            return listed
+        if any(
+            _member_matches_assistant(member, assistant_id=assistant_id)
+            for member in listed
+        ):
+            return {"status": "already_member"}
+        try:
+            unify.add_space_member(
+                space_id=space_id,
+                assistant_id=assistant_id,
+                api_key=SESSION_DETAILS.unify_key,
+            )
+        except RequestError as exc:
+            error = _request_error_to_tool_error(exc)
+            if (
+                error.get("error_kind") == "conflict"
+                and "already"
+                in _tool_error_message(
+                    error,
+                ).lower()
+            ):
+                return {"status": "already_member"}
+            return error
+        return {"status": "added"}
+
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the Coordinator-only tools for the slow-brain loop."""
 
@@ -854,6 +1182,9 @@ class CoordinatorTools:
             "list_spaces": self.list_spaces,
             "list_space_members": self.list_space_members,
             "list_spaces_for_assistant": self.list_spaces_for_assistant,
+            "commission_colleague_into_workspace": (
+                self.commission_colleague_into_workspace
+            ),
             "invite_assistant_to_space": self.invite_assistant_to_space,
             "cancel_space_invitation": self.cancel_space_invitation,
             "list_pending_invitations": self.list_pending_invitations,
@@ -868,7 +1199,7 @@ class CoordinatorTools:
         assistants = self._assistant_cache
         if assistants is None:
             listed = self.list_assistants(agent_id=agent_id)
-            if isinstance(listed, dict) and "error_kind" in listed:
+            if _is_tool_error(listed):
                 return listed
             assistants = listed
         reachable_ids = {str(row.get("agent_id")) for row in assistants}
@@ -881,7 +1212,7 @@ class CoordinatorTools:
         spaces = self._space_cache
         if spaces is None:
             listed = self.list_spaces()
-            if isinstance(listed, dict) and "error_kind" in listed:
+            if _is_tool_error(listed):
                 return listed
             spaces = listed
         reachable_ids = {str(row.get("space_id")) for row in spaces}
@@ -984,6 +1315,49 @@ class CoordinatorTools:
             status="error",
             error=_tool_error_message(error),
         )
+
+
+def _tool_conflict(*, message: str, details: dict[str, Any]) -> ToolError:
+    return {
+        "error_kind": "conflict",
+        "message": message,
+        "details": details,
+    }
+
+
+def _is_tool_error(value: Any) -> bool:
+    return isinstance(value, dict) and "error_kind" in value
+
+
+def _normalize_lookup_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _assistant_name_matches(
+    assistant: dict[str, Any],
+    *,
+    first_name: str,
+    surname: str | None,
+) -> bool:
+    candidate = _normalize_lookup_text(
+        f"{assistant.get('first_name') or assistant.get('firstName') or ''} "
+        f"{assistant.get('surname') or assistant.get('last_name') or assistant.get('lastName') or ''}",
+    )
+    target = _normalize_lookup_text(f"{first_name} {surname or ''}")
+    return bool(target) and candidate == target
+
+
+def _space_name_matches(space: dict[str, Any], *, space_name: str) -> bool:
+    return _normalize_lookup_text(space.get("name")) == _normalize_lookup_text(
+        space_name,
+    )
+
+
+def _member_matches_assistant(member: dict[str, Any], *, assistant_id: int) -> bool:
+    member_assistant_id = member.get("agent_id")
+    if member_assistant_id is None:
+        member_assistant_id = member.get("assistant_id")
+    return str(member_assistant_id) == str(assistant_id)
 
 
 def _assistant_not_found(agent_id: int) -> ToolError:
