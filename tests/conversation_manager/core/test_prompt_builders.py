@@ -127,7 +127,9 @@ class TestCoordinatorPrompt:
         assert "Authorized humans" in prompt
         assert "Dana Owner" in prompt
         assert "Coordinator workspace tools" in prompt
-        assert "organize colleagues into shared workspaces" in prompt
+        assert "Coordinator tool routing (quick guide)" in prompt
+        assert "set up its Unify workforce" in prompt
+        assert "Coordinator workspace ontology" in prompt
         assert "`chat_prompt` and `chat_prompt_label`" in prompt
         assert "offer a suggested reply" in prompt
         for tool_name in CoordinatorTools(cm=object()).as_tools():
@@ -153,28 +155,25 @@ class TestCoordinatorPrompt:
         prompt = _build(is_coordinator=True)
 
         assert "Unify system literacy" in prompt
-        assert "Context taxonomy" in prompt
+        assert "Context map" in prompt
         assert "Tasks/Activations" in prompt
         assert "Tasks/Runs" in prompt
         assert "Knowledge" in prompt
         assert "Guidance" in prompt
         assert "Spaces/<space_id>/..." in prompt
         assert "Coordinator/State" in prompt
-        assert "Console navigation map" in prompt
-        assert "right-pane Secrets tab" in prompt
+        assert "Console map" in prompt
+        assert "Secrets is where credentials and secret values belong" in prompt
         assert "Integration walkthrough Q&A" in prompt
-        assert "SaaS tools" in prompt
-        assert "Capability boundary" in prompt
-        assert "I never read or accept secret values in chat" in prompt
-        assert "Where available tools expose it" in prompt
+        assert "I never read or accept secret values in chat or voice" in prompt
+        assert "I do not handle OAuth consent screens on the user's behalf" in prompt
         assert "pre_seed_colleague" in prompt
-        assert "target colleague's own root" in prompt
+        assert "one colleague root only" in prompt
         assert 'destination="space:<id>"' in prompt
         assert "remove_space_member" in prompt
         assert "cancel_space_invitation" in prompt
-        assert "custom colleague media" in prompt
-        assert "existing durable URL or GCS path" in prompt
-        assert "cannot upload local files" in prompt
+        assert "cannot upload local custom media for colleague profiles" in prompt
+        assert "fine-grained per-user permissions" in prompt
 
         assert "per-body authoring" not in prompt
         assert "I will pull" not in prompt
@@ -210,12 +209,20 @@ class TestCoordinatorPrompt:
     def test_coordinator_prompt_fingerholds_integration_secret_setup(self):
         prompt = _build(is_coordinator=True)
 
-        assert "two safe setup paths" in prompt
-        assert "guide them live by screen share" in prompt
-        assert "technical self-serve Secrets path" in prompt
-        assert "user completes OAuth consent in their own browser" in prompt
-        assert "should never paste secret values into chat" in prompt
-        assert "first read-only validation" in prompt
+        assert (
+            "Can you set up an integration yourself, or does it always belong to a colleague?"
+            in prompt
+        )
+        assert "I offer two safe paths" in prompt
+        assert "guide one step at a time" in prompt
+        assert "I can guide their current screen" in prompt
+        assert "one-owner workflow -> owning colleague's Secrets" in prompt
+        assert "shared team workflow -> shared-space Secrets" in prompt
+        assert "If multiple colleagues need the same credential" in prompt
+        assert "Long-lived keys are saved in Secrets" in prompt
+        assert "never ask for secret values in chat" in prompt
+        assert "Run one read-only validation" in prompt
+        assert "unresolved threshold/freshness/owner detail" in prompt
 
     def test_regular_org_assistant_gets_coordinator_reference_block(self):
         prompt = _build(org_coordinator_name="Avery Coordinator")
@@ -262,7 +269,31 @@ class TestCoordinatorPrompt:
         assert "Concurrent action and acknowledgment" not in coordinator_prompt
         assert "Dependent calls must be staged" in coordinator_prompt
         assert "`commission_colleague_into_workspace`" in coordinator_prompt
+        assert "setup mutation tool" in coordinator_prompt
+        assert "not only an acknowledgment" in coordinator_prompt
         assert "handles one colleague per call" in coordinator_prompt
+        assert "pair the fast-path call with `act(persist=True)`" in coordinator_prompt
+
+    def test_coordinator_ontology_defines_colleague_and_space_terms(self):
+        prompt = _build(is_coordinator=True)
+
+        assert "Coordinator workspace ontology" in prompt
+        assert "**Colleague**" in prompt
+        assert "**Personal scope**" in prompt
+        assert "**Space / workspace**" in prompt
+        assert "If one colleague owns the workflow" in prompt
+        assert "If several colleagues need the same setup" in prompt
+
+    def test_coordinator_parallel_discipline_appears_with_tool_listing(self):
+        prompt = _build(is_coordinator=True)
+
+        assert "Coordinator parallel tool discipline" in prompt
+        assert prompt.index("**Action steering tools**") < prompt.index(
+            "Coordinator parallel tool discipline",
+        )
+        assert prompt.index("Coordinator parallel tool discipline") < prompt.index(
+            "Action steering guidelines",
+        )
 
 
 class TestPromptSectionOwnershipMatrix:
