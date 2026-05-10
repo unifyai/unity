@@ -128,7 +128,9 @@ class TestCoordinatorPrompt:
         assert "Dana Owner" in prompt
         assert "Coordinator workspace tools" in prompt
         assert "Coordinator tool routing (quick guide)" in prompt
-        assert "set up its Unify workforce" in prompt
+        assert "setup and orchestration teammate" in prompt
+        assert "Coordinator mission" in prompt
+        assert "I do not personally own recurring day-to-day execution" in prompt
         assert "Coordinator workspace ontology" in prompt
         assert "`chat_prompt` and `chat_prompt_label`" in prompt
         assert "offer a suggested reply" in prompt
