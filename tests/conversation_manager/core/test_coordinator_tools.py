@@ -712,8 +712,7 @@ class TestCoordinatorTools:
                 {
                     "first_name": "Ops",
                     "surname": "Bot",
-                    "config": None,
-                    "create_infra": False,
+                    "config": {"create_infra": False},
                     "api_key": "owner-key",
                 },
             ),
@@ -885,4 +884,5 @@ class TestCoordinatorTools:
             "timezone": "Asia/Karachi",
             "nationality": "United States",
             "job_title": "Recruiter",
+            "create_infra": False,
         }

@@ -1124,12 +1124,13 @@ class CoordinatorTools:
             surname=assistant_surname,
             config=assistant_config,
         )
+        commission_assistant_config = dict(resolved_assistant_config or {})
+        commission_assistant_config["create_infra"] = False
         try:
             created = unify.create_assistant(
                 first_name=assistant_first_name,
                 surname=assistant_surname,
-                config=resolved_assistant_config,
-                create_infra=False,
+                config=commission_assistant_config,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
