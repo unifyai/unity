@@ -376,11 +376,7 @@ async def check_spending_limits_callback(
     # legacy gate would block every call. Skip it for METERED, keep it
     # for CREDITS (and for the no-billing-mode-yet legacy case so we
     # don't loosen the gate during a partial Orchestra rollout).
-    if (
-        billing_mode != "METERED"
-        and credit_balance is not None
-        and credit_balance <= 0
-    ):
+    if billing_mode != "METERED" and credit_balance is not None and credit_balance <= 0:
         return LimitCheckResponse(
             allowed=False,
             reason=(
