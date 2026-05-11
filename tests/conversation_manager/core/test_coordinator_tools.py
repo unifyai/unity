@@ -147,7 +147,10 @@ class TestCoordinatorTools:
             failing_create_assistant,
         )
 
-        result = CoordinatorTools(cm=object()).create_assistant(first_name="Ops")
+        result = CoordinatorTools(cm=object()).create_assistant(
+            first_name="Ops",
+            about="Operations colleague.",
+        )
 
         assert result["error_kind"] == "permission_denied"
         assert result["details"]["status_code"] == 403
@@ -168,9 +171,9 @@ class TestCoordinatorTools:
         result = CoordinatorTools(cm=object()).create_assistant(
             first_name="Avery",
             surname="Parker",
+            about="Handles escalation triage",
             config={
                 "timezone": "Europe/Berlin",
-                "about": "Handles escalation triage",
             },
         )
 
@@ -188,6 +191,23 @@ class TestCoordinatorTools:
             },
         ]
 
+    def test_create_assistant_requires_explicit_about(self, monkeypatch):
+        create_calls = []
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.create_assistant",
+            lambda **kwargs: create_calls.append(kwargs) or {"agent_id": 42},
+        )
+
+        result = CoordinatorTools(cm=object()).create_assistant(
+            first_name="Marcus",
+            surname="Webb",
+            about="   ",
+        )
+
+        assert result["error_kind"] == "invalid_argument"
+        assert result["details"] == {"field": "about"}
+        assert create_calls == []
+
     def test_create_assistant_derives_job_title_from_surname_for_multiword_first_name(
         self,
         monkeypatch,
@@ -204,12 +224,14 @@ class TestCoordinatorTools:
         CoordinatorTools(cm=object()).create_assistant(
             first_name="Sarah Chen",
             surname="Recruiter",
+            about="Senior recruiter for supply-chain hiring.",
         )
 
         assert calls[0]["config"] == {
             "timezone": "Asia/Karachi",
             "nationality": "United States",
             "job_title": "Recruiter",
+            "about": "Senior recruiter for supply-chain hiring.",
         }
 
     def test_create_assistant_conflict_parses_detail_payload_with_existing_id(
@@ -230,7 +252,10 @@ class TestCoordinatorTools:
             failing_create_assistant,
         )
 
-        result = CoordinatorTools(cm=object()).create_assistant(first_name="Ops")
+        result = CoordinatorTools(cm=object()).create_assistant(
+            first_name="Ops",
+            about="Operations colleague.",
+        )
 
         assert result["error_kind"] == "conflict"
         assert (
@@ -450,7 +475,10 @@ class TestCoordinatorTools:
             lambda **kwargs: create_calls.append(kwargs) or {"agent_id": 42},
         )
 
-        result = CoordinatorTools(cm=cm).create_assistant(first_name="Ops")
+        result = CoordinatorTools(cm=cm).create_assistant(
+            first_name="Ops",
+            about="Operations colleague.",
+        )
 
         assert result["error_kind"] == "duplicate_suppressed"
         assert create_calls == []
@@ -677,6 +705,7 @@ class TestCoordinatorTools:
             assistant_surname="Bot",
             space_name="Ops HQ",
             space_description="Operations workspace",
+            assistant_about="Leads operations workflows.",
         )
 
         assert result == {
@@ -712,7 +741,7 @@ class TestCoordinatorTools:
                 {
                     "first_name": "Ops",
                     "surname": "Bot",
-                    "config": None,
+                    "config": {"about": "Leads operations workflows."},
                     "api_key": "owner-key",
                 },
             ),
@@ -740,6 +769,31 @@ class TestCoordinatorTools:
                 {"space_id": 11, "assistant_id": 42, "api_key": "owner-key"},
             ),
         ]
+
+    def test_commission_colleague_into_workspace_requires_about_when_creating(
+        self,
+        monkeypatch,
+    ):
+        create_calls = []
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_assistants",
+            lambda **_: [],
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.create_assistant",
+            lambda **kwargs: create_calls.append(kwargs) or {"agent_id": 42},
+        )
+
+        result = CoordinatorTools(cm=object()).commission_colleague_into_workspace(
+            assistant_first_name="Ops",
+            assistant_surname="Bot",
+            space_name="Ops HQ",
+            space_description="Operations workspace",
+        )
+
+        assert result["error_kind"] == "invalid_argument"
+        assert result["details"] == {"field": "assistant_about"}
+        assert create_calls == []
 
     def test_commission_colleague_into_workspace_reuses_existing_membership(
         self,
@@ -875,6 +929,7 @@ class TestCoordinatorTools:
             assistant_surname="Recruiter",
             space_name="Hiring Desk",
             space_description="Hiring workspace for sourcing and interview loops.",
+            assistant_about="Leads recruiter scorecards and candidate routing.",
         )
 
         assert result["assistant"]["status"] == "created"
@@ -884,4 +939,5 @@ class TestCoordinatorTools:
             "timezone": "Asia/Karachi",
             "nationality": "United States",
             "job_title": "Recruiter",
+            "about": "Leads recruiter scorecards and candidate routing.",
         }

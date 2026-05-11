@@ -96,11 +96,22 @@ class CoordinatorTools:
             return candidate
         return None
 
+    @staticmethod
+    def _normalize_about(about: str | None) -> str | None:
+        """Return trimmed bio text, or None when no usable content was provided."""
+        if about is None:
+            return None
+        trimmed = about.strip()
+        if not trimmed:
+            return None
+        return trimmed
+
     def _assistant_defaults_from_coordinator(
         self,
         *,
         first_name: str,
         surname: str | None,
+        about: str | None = None,
         config: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         """Build coordinator-inherited defaults for colleague creation."""
@@ -118,6 +129,8 @@ class CoordinatorTools:
             )
             if derived_job_title:
                 merged["job_title"] = derived_job_title
+        if about is not None:
+            merged["about"] = about
         return merged or None
 
     def create_assistant(
@@ -125,23 +138,34 @@ class CoordinatorTools:
         *,
         first_name: str,
         surname: str | None = None,
+        about: str,
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Create a confirmed colleague after exact setup scope is agreed."""
+        """Create a confirmed colleague after exact setup scope and bio are agreed."""
         suppression = self._suppress_duplicate_commissioning_tool(
             tool_name="create_assistant",
             tool_args={
                 "first_name": first_name,
                 "surname": surname,
+                "about": about,
                 "config": config,
             },
         )
         if suppression is not None:
             return suppression
 
+        normalized_about = self._normalize_about(about)
+        if normalized_about is None:
+            return _invalid_argument(
+                message=(
+                    "Provide a non-empty `about` value before creating a colleague."
+                ),
+                details={"field": "about"},
+            )
         assistant_config = self._assistant_defaults_from_coordinator(
             first_name=first_name,
             surname=surname,
+            about=normalized_about,
             config=config,
         )
         colleague_name = _display_name(first_name=first_name, surname=surname)
@@ -646,6 +670,7 @@ class CoordinatorTools:
         assistant_surname: str | None = None,
         space_name: str,
         space_description: str,
+        assistant_about: str | None = None,
         assistant_config: dict[str, Any] | None = None,
         assistant_id: int | None = None,
         space_id: int | None = None,
@@ -658,6 +683,7 @@ class CoordinatorTools:
                 "assistant_surname": assistant_surname,
                 "space_name": space_name,
                 "space_description": space_description,
+                "assistant_about": assistant_about,
                 "assistant_config": assistant_config,
                 "assistant_id": assistant_id,
                 "space_id": space_id,
@@ -688,6 +714,7 @@ class CoordinatorTools:
         assistant_step = self._resolve_or_create_commission_assistant(
             assistant_first_name=assistant_first_name,
             assistant_surname=assistant_surname,
+            assistant_about=assistant_about,
             assistant_config=assistant_config,
             assistant_id=assistant_id,
         )
@@ -1069,6 +1096,7 @@ class CoordinatorTools:
         *,
         assistant_first_name: str,
         assistant_surname: str | None,
+        assistant_about: str | None,
         assistant_config: dict[str, Any] | None,
         assistant_id: int | None,
     ) -> dict[str, Any] | ToolError:
@@ -1119,9 +1147,18 @@ class CoordinatorTools:
             self._remember_assistant(assistant)
             return {"status": "reused", "assistant": assistant}
 
+        normalized_about = self._normalize_about(assistant_about)
+        if normalized_about is None:
+            return _invalid_argument(
+                message=(
+                    "Provide `assistant_about` before commissioning a new colleague."
+                ),
+                details={"field": "assistant_about"},
+            )
         resolved_assistant_config = self._assistant_defaults_from_coordinator(
             first_name=assistant_first_name,
             surname=assistant_surname,
+            about=normalized_about,
             config=assistant_config,
         )
         try:
@@ -1391,6 +1428,14 @@ class CoordinatorTools:
 def _tool_conflict(*, message: str, details: dict[str, Any]) -> ToolError:
     return {
         "error_kind": "conflict",
+        "message": message,
+        "details": details,
+    }
+
+
+def _invalid_argument(*, message: str, details: dict[str, Any]) -> ToolError:
+    return {
+        "error_kind": "invalid_argument",
         "message": message,
         "details": details,
     }

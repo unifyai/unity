@@ -284,15 +284,18 @@ class _RecordingTools:
         *,
         first_name: str,
         surname: str | None = None,
+        about: str,
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create a confirmed colleague after exact setup scope is agreed."""
 
+        merged_config = dict(config or {})
+        merged_config["about"] = about
         return {
             "agent_id": 9101,
             "first_name": first_name,
             "surname": surname,
-            "config": config or {},
+            "config": merged_config,
         }
 
     def delete_assistant(self, *, agent_id: int) -> dict[str, Any]:
@@ -435,6 +438,7 @@ class _RecordingTools:
         assistant_surname: str | None = None,
         space_name: str,
         space_description: str,
+        assistant_about: str | None = None,
         assistant_config: dict[str, Any] | None = None,
         assistant_id: int | None = None,
         space_id: int | None = None,
@@ -443,6 +447,9 @@ class _RecordingTools:
 
         resolved_assistant_id = assistant_id or 7005
         resolved_space_id = space_id or 3104
+        merged_assistant_config = dict(assistant_config or {})
+        if assistant_about is not None:
+            merged_assistant_config["about"] = assistant_about
         return {
             "assistant": {
                 "status": "existing" if assistant_id else "created",
@@ -451,7 +458,7 @@ class _RecordingTools:
                     "agent_id": resolved_assistant_id,
                     "first_name": assistant_first_name,
                     "surname": assistant_surname,
-                    "config": assistant_config,
+                    "config": merged_assistant_config or None,
                 },
             },
             "space": {
