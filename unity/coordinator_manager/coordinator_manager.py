@@ -236,10 +236,11 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         title: str,
         description: str | None = None,
         kind: str | None = None,
+        initial_status: str = "pending",
         chat_prompt: str | None = None,
         chat_prompt_label: str | None = None,
     ) -> ToolOutcome | ToolError:
-        """Add a pending setup checklist item and optional activity-card CTA."""
+        """Add a setup checklist item and optional activity-card CTA."""
 
         if not title.strip():
             return _tool_error(
@@ -247,6 +248,9 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
                 "Checklist item title is required.",
                 {"title": title},
             )
+        status_error = _validate_checklist_status(initial_status)
+        if status_error is not None:
+            return status_error
 
         now = _utc_now()
         row = unity_log(
@@ -254,15 +258,16 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             title=title,
             description=description,
             kind=kind,
-            status="pending",
+            status=initial_status,
             created_at=_log_datetime(now),
             updated_at=_log_datetime(now),
             new=True,
             mutable=True,
             add_to_all_context=False,
         )
+        activity_phase = "progress" if initial_status == "pending" else "completed"
         publish_coordinator_activity(
-            phase="progress",
+            phase=activity_phase,
             stage="requirements",
             title=f"Added setup step: {title}",
             surfaces=["tasks"],
@@ -290,12 +295,9 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
     ) -> ToolOutcome | ToolError:
         """Update one checklist item and optionally emit a user-guidance CTA."""
 
-        if status is not None and status not in COORDINATOR_CHECKLIST_STATUSES:
-            return _tool_error(
-                "invalid_argument",
-                "Checklist status must be 'pending', 'done', or 'skipped'.",
-                {"status": status},
-            )
+        status_error = _validate_checklist_status(status)
+        if status_error is not None:
+            return status_error
 
         updates: dict[str, Any] = {}
         if status is not None:
@@ -432,6 +434,18 @@ def _assistant_display_name(assistant: dict[str, Any]) -> str | None:
         if part
     )
     return name or None
+
+
+def _validate_checklist_status(status: str | None) -> ToolError | None:
+    if status is None:
+        return None
+    if status in COORDINATOR_CHECKLIST_STATUSES:
+        return None
+    return _tool_error(
+        "invalid_argument",
+        "Checklist status must be 'pending', 'done', or 'skipped'.",
+        {"status": status},
+    )
 
 
 def _utc_now() -> datetime:

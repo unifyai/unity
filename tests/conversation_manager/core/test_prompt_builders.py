@@ -207,6 +207,18 @@ class TestCoordinatorPrompt:
         assert "I am an onboarder, not an interrogator" in prompt
         assert "whether the user wants to continue with the next integration" in prompt
         assert "When enough is known, I stop asking" in prompt
+        assert "discovery -> team/workspace setup -> integrations" in prompt
+        assert "guide, not a rigid sequence" in prompt
+
+    def test_coordinator_prompt_guides_dynamic_checklist_lifecycle(self):
+        prompt = _build(is_coordinator=True)
+
+        assert "Coordinator checklist and state usage" in prompt
+        assert "default status is `pending`" in prompt
+        assert 'add_setup_checklist_item(status="done")' in prompt
+        assert "run the checklist mutation tool calls in that same turn" in prompt
+        assert "mark the completed checklist item `done`" in prompt
+        assert "update stale checklist items before moving forward" in prompt
 
     def test_coordinator_prompt_fingerholds_integration_secret_setup(self):
         prompt = _build(is_coordinator=True)
@@ -273,7 +285,9 @@ class TestCoordinatorPrompt:
         assert "`commission_colleague_into_workspace`" in coordinator_prompt
         assert "setup mutation tool" in coordinator_prompt
         assert "not only an acknowledgment" in coordinator_prompt
-        assert "do not end a successful setup-mutation turn silently" in coordinator_prompt
+        assert (
+            "do not end a successful setup-mutation turn silently" in coordinator_prompt
+        )
         assert "handles one colleague per call" in coordinator_prompt
         assert "pair the fast-path call with `act(persist=True)`" in coordinator_prompt
 

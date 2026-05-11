@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -74,6 +75,58 @@ class TestCoordinatorOnboardingManager:
 
         assert checklist_context.unique_keys == {"item_id": "int"}
         assert checklist_context.auto_counting == {"item_id": None}
+
+    @pytest.mark.parametrize("initial_status", ["pending", "done", "skipped"])
+    def test_add_checklist_item_accepts_initial_status(self, initial_status):
+        with (
+            patch("unity.common.context_registry._create_context_with_retry"),
+            patch(
+                "unity.coordinator_manager.coordinator_manager.unity_log",
+                return_value=SimpleNamespace(entries={"item_id": 17}),
+            ) as write_log,
+            patch(
+                "unity.coordinator_manager.coordinator_manager.publish_coordinator_activity",
+            ) as publish_activity,
+        ):
+            manager = CoordinatorOnboardingManager()
+            with patch.object(
+                manager,
+                "_get_checklist_context",
+                return_value="assistants/42/Coordinator/Checklist",
+            ):
+                result = manager.add_checklist_item(
+                    title="Backfilled checklist phase",
+                    initial_status=initial_status,
+                )
+
+        assert result == {
+            "outcome": "checklist item added",
+            "details": {"item_id": 17},
+        }
+        assert write_log.call_args.kwargs["status"] == initial_status
+        expected_phase = "progress" if initial_status == "pending" else "completed"
+        assert publish_activity.call_args.kwargs["phase"] == expected_phase
+
+    def test_add_checklist_item_rejects_invalid_initial_status(self):
+        with (
+            patch("unity.common.context_registry._create_context_with_retry"),
+            patch(
+                "unity.coordinator_manager.coordinator_manager.unity_log",
+            ) as write_log,
+            patch(
+                "unity.coordinator_manager.coordinator_manager.publish_coordinator_activity",
+            ) as publish_activity,
+        ):
+            manager = CoordinatorOnboardingManager()
+            result = manager.add_checklist_item(
+                title="Invalid status checklist phase",
+                initial_status="blocked",
+            )
+
+        assert result["error_kind"] == "invalid_argument"
+        assert result["details"] == {"status": "blocked"}
+        write_log.assert_not_called()
+        publish_activity.assert_not_called()
 
     def test_personal_coordinator_has_empty_authorized_humans(self):
         with patch("unity.common.context_registry._create_context_with_retry"):

@@ -531,12 +531,20 @@ class _RecordingTools:
         self,
         *,
         title: str,
+        status: str | None = None,
         description: str | None = None,
         kind: str | None = None,
         chat_prompt: str | None = None,
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any]:
         """Add one user-facing step to the Coordinator setup checklist."""
+
+        if status is not None and status not in {"pending", "done", "skipped"}:
+            return {
+                "error_kind": "invalid_argument",
+                "message": "Checklist status must be 'pending', 'done', or 'skipped'.",
+                "details": {"status": status},
+            }
 
         item_id = self._next_checklist_item_id
         self._next_checklist_item_id += 1
@@ -545,7 +553,7 @@ class _RecordingTools:
             "title": title,
             "description": description,
             "kind": kind,
-            "status": "pending",
+            "status": status if status is not None else "pending",
         }
         return {"outcome": "checklist item added", "details": {"item_id": item_id}}
 
@@ -1343,6 +1351,53 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
             "update_setup_checklist_item": ("status",),
             "add_setup_checklist_item": ("title",),
         },
+        forbidden_tools=frozenset(
+            {
+                "create_assistant",
+                "delete_assistant",
+                "update_assistant_config",
+                "create_space",
+                "delete_space",
+                "update_space",
+                "add_space_member",
+                "remove_space_member",
+                "invite_assistant_to_space",
+                "cancel_space_invitation",
+                "pre_seed_colleague",
+                "set_setup_state",
+            },
+        ),
+    ),
+    CoordinatorScenario(
+        scenario_id="setup-checklist-backfill-completed-phases",
+        title="Checklist restructure backfills completed phases in one step",
+        business_context=(
+            "A coordinator is restructuring setup into cleaner phase-based checklist rows "
+            "after earlier onboarding slices already completed."
+        ),
+        turns=(
+            DialogueTurn(
+                "user",
+                "Please restructure the checklist into phase rows. Discovery and team/workspace "
+                "setup are already complete, and keep the HubSpot integration phase as the "
+                "next pending step.",
+                new=True,
+            ),
+        ),
+        masked_components=(
+            "Discovery work already happened earlier in the session.",
+            "Colleague and workspace foundations are already in place.",
+            "HubSpot integration setup is the next active slice.",
+            "No assistant, workspace, membership, or invitation mutation is requested.",
+        ),
+        rubric=(
+            "The response should backfill completed history rows using "
+            "`add_setup_checklist_item(status='done')` and keep the next "
+            "integration slice pending. It should avoid unrelated workspace mutations "
+            "and avoid marking setup state ready while integration work remains."
+        ),
+        required_tools=frozenset({"add_setup_checklist_item"}),
+        required_tool_args={"add_setup_checklist_item": ("title", "status")},
         forbidden_tools=frozenset(
             {
                 "create_assistant",

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import requests
-import pytest
 from types import SimpleNamespace
 
+import pytest
+import requests
 from unify.utils.http import RequestError
 
 from unity.conversation_manager.domains.coordinator_tools import (
@@ -299,11 +299,44 @@ class TestCoordinatorTools:
         assert result["details"]["existing_id"] == 1939
         assert result["details"]["error"] == "assistant_already_exists"
 
+    def test_add_setup_checklist_item_forwards_explicit_status_without_coercion(
+        self,
+        monkeypatch,
+    ):
+        calls = []
+
+        def fake_add_checklist_item(*_, **kwargs):
+            calls.append(kwargs)
+            return {"outcome": "checklist item added", "details": {"item_id": 77}}
+
+        monkeypatch.setattr(
+            "unity.coordinator_manager.coordinator_manager."
+            "CoordinatorOnboardingManager.add_checklist_item",
+            fake_add_checklist_item,
+        )
+
+        result = CoordinatorTools(cm=object()).add_setup_checklist_item(
+            title="Connect CRM",
+            status="",
+        )
+
+        assert result == {"outcome": "checklist item added", "details": {"item_id": 77}}
+        assert calls == [
+            {
+                "title": "Connect CRM",
+                "initial_status": "",
+                "description": None,
+                "kind": None,
+                "chat_prompt": None,
+                "chat_prompt_label": None,
+            },
+        ]
+
     @pytest.mark.parametrize(
         ("tool_name", "tool_kwargs"),
         [
             ("set_setup_state", {"mode": "active"}),
-            ("add_setup_checklist_item", {"title": "Connect CRM"}),
+            ("add_setup_checklist_item", {"title": "Connect CRM", "status": "done"}),
             ("update_setup_checklist_item", {"item_id": 7, "status": "done"}),
         ],
     )
@@ -340,7 +373,7 @@ class TestCoordinatorTools:
             ),
             (
                 "add_setup_checklist_item",
-                {"title": "Connect CRM"},
+                {"title": "Connect CRM", "status": "done"},
                 "Failed to add setup checklist item.",
             ),
             (

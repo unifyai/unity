@@ -1063,19 +1063,25 @@ class CoordinatorTools:
         self,
         *,
         title: str,
+        status: str | None = None,
         description: str | None = None,
         kind: str | None = None,
         chat_prompt: str | None = None,
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Add one user-facing setup step and optional suggested reply CTA."""
+        """Add a user-facing setup step with optional initial status and CTA."""
         try:
+            add_kwargs: dict[str, Any] = {
+                "title": title,
+                "description": description,
+                "kind": kind,
+                "chat_prompt": chat_prompt,
+                "chat_prompt_label": chat_prompt_label,
+            }
+            if status is not None:
+                add_kwargs["initial_status"] = status
             return CoordinatorOnboardingManager().add_checklist_item(
-                title=title,
-                description=description,
-                kind=kind,
-                chat_prompt=chat_prompt,
-                chat_prompt_label=chat_prompt_label,
+                **add_kwargs,
             )
         except RequestError as exc:
             return _request_error_to_tool_error(exc)
