@@ -208,6 +208,39 @@ class TestCoordinatorTools:
         assert result["details"] == {"field": "about"}
         assert create_calls == []
 
+    def test_create_assistant_explicit_profile_args_override_config_values(
+        self,
+        monkeypatch,
+    ):
+        calls = []
+        SESSION_DETAILS.assistant.timezone = "Asia/Karachi"
+        SESSION_DETAILS.assistant.nationality = "United States"
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.create_assistant",
+            lambda **kwargs: calls.append(kwargs) or {"agent_id": 42},
+        )
+
+        CoordinatorTools(cm=object()).create_assistant(
+            first_name="Taylor",
+            surname="Ops",
+            about="Leads daily cash operations.",
+            job_title="Revenue Operations Lead",
+            timezone="Europe/London",
+            nationality="United Kingdom",
+            config={
+                "job_title": "Old Title",
+                "timezone": "America/Los_Angeles",
+                "nationality": "Canada",
+            },
+        )
+
+        assert calls[0]["config"] == {
+            "job_title": "Revenue Operations Lead",
+            "timezone": "Europe/London",
+            "nationality": "United Kingdom",
+            "about": "Leads daily cash operations.",
+        }
+
     def test_create_assistant_derives_job_title_from_surname_for_multiword_first_name(
         self,
         monkeypatch,
@@ -794,6 +827,54 @@ class TestCoordinatorTools:
         assert result["error_kind"] == "invalid_argument"
         assert result["details"] == {"field": "assistant_about"}
         assert create_calls == []
+
+    def test_commission_colleague_explicit_profile_args_override_assistant_config(
+        self,
+        monkeypatch,
+    ):
+        create_calls = []
+        SESSION_DETAILS.assistant.timezone = "Asia/Karachi"
+        SESSION_DETAILS.assistant.nationality = "United States"
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_assistants",
+            lambda **_: [],
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.create_assistant",
+            lambda **kwargs: create_calls.append(kwargs)
+            or {"agent_id": 42, "first_name": "Ops", "surname": "Bot"},
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_spaces",
+            lambda **_: [{"space_id": 11, "name": "Ops HQ"}],
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_space_members",
+            lambda *_, **__: [{"assistant_id": 42}],
+        )
+
+        CoordinatorTools(cm=object()).commission_colleague_into_workspace(
+            assistant_first_name="Ops",
+            assistant_surname="Bot",
+            space_name="Ops HQ",
+            space_description="Operations workspace",
+            assistant_about="Runs the operations command center.",
+            assistant_job_title="Operations Lead",
+            assistant_timezone="Europe/London",
+            assistant_nationality="United Kingdom",
+            assistant_config={
+                "job_title": "Old Title",
+                "timezone": "America/New_York",
+                "nationality": "Canada",
+            },
+        )
+
+        assert create_calls[0]["config"] == {
+            "job_title": "Operations Lead",
+            "timezone": "Europe/London",
+            "nationality": "United Kingdom",
+            "about": "Runs the operations command center.",
+        }
 
     def test_commission_colleague_into_workspace_reuses_existing_membership(
         self,

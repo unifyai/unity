@@ -615,7 +615,7 @@ def _build_coordinator_workspace_tool_listing() -> str:
     """Build the Coordinator workspace tools block for the output format section."""
     return "\n".join(
         [
-            "- `create_assistant`: Create a confirmed new assistant for an authorized human or workspace need after the exact name, ownership, setup scope, and colleague bio are agreed. Always pass a concise non-empty `about` argument. For exploratory requests, unresolved credentials, or missing validation details, reply with `send_unify_message` first.",
+            "- `create_assistant`: Create a confirmed new assistant for an authorized human or workspace need after the exact name, ownership, setup scope, and colleague bio are agreed. Always pass a concise non-empty `about` argument, and include `job_title`, `timezone`, and `nationality` when the user has specified them. For exploratory requests, unresolved credentials, or missing validation details, reply with `send_unify_message` first.",
             "- `delete_assistant`: Delete an existing assistant when the authorized requester explicitly wants it removed.",
             "- `update_assistant_config`: Update configuration for an existing assistant.",
             "- `list_assistants`: List assistants visible to this Coordinator.",
@@ -629,7 +629,7 @@ def _build_coordinator_workspace_tool_listing() -> str:
             "- `list_spaces`: List spaces visible to this Coordinator.",
             "- `list_space_members`: List live assistant members for a reachable space.",
             "- `list_spaces_for_assistant`: List spaces where a reachable assistant is a member.",
-            "- `commission_colleague_into_workspace`: Commission one colleague into one workspace in a single call. This creates or reuses the assistant and space, ensures membership, and reports what happened. Pass `assistant_about` whenever this call may create a new colleague. Prefer this when one clear colleague+workspace setup is requested.",
+            "- `commission_colleague_into_workspace`: Commission one colleague into one workspace in a single call. This creates or reuses the assistant and space, ensures membership, and reports what happened. Pass `assistant_about` whenever this call may create a new colleague, and include `assistant_job_title`, `assistant_timezone`, and `assistant_nationality` when those details are known. Prefer this when one clear colleague+workspace setup is requested.",
             "- `invite_assistant_to_space`: Invite a reachable assistant's owner to join a reachable space.",
             "- `cancel_space_invitation`: Cancel a pending invitation I created after explicit confirmation.",
             "- `list_pending_invitations`: List pending space invitations for this Coordinator owner.",

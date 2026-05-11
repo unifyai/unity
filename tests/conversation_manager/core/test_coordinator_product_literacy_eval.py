@@ -285,12 +285,21 @@ class _RecordingTools:
         first_name: str,
         surname: str | None = None,
         about: str,
+        job_title: str | None = None,
+        timezone: str | None = None,
+        nationality: str | None = None,
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create a confirmed colleague after exact setup scope is agreed."""
 
         merged_config = dict(config or {})
         merged_config["about"] = about
+        if job_title is not None:
+            merged_config["job_title"] = job_title
+        if timezone is not None:
+            merged_config["timezone"] = timezone
+        if nationality is not None:
+            merged_config["nationality"] = nationality
         return {
             "agent_id": 9101,
             "first_name": first_name,
@@ -439,6 +448,9 @@ class _RecordingTools:
         space_name: str,
         space_description: str,
         assistant_about: str | None = None,
+        assistant_job_title: str | None = None,
+        assistant_timezone: str | None = None,
+        assistant_nationality: str | None = None,
         assistant_config: dict[str, Any] | None = None,
         assistant_id: int | None = None,
         space_id: int | None = None,
@@ -450,6 +462,12 @@ class _RecordingTools:
         merged_assistant_config = dict(assistant_config or {})
         if assistant_about is not None:
             merged_assistant_config["about"] = assistant_about
+        if assistant_job_title is not None:
+            merged_assistant_config["job_title"] = assistant_job_title
+        if assistant_timezone is not None:
+            merged_assistant_config["timezone"] = assistant_timezone
+        if assistant_nationality is not None:
+            merged_assistant_config["nationality"] = assistant_nationality
         return {
             "assistant": {
                 "status": "existing" if assistant_id else "created",

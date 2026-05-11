@@ -106,16 +106,38 @@ class CoordinatorTools:
             return None
         return trimmed
 
+    @staticmethod
+    def _normalize_optional_text(value: str | None) -> str | None:
+        """Return trimmed text, or None when unset/whitespace."""
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        return trimmed
+
     def _assistant_defaults_from_coordinator(
         self,
         *,
         first_name: str,
         surname: str | None,
         about: str | None = None,
+        job_title: str | None = None,
+        timezone: str | None = None,
+        nationality: str | None = None,
         config: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         """Build coordinator-inherited defaults for colleague creation."""
         merged = dict(config or {})
+        normalized_timezone = self._normalize_optional_text(timezone)
+        if normalized_timezone is not None:
+            merged["timezone"] = normalized_timezone
+        normalized_nationality = self._normalize_optional_text(nationality)
+        if normalized_nationality is not None:
+            merged["nationality"] = normalized_nationality
+        normalized_job_title = self._normalize_optional_text(job_title)
+        if normalized_job_title is not None:
+            merged["job_title"] = normalized_job_title
         coordinator_timezone = (SESSION_DETAILS.assistant.timezone or "").strip()
         coordinator_nationality = (SESSION_DETAILS.assistant.nationality or "").strip()
         if not merged.get("timezone") and coordinator_timezone:
@@ -139,15 +161,21 @@ class CoordinatorTools:
         first_name: str,
         surname: str | None = None,
         about: str,
+        job_title: str | None = None,
+        timezone: str | None = None,
+        nationality: str | None = None,
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Create a confirmed colleague after exact setup scope and bio are agreed."""
+        """Create a confirmed colleague after profile and setup scope are agreed."""
         suppression = self._suppress_duplicate_commissioning_tool(
             tool_name="create_assistant",
             tool_args={
                 "first_name": first_name,
                 "surname": surname,
                 "about": about,
+                "job_title": job_title,
+                "timezone": timezone,
+                "nationality": nationality,
                 "config": config,
             },
         )
@@ -166,6 +194,9 @@ class CoordinatorTools:
             first_name=first_name,
             surname=surname,
             about=normalized_about,
+            job_title=job_title,
+            timezone=timezone,
+            nationality=nationality,
             config=config,
         )
         colleague_name = _display_name(first_name=first_name, surname=surname)
@@ -671,6 +702,9 @@ class CoordinatorTools:
         space_name: str,
         space_description: str,
         assistant_about: str | None = None,
+        assistant_job_title: str | None = None,
+        assistant_timezone: str | None = None,
+        assistant_nationality: str | None = None,
         assistant_config: dict[str, Any] | None = None,
         assistant_id: int | None = None,
         space_id: int | None = None,
@@ -684,6 +718,9 @@ class CoordinatorTools:
                 "space_name": space_name,
                 "space_description": space_description,
                 "assistant_about": assistant_about,
+                "assistant_job_title": assistant_job_title,
+                "assistant_timezone": assistant_timezone,
+                "assistant_nationality": assistant_nationality,
                 "assistant_config": assistant_config,
                 "assistant_id": assistant_id,
                 "space_id": space_id,
@@ -715,6 +752,9 @@ class CoordinatorTools:
             assistant_first_name=assistant_first_name,
             assistant_surname=assistant_surname,
             assistant_about=assistant_about,
+            assistant_job_title=assistant_job_title,
+            assistant_timezone=assistant_timezone,
+            assistant_nationality=assistant_nationality,
             assistant_config=assistant_config,
             assistant_id=assistant_id,
         )
@@ -1097,6 +1137,9 @@ class CoordinatorTools:
         assistant_first_name: str,
         assistant_surname: str | None,
         assistant_about: str | None,
+        assistant_job_title: str | None,
+        assistant_timezone: str | None,
+        assistant_nationality: str | None,
         assistant_config: dict[str, Any] | None,
         assistant_id: int | None,
     ) -> dict[str, Any] | ToolError:
@@ -1159,6 +1202,9 @@ class CoordinatorTools:
             first_name=assistant_first_name,
             surname=assistant_surname,
             about=normalized_about,
+            job_title=assistant_job_title,
+            timezone=assistant_timezone,
+            nationality=assistant_nationality,
             config=assistant_config,
         )
         try:
