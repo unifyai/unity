@@ -139,6 +139,11 @@ def init(
 
     with startup_timing(LOGGER, "unity.init.event_bus_init"):
         _event_bus_mod._initialize_event_bus()
+    from unity.coordinator_manager.activity import (
+        flush_pending_coordinator_activity_publishes,
+    )
+
+    flush_pending_coordinator_activity_publishes()
 
     from .events.llm_event_hook import install_llm_event_hook
 

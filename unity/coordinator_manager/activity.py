@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Literal
@@ -40,6 +41,9 @@ _SENSITIVE_TERMS = frozenset(
 _MAX_CARD_TEXT_LENGTH = 160
 _MAX_ENTITY_NAME_LENGTH = 80
 _PUBLISH_TASKS: set[asyncio.Task[None]] = set()
+_PENDING_PUBLISH_EVENTS: deque[Event] = deque()
+_MAX_PENDING_PUBLISH_EVENTS = 256
+_PENDING_DRAIN_TASK: asyncio.Task[None] | None = None
 
 
 def coordinator_activity_id(prefix: str = "activity") -> str:
@@ -176,12 +180,20 @@ def publish_coordinator_activity(
 
 
 def _schedule_publish(event: Event) -> None:
+    _enqueue_pending_publish(event)
+    if not EVENT_BUS:
+        return
+
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        asyncio.run(EVENT_BUS.publish(event, blocking=True))
+        asyncio.run(_drain_pending_publishes(blocking=True))
         return
-    task = loop.create_task(EVENT_BUS.publish(event))
+    global _PENDING_DRAIN_TASK
+    if _PENDING_DRAIN_TASK is not None and not _PENDING_DRAIN_TASK.done():
+        return
+    task = loop.create_task(_drain_pending_publishes())
+    _PENDING_DRAIN_TASK = task
     _PUBLISH_TASKS.add(task)
     task.add_done_callback(_publish_done)
 
@@ -189,17 +201,62 @@ def _schedule_publish(event: Event) -> None:
 async def join_coordinator_activity_publishes() -> None:
     """Wait for in-flight Coordinator activity publish tasks."""
 
+    await _drain_pending_publishes()
     tasks = tuple(_PUBLISH_TASKS)
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def flush_pending_coordinator_activity_publishes() -> None:
+    """Flush deferred activity events once the EventBus is available."""
+
+    if not EVENT_BUS or not _PENDING_PUBLISH_EVENTS:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_drain_pending_publishes(blocking=True))
+        return
+    global _PENDING_DRAIN_TASK
+    if _PENDING_DRAIN_TASK is not None and not _PENDING_DRAIN_TASK.done():
+        return
+    task = loop.create_task(_drain_pending_publishes())
+    _PENDING_DRAIN_TASK = task
+    _PUBLISH_TASKS.add(task)
+    task.add_done_callback(_publish_done)
+
+
 def _publish_done(task: asyncio.Task[None]) -> None:
     _PUBLISH_TASKS.discard(task)
+    global _PENDING_DRAIN_TASK
+    if _PENDING_DRAIN_TASK is task:
+        _PENDING_DRAIN_TASK = None
     try:
         task.result()
     except Exception:
         LOGGER.exception("Coordinator activity publish task failed")
+
+
+def _enqueue_pending_publish(event: Event) -> None:
+    if len(_PENDING_PUBLISH_EVENTS) >= _MAX_PENDING_PUBLISH_EVENTS:
+        _PENDING_PUBLISH_EVENTS.popleft()
+        LOGGER.warning(
+            "Coordinator activity publish queue exceeded %s events; dropping oldest",
+            _MAX_PENDING_PUBLISH_EVENTS,
+        )
+    _PENDING_PUBLISH_EVENTS.append(event)
+
+
+async def _drain_pending_publishes(*, blocking: bool = False) -> None:
+    while _PENDING_PUBLISH_EVENTS:
+        event = _PENDING_PUBLISH_EVENTS.popleft()
+        try:
+            await EVENT_BUS.publish(event, blocking=blocking)
+        except RuntimeError:
+            _PENDING_PUBLISH_EVENTS.appendleft(event)
+            return
+        except Exception:
+            LOGGER.exception("Coordinator activity publish task failed")
 
 
 def _truncate(text: str, max_length: int) -> str:

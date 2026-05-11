@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from collections import deque
 from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
+import unity.coordinator_manager.activity as activity_module
 from tests.helpers import _handle_project, capture_events
 from unity.coordinator_manager.activity import (
     activity_entity,
+    flush_pending_coordinator_activity_publishes,
     join_coordinator_activity_publishes,
     publish_coordinator_activity,
     safe_activity_text,
@@ -89,6 +92,83 @@ def test_activity_publisher_noops_for_non_coordinator_session():
         )
         is None
     )
+
+
+def test_activity_publish_queues_until_event_bus_is_available(monkeypatch):
+    class _FakeBus:
+        def __init__(self) -> None:
+            self.ready = False
+            self.published: list[tuple[str, bool]] = []
+
+        def __bool__(self) -> bool:
+            return self.ready
+
+        async def publish(self, event, *, blocking: bool = False) -> None:
+            if not self.ready:
+                raise RuntimeError("EVENT_BUS has not been initialised yet")
+            self.published.append((event.payload["title"], blocking))
+
+    fake_bus = _FakeBus()
+    monkeypatch.setattr(activity_module, "EVENT_BUS", fake_bus)
+    monkeypatch.setattr(activity_module, "_PUBLISH_TASKS", set())
+    monkeypatch.setattr(activity_module, "_PENDING_PUBLISH_EVENTS", deque())
+    monkeypatch.setattr(activity_module, "_PENDING_DRAIN_TASK", None)
+    SESSION_DETAILS.reset()
+    SESSION_DETAILS.is_coordinator = True
+
+    publish_coordinator_activity(
+        phase="progress",
+        stage="requirements",
+        title="Queued until init",
+    )
+    assert fake_bus.published == []
+
+    fake_bus.ready = True
+    flush_pending_coordinator_activity_publishes()
+
+    assert fake_bus.published == [("Queued until init", True)]
+
+
+def test_activity_publish_flush_preserves_fifo_order(monkeypatch):
+    class _FakeBus:
+        def __init__(self) -> None:
+            self.ready = False
+            self.published: list[str] = []
+
+        def __bool__(self) -> bool:
+            return self.ready
+
+        async def publish(self, event, *, blocking: bool = False) -> None:
+            if not self.ready:
+                raise RuntimeError("EVENT_BUS has not been initialised yet")
+            self.published.append(event.payload["title"])
+
+    fake_bus = _FakeBus()
+    monkeypatch.setattr(activity_module, "EVENT_BUS", fake_bus)
+    monkeypatch.setattr(activity_module, "_PUBLISH_TASKS", set())
+    monkeypatch.setattr(activity_module, "_PENDING_PUBLISH_EVENTS", deque())
+    monkeypatch.setattr(activity_module, "_PENDING_DRAIN_TASK", None)
+    SESSION_DETAILS.reset()
+    SESSION_DETAILS.is_coordinator = True
+
+    publish_coordinator_activity(
+        phase="progress",
+        stage="requirements",
+        title="First queued activity",
+    )
+    publish_coordinator_activity(
+        phase="progress",
+        stage="requirements",
+        title="Second queued activity",
+    )
+
+    fake_bus.ready = True
+    flush_pending_coordinator_activity_publishes()
+
+    assert fake_bus.published == [
+        "First queued activity",
+        "Second queued activity",
+    ]
 
 
 def test_coordinator_activity_is_not_streaming_noise():
