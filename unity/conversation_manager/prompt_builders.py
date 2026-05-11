@@ -239,7 +239,9 @@ How I use it each turn:
 - `Coordinator/Checklist` is user-facing setup progress, not private scratch notes.
 - I keep one checklist item per setup slice/workflow and avoid overlapping duplicates.
 - I use `add_setup_checklist_item` only when there is a real new next step the user should see.
-- I use `update_setup_checklist_item` to mark items done, skipped, blocked, or reworded after real outcomes.
+- I use `update_setup_checklist_item` to mark items `pending`, `done`, or `skipped`, or to reword stale items after real outcomes.
+- When a setup slice is completed and setup continues, I mark the completed checklist item `done` and add the next pending checklist item in the same turn.
+- I do not leave setup stuck on one checklist row after multiple completed slices.
 - If direction changes, I update stale checklist items before moving forward.
 - I use `set_setup_state` only when the first useful setup slice is agreed, created, and read-validated (`ready_to_go`).
 - I never claim setup progress that checklist/state/tool outcomes do not support."""
@@ -632,7 +634,7 @@ def _build_coordinator_workspace_tool_listing() -> str:
             "- `cancel_space_invitation`: Cancel a pending invitation I created after explicit confirmation.",
             "- `list_pending_invitations`: List pending space invitations for this Coordinator owner.",
             "- `add_setup_checklist_item`: Add a concise user-facing setup step when the plan gains a meaningful next action. Include `chat_prompt` and `chat_prompt_label` only when the activity card should offer a suggested reply for the user's next message.",
-            "- `update_setup_checklist_item`: Mark setup steps done or skipped, or refine their wording as the user clarifies the plan. Include `chat_prompt` and `chat_prompt_label` for follow-up choices such as continuing, pausing, revisiting, or resolving a blocked step.",
+            "- `update_setup_checklist_item`: Update setup steps with `status` in `pending`, `done`, or `skipped`, or refine wording as the user clarifies the plan. Include `chat_prompt` and `chat_prompt_label` for follow-up choices such as continuing, pausing, or revisiting the next step.",
             "- `set_setup_state`: Mark setup `ready_to_go` once the useful first version is agreed, created, and ready for the user to keep tuning. Include a review-oriented `chat_prompt` and `chat_prompt_label` when the handoff should invite the user back into chat.",
         ],
     )

@@ -1284,6 +1284,58 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
         ),
     ),
     CoordinatorScenario(
+        scenario_id="setup-checklist-progression",
+        title="Checklist progression adds the next setup slice",
+        business_context=(
+            "A coordinator has just completed one integration slice and the user wants "
+            "to continue onboarding immediately with the next slice."
+        ),
+        turns=(
+            DialogueTurn(
+                "user",
+                "Checklist item 4 was the Salesforce validation step and it is now "
+                "complete. Mark item 4 done and add the next pending step for "
+                "Gainsight read-only setup so we can continue now.",
+                new=True,
+            ),
+        ),
+        masked_components=(
+            "Checklist item 4 already exists and maps to Salesforce validation.",
+            "The user wants to continue with another integration slice now.",
+            "No assistant, workspace, membership, or invitation mutation is requested.",
+        ),
+        rubric=(
+            "The response should progress checklist bookkeeping instead of stalling on "
+            "one row: call `update_setup_checklist_item` for item 4 with done status, "
+            "and add a new pending checklist item for the Gainsight setup slice. It "
+            "should avoid unrelated workspace mutations and should not set setup "
+            "state to ready while additional slices remain."
+        ),
+        required_tools=frozenset(
+            {"update_setup_checklist_item", "add_setup_checklist_item"},
+        ),
+        required_tool_args={
+            "update_setup_checklist_item": ("status",),
+            "add_setup_checklist_item": ("title",),
+        },
+        forbidden_tools=frozenset(
+            {
+                "create_assistant",
+                "delete_assistant",
+                "update_assistant_config",
+                "create_space",
+                "delete_space",
+                "update_space",
+                "add_space_member",
+                "remove_space_member",
+                "invite_assistant_to_space",
+                "cancel_space_invitation",
+                "pre_seed_colleague",
+                "set_setup_state",
+            },
+        ),
+    ),
+    CoordinatorScenario(
         scenario_id="setup-ready-state",
         title="Coordinator setup state marks first version ready",
         business_context=(
