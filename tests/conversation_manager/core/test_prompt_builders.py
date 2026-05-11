@@ -273,6 +273,7 @@ class TestCoordinatorPrompt:
         assert "`commission_colleague_into_workspace`" in coordinator_prompt
         assert "setup mutation tool" in coordinator_prompt
         assert "not only an acknowledgment" in coordinator_prompt
+        assert "do not end a successful setup-mutation turn silently" in coordinator_prompt
         assert "handles one colleague per call" in coordinator_prompt
         assert "pair the fast-path call with `act(persist=True)`" in coordinator_prompt
 
