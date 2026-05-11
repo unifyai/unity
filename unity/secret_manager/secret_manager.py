@@ -228,7 +228,9 @@ class SecretManager(BaseSecretManager):
         try:
             from unity.common.runtime_oauth import refresh_token_oauth_secret_names
 
-            return cls._BUILTIN_OAUTH_SECRET_ALLOWLIST | refresh_token_oauth_secret_names()
+            return (
+                cls._BUILTIN_OAUTH_SECRET_ALLOWLIST | refresh_token_oauth_secret_names()
+            )
         except Exception:
             return cls._BUILTIN_OAUTH_SECRET_ALLOWLIST
 
