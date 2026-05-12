@@ -132,11 +132,16 @@ def _build_authorized_humans_block(
     return "\n".join(lines)
 
 
-def _build_coordinator_role_block(voice_note: str) -> str:
+def _build_coordinator_role_block(
+    *,
+    voice_note: str,
+    is_org_workspace: bool,
+) -> str:
     """Build the Coordinator-specific role block."""
+    scope_descriptor = "this organization's" if is_org_workspace else "this workspace's"
     return f"""Role
 ----
-I am the Coordinator, this organization's setup and orchestration teammate in Unify.
+I am the Coordinator, {scope_descriptor} setup and orchestration teammate in Unify.
 
 Most teams run work across many disconnected tools and handoffs. Without clear ownership, recurring work breaks: the wrong person owns it, credentials land in the wrong place, and changes become hard to govern safely.
 
@@ -175,11 +180,16 @@ def _build_coordinator_workspace_ontology_block() -> str:
 - If ownership is unclear, ask one short clarification before writing."""
 
 
-def _build_coordinator_onboarding_reference(desktop_access_faq: str) -> str:
+def _build_coordinator_onboarding_reference(
+    *,
+    desktop_access_faq: str,
+    is_org_workspace: bool,
+) -> str:
     """Build the Coordinator-specific onboarding reference block."""
+    scope_noun = "organization" if is_org_workspace else "workspace"
     return f"""Coordinator onboarding reference
 --------------------------------
-My setup goal is to move the organization from "getting started" to "ready to go," then remain the admin surface for follow-up setup changes. The current Coordinator state and checklist appear in `<coordinator_goal>` when available.
+My setup goal is to move the {scope_noun} from "getting started" to "ready to go," then remain the admin surface for follow-up setup changes. The current Coordinator state and checklist appear in `<coordinator_goal>` when available.
 
 I learn how the business works, which workflows matter, who should own each workflow, and which credentials or spaces are needed. Then I set up assistants, spaces, membership, and confirmed setup rows through my Coordinator tools.
 
@@ -370,28 +380,32 @@ def _coordinator_fast_path_pairing_rule() -> str:
     return "pair the fast-path call with `act(persist=True)` in the same response."
 
 
-def _build_org_coordinator_deferral_block(
+def _build_workspace_coordinator_deferral_block(
     *,
-    org_coordinator_name: str | None,
+    workspace_coordinator_name: str | None,
+    is_org_workspace: bool,
 ) -> str:
     """Build the regular-assistant block that points setup work to the Coordinator."""
-    if org_coordinator_name is None:
+    if workspace_coordinator_name is None:
         return ""
 
+    scope_label = "organization" if is_org_workspace else "workspace"
+    team_label = "team's" if is_org_workspace else "workspace's"
     return f"""Team Coordinator
 ----------------
-This organization has a Coordinator named {org_coordinator_name}. Your Coordinator is the team's setup assistant: its job is to shape the team itself, while my job is to carry out the day-to-day work the team was built for.
+This {scope_label} has a Coordinator named {workspace_coordinator_name}. Your Coordinator is the {team_label} setup assistant: its job is to shape the workspace itself, while my job is to carry out the day-to-day work the workspace was built for.
 
 Your Coordinator handles the operations I cannot: creating or removing colleagues, seeding confirmed setup rows into a colleague's own contexts, creating or removing team spaces, adding or removing space members, handling invitations, and guiding team-level integration setup decisions.
 
-If the user asks me to do something on that list, I name {org_coordinator_name} explicitly and offer a summary the user can bring to the Coordinator: 'That's a setup change - your Coordinator handles team creation. I can summarize what you want here, but I cannot forward it automatically; you'll need to bring it to your Coordinator from the sidebar.'"""
+If the user asks me to do something on that list, I name {workspace_coordinator_name} explicitly and offer a summary the user can bring to the Coordinator: 'That's a setup change - your Coordinator handles team creation. I can summarize what you want here, but I cannot forward it automatically; you'll need to bring it to your Coordinator from the sidebar.'"""
 
 
-def _build_voice_coordinator_call_handling_block() -> str:
+def _build_voice_coordinator_call_handling_block(*, is_org_workspace: bool) -> str:
     """Build compact Coordinator identity and live-call handling guidance."""
-    return """Coordinator voice role
+    scope_descriptor = "this organization's" if is_org_workspace else "this workspace's"
+    return f"""Coordinator voice role
 ----------------------
-On this call I am this organization's Coordinator: the setup and orchestration teammate who helps shape the assistant workforce, decide which colleague should own a workflow, and guide team setup changes safely.
+On this call I am {scope_descriptor} Coordinator: the setup and orchestration teammate who helps shape the assistant workforce, decide which colleague should own a workflow, and guide team setup changes safely.
 
 If the caller asks who I am or what I do, I name the Coordinator role in a brief spoken answer. This role description is my short bio line for Coordinator calls.
 
@@ -759,11 +773,11 @@ A: Yes — just install a quick remote access tool from unify.ai and I can work 
 A: Not directly — but you can view and control *my* computer through the Meet window ("Show assistant screen" → "Enable mouse and keyboard control"). If you need me to do something on my machine, just ask and I'll do it. If you need something done on *your* machine, share your screen so I can see it and walk you through the steps."""
 
 
-def _build_base_app_management_faq(org_coordinator_name: str | None) -> str:
+def _build_base_app_management_faq(workspace_coordinator_name: str | None) -> str:
     """Build app-management FAQ text for non-coordinator onboarding."""
-    if org_coordinator_name:
+    if workspace_coordinator_name:
         return f"""**Q: Can you help me manage my apps and online services?**
-A: I can help use apps and online services that are already connected to my work. For connecting a new service, placing shared credentials, or deciding team-level setup, {org_coordinator_name} owns that setup. I can summarize what you want, but I cannot forward it automatically."""
+A: I can help use apps and online services that are already connected to my work. For connecting a new service, placing shared credentials, or deciding team-level setup, {workspace_coordinator_name} owns that setup. I can summarize what you want, but I cannot forward it automatically."""
     return """**Q: Can you help me manage my apps and online services?**
 A: Yes. The easiest way to get started is for us to share screens — I can walk you through connecting each service step by step. Under the hood, it usually involves sharing API credentials or access tokens with me through a secure page on the console, but you don't need to worry about the details — I'll guide you through the whole thing."""
 
@@ -1092,7 +1106,7 @@ Examples of requests that should use the direct tools:
 def _build_act_capabilities_block(
     *,
     is_coordinator: bool,
-    org_coordinator_name: str | None,
+    workspace_coordinator_name: str | None,
     user_desktop_control: bool,
 ) -> str:
     """Build act-capabilities guidance for non-demo mode."""
@@ -1103,8 +1117,8 @@ def _build_act_capabilities_block(
     )
     if is_coordinator:
         external_apps_capability = "- **External apps & services**: I can guide setup directly (including live screen-share walkthroughs), decide destination ownership (colleague vs shared space), route credentials to Secrets, and run the first read-only validation."
-    elif org_coordinator_name:
-        external_apps_capability = f"- **External apps & services**: Use services already connected to my work. For a new service connection, shared credential, or team-level integration setup, help summarize the need and route setup decisions to {org_coordinator_name}; do not ask for tokens in chat."
+    elif workspace_coordinator_name:
+        external_apps_capability = f"- **External apps & services**: Use services already connected to my work. For a new service connection, shared credential, or team-level integration setup, help summarize the need and route setup decisions to {workspace_coordinator_name}; do not ask for tokens in chat."
     else:
         external_apps_capability = "- **External apps & services**: Integration with any service that offers an API (cloud storage, communication platforms, project management tools, CRMs, etc.) — by connecting through stored credentials and the service's Python SDK, with no manual setup needed on the user's end"
     act_intro = (
@@ -1367,7 +1381,9 @@ def build_system_prompt(
     space_summaries: list[SpaceSummary] | None = None,
     is_coordinator: bool = False,
     authorized_humans: list[dict[str, Any]] | None = None,
+    workspace_coordinator_name: str | None = None,
     org_coordinator_name: str | None = None,
+    is_org_workspace: bool = True,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
@@ -1416,8 +1432,12 @@ def build_system_prompt(
         Whether to render the Coordinator onboarding persona and workspace tool block.
     authorized_humans : list[dict[str, Any]] | None
         Organization members the Coordinator is authorized to help onboard.
+    workspace_coordinator_name : str | None
+        Name of the active workspace Coordinator for regular-assistant setup deferral.
     org_coordinator_name : str | None
-        Name of the organization's Coordinator for regular-assistant setup deferral.
+        Backwards-compatible alias for ``workspace_coordinator_name``.
+    is_org_workspace : bool
+        Whether the active workspace is organization-scoped (vs personal).
 
     Returns
     -------
@@ -1425,6 +1445,9 @@ def build_system_prompt(
         Structured prompt parts (call .to_list() for LLM, .flatten() for plain string).
     """
     # Build reusable blocks using internal helpers
+    if workspace_coordinator_name is None and org_coordinator_name is not None:
+        workspace_coordinator_name = org_coordinator_name
+
     boss_details = _build_boss_details_block(
         contact_id=contact_id,
         first_name=first_name,
@@ -1491,7 +1514,12 @@ def build_system_prompt(
 
     # Role
     if is_coordinator:
-        parts.add(_build_coordinator_role_block(voice_note))
+        parts.add(
+            _build_coordinator_role_block(
+                voice_note=voice_note,
+                is_org_workspace=is_org_workspace,
+            ),
+        )
     else:
         parts.add(_build_base_role_block(voice_note))
 
@@ -1515,9 +1543,14 @@ def build_system_prompt(
 
     # Onboarding reference
     desktop_access_faq = _build_desktop_access_faq(user_desktop_control)
-    app_management_faq = _build_base_app_management_faq(org_coordinator_name)
+    app_management_faq = _build_base_app_management_faq(workspace_coordinator_name)
     if is_coordinator:
-        parts.add(_build_coordinator_onboarding_reference(desktop_access_faq))
+        parts.add(
+            _build_coordinator_onboarding_reference(
+                desktop_access_faq=desktop_access_faq,
+                is_org_workspace=is_org_workspace,
+            ),
+        )
         parts.add(_build_coordinator_requirements_discovery_block())
         parts.add(_build_coordinator_goal_state_contract_block())
     else:
@@ -1527,8 +1560,9 @@ def build_system_prompt(
                 app_management_faq=app_management_faq,
             ),
         )
-        coordinator_reference = _build_org_coordinator_deferral_block(
-            org_coordinator_name=org_coordinator_name,
+        coordinator_reference = _build_workspace_coordinator_deferral_block(
+            workspace_coordinator_name=workspace_coordinator_name,
+            is_org_workspace=is_org_workspace,
         )
         if coordinator_reference:
             parts.add(coordinator_reference)
@@ -1842,7 +1876,7 @@ These tools are only available while the desktop is being actively shared.""",
         parts.add(
             _build_act_capabilities_block(
                 is_coordinator=is_coordinator,
-                org_coordinator_name=org_coordinator_name,
+                workspace_coordinator_name=workspace_coordinator_name,
                 user_desktop_control=user_desktop_control,
             ),
         )
@@ -1961,6 +1995,7 @@ def build_voice_agent_prompt(
     channel: str = "phone",
     user_desktop_control: bool = False,
     is_coordinator: bool = False,
+    is_org_workspace: bool = True,
 ) -> PromptParts:
     """Build the system prompt for the Voice Agent (fast brain).
 
@@ -2011,6 +2046,8 @@ def build_voice_agent_prompt(
     is_coordinator : bool
         Whether to render the compact Coordinator identity and privacy guidance
         used by live voice calls.
+    is_org_workspace : bool
+        Whether the active workspace is organization-scoped (vs personal).
 
     Returns
     -------
@@ -2087,7 +2124,11 @@ I let the results speak for themselves rather than narrating steps or repeating 
 {bio}""",
     )
     if is_coordinator:
-        parts.add(_build_voice_coordinator_call_handling_block())
+        parts.add(
+            _build_voice_coordinator_call_handling_block(
+                is_org_workspace=is_org_workspace,
+            ),
+        )
 
     # Brevity
     parts.add(

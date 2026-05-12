@@ -791,6 +791,7 @@ async def entrypoint(ctx: agents.JobContext):
         channel=channel,
         user_desktop_control=SETTINGS.conversation.USER_DESKTOP_CONTROL_ENABLED,
         is_coordinator=SESSION_DETAILS.is_coordinator,
+        is_org_workspace=SESSION_DETAILS.org_id is not None,
     ).flatten()
     _log.config(f"System prompt ({len(system_prompt)} chars)")
 

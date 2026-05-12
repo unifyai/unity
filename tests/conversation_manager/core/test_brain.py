@@ -437,17 +437,18 @@ class TestBuildBrainSpecCoordinatorPrompt:
         list_org_members.assert_called_once_with(7, api_key="owner-key")
         list_assistants.assert_not_called()
 
-    def test_personal_assistant_does_not_resolve_org_coordinator(self):
+    def test_personal_assistant_queries_personal_workspace_coordinator(self):
         SESSION_DETAILS.org_id = None
         SESSION_DETAILS.unify_key = "owner-key"
         SESSION_DETAILS.assistant.is_coordinator = False
 
         with patch(
             "unity.coordinator_manager.coordinator_manager.unify.list_assistants",
+            return_value=[],
         ) as list_assistants:
             spec = build_brain_spec(_make_cm(), _make_snapshot())
 
         prompt = spec.system_prompt.flatten()
         assert "Team Coordinator" not in prompt
         assert "I cannot forward it automatically" not in prompt
-        list_assistants.assert_not_called()
+        list_assistants.assert_called_once_with(api_key="owner-key")

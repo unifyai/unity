@@ -121,8 +121,8 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         self._org_members_cache = members
         return members
 
-    def get_org_coordinator_name(self) -> str | None:
-        """Return the display name for the Coordinator in the current organization."""
+    def get_workspace_coordinator_name(self) -> str | None:
+        """Return the display name for the active workspace Coordinator."""
 
         cache_key = _org_cache_key()
         if (
@@ -131,16 +131,14 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         ):
             return self._org_coordinator_name_cache  # type: ignore[return-value]
 
-        if SESSION_DETAILS.org_id is None:
-            self._org_coordinator_name_cache_key = cache_key
-            self._org_coordinator_name_cache = None
-            return None
-
         try:
-            assistants = unify.list_assistants(
-                list_all_org=True,
-                api_key=SESSION_DETAILS.unify_key,
-            )
+            if SESSION_DETAILS.org_id is None:
+                assistants = unify.list_assistants(api_key=SESSION_DETAILS.unify_key)
+            else:
+                assistants = unify.list_assistants(
+                    list_all_org=True,
+                    api_key=SESSION_DETAILS.unify_key,
+                )
         except RequestError:
             return None
 
@@ -155,6 +153,11 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         self._org_coordinator_name_cache_key = cache_key
         self._org_coordinator_name_cache = coordinator_name
         return coordinator_name
+
+    def get_org_coordinator_name(self) -> str | None:
+        """Backwards-compatible alias for workspace coordinator lookup."""
+
+        return self.get_workspace_coordinator_name()
 
     def set_state(
         self,
