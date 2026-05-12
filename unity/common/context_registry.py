@@ -121,6 +121,39 @@ class ContextRegistry:
         return ToolErrorException(payload)
 
     @classmethod
+    def canonical_destination(cls, destination: object) -> str | None:
+        """Normalize one public destination label.
+
+        Returns ``None`` for personal destinations and the canonical
+        ``space:<id>`` form for shared destinations.
+        """
+        if destination is None:
+            return None
+        if not isinstance(destination, str):
+            raise ValueError("Destination must be 'personal' or 'space:<id>'.")
+        normalized = destination.strip()
+        if not normalized or normalized == PERSONAL_DESTINATION:
+            return None
+        if not normalized.startswith(SPACE_DESTINATION_PREFIX):
+            raise ValueError("Destination must be 'personal' or 'space:<id>'.")
+        raw_space_id = normalized[len(SPACE_DESTINATION_PREFIX) :]
+        try:
+            space_id = int(raw_space_id)
+        except (TypeError, ValueError):
+            raise ValueError("Space destination must include an integer space id.")
+        if space_id < 0:
+            raise ValueError("Space destination must include a non-negative id.")
+        return f"{SPACE_DESTINATION_PREFIX}{space_id}"
+
+    @classmethod
+    def implicit_shared_destinations(cls) -> list[str | None]:
+        """Return implicit write destinations for transcript/image fanout."""
+        space_ids = sorted({int(space_id) for space_id in SESSION_DETAILS.space_ids})
+        if not space_ids:
+            return [None]
+        return [f"{SPACE_DESTINATION_PREFIX}{space_id}" for space_id in space_ids]
+
+    @classmethod
     def _parse_destination(
         cls,
         manager_name: str,
@@ -128,38 +161,29 @@ class ContextRegistry:
         destination: str | None,
     ) -> tuple[str, str]:
         """Resolve a public destination string to a cache identity and root path."""
-        if destination is None or destination == PERSONAL_DESTINATION:
-            return PERSONAL_ROOT_IDENTITY, cls._personal_root(manager_name, table_name)
-
-        if not isinstance(destination, str) or not destination.startswith(
-            SPACE_DESTINATION_PREFIX,
-        ):
+        try:
+            canonical_destination = cls.canonical_destination(destination)
+        except ValueError as exc:
             raise cls._invalid_destination(
                 table_name,
-                destination,
-                "Destination must be 'personal' or 'space:<id>'.",
+                destination if isinstance(destination, str) else None,
+                str(exc),
             )
+        if canonical_destination is None:
+            return PERSONAL_ROOT_IDENTITY, cls._personal_root(manager_name, table_name)
 
         if not cls._is_shared_scoped(table_name):
             raise cls._invalid_destination(
                 table_name,
-                destination,
+                canonical_destination,
                 f"Table {table_name!r} does not support space destinations.",
             )
 
-        raw_space_id = destination[len(SPACE_DESTINATION_PREFIX) :]
-        try:
-            space_id = int(raw_space_id)
-        except (TypeError, ValueError):
-            raise cls._invalid_destination(
-                table_name,
-                destination,
-                "Space destination must include an integer space id.",
-            )
+        space_id = int(canonical_destination[len(SPACE_DESTINATION_PREFIX) :])
         if space_id not in SESSION_DETAILS.space_ids:
             raise cls._invalid_destination(
                 table_name,
-                destination,
+                canonical_destination,
                 f"Assistant is not a member of space {space_id}.",
             )
 

@@ -6,6 +6,7 @@ from unity.task_scheduler.machine_state import (
     TaskActivationSnapshot,
     TaskOutboundOperationProvenance,
     TaskRunProvenance,
+    build_activation_key,
     build_task_activation_context_name,
     build_task_outbound_operation_key,
     build_task_run_key,
@@ -74,6 +75,31 @@ def test_validate_task_due_activation_rejects_revision_mismatch(monkeypatch):
 
     assert current_activation is None
     assert stale_reason == "activation_revision_mismatch"
+
+
+def test_validate_task_due_activation_rejects_invalid_destination():
+    current_activation, stale_reason = validate_task_due_activation(
+        assistant_id="42",
+        task_id=101,
+        activation_revision="rev-1",
+        source_task_log_id=555,
+        scheduled_for="2026-04-10T09:00:00+00:00",
+        destination="org_default",
+    )
+
+    assert current_activation is None
+    assert stale_reason == "invalid_destination"
+
+
+def test_build_activation_key_ignores_invalid_destination_labels():
+    assert (
+        build_activation_key(
+            assistant_id="42",
+            task_id=101,
+            destination="org_default",
+        )
+        == "42:101"
+    )
 
 
 def test_validate_task_due_activation_rejects_departed_space(monkeypatch):

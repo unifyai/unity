@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
+from unity.common.context_registry import ContextRegistry
 from unity.common.startup_timing import log_startup_timing
 from unity.conversation_manager.cm_types import Medium
 from unity.conversation_manager.events import FastBrainNotification, TaskDue
@@ -273,12 +274,16 @@ def _task_due_event_from_wake_reason(reason: Any) -> TaskDue | None:
     if not activation_revision or not scheduled_for:
         return None
     try:
+        destination = ContextRegistry.canonical_destination(reason.get("destination"))
+    except ValueError:
+        return None
+    try:
         return TaskDue(
             task_id=int(task_id),
             source_task_log_id=int(source_task_log_id),
             activation_revision=activation_revision,
             scheduled_for=scheduled_for,
-            destination=reason.get("destination"),
+            destination=destination,
             execution_mode=str(reason.get("execution_mode") or "live"),
             source_type=str(reason.get("source_type") or "scheduled"),
             task_label=str(reason.get("task_label") or ""),

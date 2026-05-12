@@ -157,6 +157,19 @@ async def test_placeholder_resolution_inherits_task_destination(
     assert await manager.from_placeholder("token=${mail_key}") == "token=team-mail"
 
 
+@pytest.mark.asyncio
+async def test_placeholder_resolution_rejects_invalid_task_destination(
+    monkeypatch,
+    secret_manager_context,
+):
+    """Invalid TASK_DESTINATION values fail closed during placeholder resolution."""
+    manager = SecretManager()
+    monkeypatch.setenv("TASK_DESTINATION", "org_default")
+
+    with pytest.raises(ValueError, match="Destination must be"):
+        await manager.from_placeholder("token=${mail_key}")
+
+
 def test_credential_writes_invalidate_pooled_subprocesses(
     monkeypatch,
     secret_manager_context,

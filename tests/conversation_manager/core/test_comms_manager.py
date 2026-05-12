@@ -1440,6 +1440,83 @@ class TestSystemEvents:
             assert event.visibility_policy == "silent_by_default"
             assert event.recurrence_hint == "recurring"
 
+    @pytest.mark.asyncio
+    async def test_handle_task_due_event_canonicalizes_destination(
+        self,
+        broker,
+        mock_session_details,
+        mock_settings,
+    ):
+        """task_due destinations are normalized to canonical space:<id> labels."""
+
+        from unity.conversation_manager.comms_manager import CommsManager
+
+        cm = CommsManager(broker)
+        cm.loop = asyncio.get_event_loop()
+
+        async with broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
+
+            message = create_pubsub_message(
+                "unity_system_event",
+                {
+                    "event_type": "task_due",
+                    "task_id": 101,
+                    "source_task_log_id": 555,
+                    "activation_revision": "rev-1",
+                    "scheduled_for": "2026-04-10T09:00:00+00:00",
+                    "destination": "space:007",
+                },
+            )
+
+            cm.handle_message(message)
+            await _wait_for_condition(lambda: message._acked)
+
+            msg = await get_message_on_channel(pubsub, "app:comms:task_due")
+            assert msg is not None
+            event = Event.from_json(msg["data"])
+            assert isinstance(event, TaskDue)
+            assert event.destination == "space:7"
+
+    @pytest.mark.asyncio
+    async def test_handle_task_due_event_drops_invalid_destination(
+        self,
+        broker,
+        mock_session_details,
+        mock_settings,
+    ):
+        """task_due payloads with non-canonical destinations are ignored."""
+
+        from unity.conversation_manager.comms_manager import CommsManager
+
+        cm = CommsManager(broker)
+        cm.loop = asyncio.get_event_loop()
+
+        async with broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
+
+            message = create_pubsub_message(
+                "unity_system_event",
+                {
+                    "event_type": "task_due",
+                    "task_id": 101,
+                    "source_task_log_id": 555,
+                    "activation_revision": "rev-1",
+                    "scheduled_for": "2026-04-10T09:00:00+00:00",
+                    "destination": "org_default",
+                },
+            )
+
+            cm.handle_message(message)
+            await _wait_for_condition(lambda: message._acked)
+
+            msg = await get_message_on_channel(
+                pubsub,
+                "app:comms:task_due",
+                timeout=0.2,
+            )
+            assert msg is None
+
 
 # =============================================================================
 # Test: Meet Interaction System Events (screen share / remote control)

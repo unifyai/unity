@@ -40,6 +40,7 @@ except ImportError:  # pragma: no cover - exercised in local-only installs
     pubsub_v1 = None
 
 from unity.logger import LOGGER
+from unity.common.context_registry import ContextRegistry
 from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
 from unity.deploy_runtime import (
@@ -203,13 +204,23 @@ def _task_due_event_from_payload(
         return None
     if not activation_revision or not scheduled_for:
         return None
+    raw_destination = payload.get("destination")
+    try:
+        destination = ContextRegistry.canonical_destination(raw_destination)
+    except ValueError:
+        LOGGER.warning(
+            "%s dropping task_due payload with invalid destination: %r",
+            DEFAULT_ICON,
+            raw_destination,
+        )
+        return None
     task_label = str(payload.get("task_label") or "")
     return TaskDue(
         task_id=task_id,
         source_task_log_id=source_task_log_id,
         activation_revision=activation_revision,
         scheduled_for=scheduled_for,
-        destination=payload.get("destination"),
+        destination=destination,
         execution_mode=str(payload.get("execution_mode") or "live"),
         source_type=str(payload.get("source_type") or "scheduled"),
         task_label=task_label,

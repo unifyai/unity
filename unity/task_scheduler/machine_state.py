@@ -18,7 +18,7 @@ from typing import Any, Mapping
 
 import requests
 
-from unity.common.context_registry import SPACE_DESTINATION_PREFIX
+from unity.common.context_registry import ContextRegistry, SPACE_DESTINATION_PREFIX
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
@@ -65,6 +65,14 @@ _PENDING_LIVE_TASK_RUNS: dict[tuple[int, str | None], "TaskRunProvenance"] = {}
 _PENDING_TRIGGER_LIVE_TASK_RUNS: dict[str, "TaskRunProvenance"] = {}
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_destination_or_none(destination: object) -> str | None:
+    """Return canonical destination when valid, otherwise ``None``."""
+    try:
+        return ContextRegistry.canonical_destination(destination)
+    except ValueError:
+        return None
 
 
 def invalidate_task_machine_state_reads() -> None:
@@ -178,7 +186,7 @@ def build_activation_key(
     """Return the executor-scoped activation key used by Orchestra."""
 
     normalized_assistant_id = _coerce_str(assistant_id)
-    destination_label = _coerce_str(destination)
+    destination_label = _coerce_str(_canonical_destination_or_none(destination))
     if normalized_assistant_id:
         if destination_label:
             return f"{normalized_assistant_id}:{destination_label}:{task_id}"
@@ -595,10 +603,14 @@ def get_task_activation(
 ) -> TaskActivationSnapshot | None:
     """Return the current activation row for one assistant/task pair, if any."""
 
+    normalized_destination = _canonical_destination_or_none(destination)
+    raw_destination = _coerce_str(destination)
+    if normalized_destination is None and raw_destination not in {"", "personal"}:
+        return None
     activation_key = build_activation_key(
         assistant_id=assistant_id,
         task_id=task_id,
-        destination=destination,
+        destination=normalized_destination,
     )
     rows = _activation_store().get_rows(
         filter=f"activation_key == '{activation_key}'",
@@ -660,10 +672,14 @@ def validate_task_due_activation(
 ) -> tuple[TaskActivationSnapshot | None, str | None]:
     """Validate that a scheduled due event still matches the current activation."""
 
+    try:
+        normalized_destination = ContextRegistry.canonical_destination(destination)
+    except ValueError:
+        return None, "invalid_destination"
     activation = get_task_activation(
         assistant_id=assistant_id,
         task_id=task_id,
-        destination=destination,
+        destination=normalized_destination,
     )
     if activation is None:
         return None, "activation_missing"
@@ -673,7 +689,7 @@ def validate_task_due_activation(
         return None, "execution_mode_changed"
     if activation.activation_revision != activation_revision:
         return None, "activation_revision_mismatch"
-    if activation.destination != destination:
+    if activation.destination != normalized_destination:
         return None, "destination_mismatch"
     destination_space_id = _destination_space_id(activation.destination)
     if destination_space_id is not None and destination_space_id not in set(
@@ -701,14 +717,10 @@ def _activation_store() -> TasksStore:
 def _destination_space_id(destination: str | None) -> int | None:
     """Return the shared-space id encoded in a task destination label."""
 
-    if destination is None:
+    normalized_destination = _canonical_destination_or_none(destination)
+    if normalized_destination is None:
         return None
-    if not destination.startswith(SPACE_DESTINATION_PREFIX):
-        return None
-    try:
-        return int(destination[len(SPACE_DESTINATION_PREFIX) :])
-    except ValueError:
-        return None
+    return int(normalized_destination[len(SPACE_DESTINATION_PREFIX) :])
 
 
 def _row_to_activation(row: Any) -> TaskActivationSnapshot | None:
@@ -721,16 +733,21 @@ def _row_to_activation(row: Any) -> TaskActivationSnapshot | None:
     if task_id is None:
         return None
     assistant_id = _coerce_str(entries.get("assistant_id"))
+    raw_destination = _coerce_str(entries.get("destination"))
+    try:
+        destination = ContextRegistry.canonical_destination(raw_destination)
+    except ValueError:
+        return None
     activation_key = _coerce_str(entries.get("activation_key")) or build_activation_key(
         assistant_id=assistant_id,
         task_id=task_id,
-        destination=_coerce_str(entries.get("destination")),
+        destination=destination,
     )
     return TaskActivationSnapshot(
         assistant_id=assistant_id,
         activation_key=activation_key,
         task_id=task_id,
-        destination=_coerce_str(entries.get("destination")),
+        destination=destination,
         source_task_log_id=_coerce_int(entries.get("source_task_log_id")),
         activation_kind=_coerce_str(entries.get("activation_kind")),
         execution_mode=_coerce_str(entries.get("execution_mode")),

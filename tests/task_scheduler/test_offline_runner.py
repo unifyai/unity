@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 
 def _seed_env(monkeypatch):
     monkeypatch.setenv("ASSISTANT_ID", "42")
@@ -105,3 +107,28 @@ def test_offline_runner_marks_run_failed_when_function_errors(monkeypatch):
     assert updates[0][2]["state"] == "running"
     assert updates[1][2]["state"] == "failed"
     assert updates[1][2]["error"] == "boom"
+
+
+def test_load_config_from_env_canonicalizes_destination(monkeypatch):
+    """Offline env destination labels are normalized before execution."""
+
+    from unity.task_scheduler import offline_runner
+
+    _seed_env(monkeypatch)
+    monkeypatch.setenv("TASK_DESTINATION", "space:007")
+
+    config = offline_runner._load_config_from_env()
+
+    assert config.destination == "space:7"
+
+
+def test_load_config_from_env_rejects_invalid_destination(monkeypatch):
+    """Offline runner fails fast on invalid destination labels."""
+
+    from unity.task_scheduler import offline_runner
+
+    _seed_env(monkeypatch)
+    monkeypatch.setenv("TASK_DESTINATION", "org_default")
+
+    with pytest.raises(RuntimeError, match="Invalid TASK_DESTINATION"):
+        offline_runner._load_config_from_env()

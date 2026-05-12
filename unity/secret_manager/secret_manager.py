@@ -143,7 +143,8 @@ class SecretManager(BaseSecretManager):
 
     def _effective_destination(self, destination: str | None) -> str | None:
         """Resolve implicit task-scoped credential routing."""
-        return destination or os.environ.get("TASK_DESTINATION") or None
+        raw_destination = destination or os.environ.get("TASK_DESTINATION")
+        return ContextRegistry.canonical_destination(raw_destination)
 
     def _secret_context_for_destination(self, destination: str | None) -> str:
         """Resolve a public destination into one concrete Secrets context."""
