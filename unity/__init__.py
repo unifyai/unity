@@ -111,6 +111,30 @@ def init(
     with startup_timing(LOGGER, "unity.init.context_registry_setup"):
         ContextRegistry.setup()
 
+    # Schedule disk-package registration as a background task so the
+    # fast-brain conversation/communication loop can come online without
+    # waiting for function + guidance inserts to finish.  Single
+    # daemon thread, runs once, captures + re-applies the Unify active
+    # context.  Must be scheduled AFTER ContextRegistry.setup so the
+    # worker can resolve manager contexts.  Integration functions become
+    # callable on the next conversation turn after the worker completes
+    # (low hundreds of ms typically).  See
+    # :func:`unity.integration_status.schedule_register_available_integrations`
+    # for the contract — this replaces the May-2026 per-slug daemon-thread
+    # hot-load that ran from inside ``SecretManager.__init__``.
+    with startup_timing(LOGGER, "unity.init.schedule_register_integrations"):
+        try:
+            from .integration_status import (
+                schedule_register_available_integrations,
+            )
+
+            schedule_register_available_integrations()
+        except Exception:
+            LOGGER.exception(
+                "[integrations] failed to schedule registration at startup; "
+                "integrations may not be available this session",
+            )
+
     from .events import event_bus as _event_bus_mod
 
     with startup_timing(LOGGER, "unity.init.event_bus_init"):

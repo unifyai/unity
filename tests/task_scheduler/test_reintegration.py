@@ -5,12 +5,24 @@ from datetime import datetime, timezone
 import pytest
 
 from tests.helpers import _handle_project
-from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.actor.simulated import SimulatedActor
+from unity.task_scheduler import task_scheduler as task_scheduler_module
+from unity.task_scheduler.task_scheduler import TaskScheduler as _TaskScheduler
 from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.status import Status
 from unity.task_scheduler.types.trigger import Trigger, Medium
 
 pytestmark = pytest.mark.llm_call
+
+task_scheduler_module.SimulatedActor = SimulatedActor
+
+
+def TaskScheduler(*args, **kwargs):
+    if "actor" not in kwargs:
+        actor_cls = getattr(task_scheduler_module, "SimulatedActor", SimulatedActor)
+        kwargs["actor"] = actor_cls()
+    return _TaskScheduler(*args, **kwargs)
+
 
 # Speed up only this module's SimulatedActor by monkeypatching the class symbols
 # used by TaskScheduler to a shorter-duration variant. This does not affect
@@ -424,7 +436,9 @@ async def test_reintegration_plan_clears_on_completion():
 async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
     from datetime import datetime, timezone, timedelta
 
-    ts = TaskScheduler()
+    ts = _TaskScheduler(
+        actor=SimulatedActor(steps=None, duration=None, hold_completion=True),
+    )
 
     # Chain execution is the default; no environment variable required.
 
@@ -455,6 +469,7 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
 
     # Start the head in chain mode but only allow the head to complete
     handle = await ts.execute(task_id=head_id)
+    handle._current_handle._actor_handle.trigger_completion()
     # Wait for just the head to finish
     await handle._active_task_done()
 

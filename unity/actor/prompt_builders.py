@@ -464,6 +464,34 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     straight to `compress_context`.
 """).strip()
 
+_TASK_SCHEDULING_WORKFLOWS = textwrap.dedent("""
+    ### Durable Scheduled And Triggered Workflows
+
+    When the user asks for work to happen later, repeatedly, or in response to
+    future inbound events, represent that durable intent with the task
+    primitives rather than only doing the work once.
+
+    Use `primitives.tasks.update(...)` for requests like:
+    - "Repeat this every Monday at 12:00 UTC"
+    - "Send me this report every day"
+    - "Whenever Alice emails about invoices, summarize it and draft a reply"
+    - "Turn what we just did into a recurring workflow"
+
+    Natural-language recurring tasks should normally start as live
+    description-driven tasks with `entrypoint=None`. The future due wake will
+    call `primitives.tasks.execute(task_id=...)`; execution then runs a
+    contained child actor dedicated to that task. Do not write and attach an
+    untested entrypoint function at task creation unless the user explicitly
+    requested a stored function-backed workflow.
+
+    If a workflow has just been completed interactively and the user wants it
+    repeated, include the relevant context in the task description. Use
+    `store_skills` or direct FunctionManager writes only when the user asks to
+    store the workflow, or when the completed trajectory clearly reveals a
+    reusable function worth saving. Offline tasks require a stored entrypoint;
+    description-only recurring work should remain live.
+""").strip()
+
 
 _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
     ### External App Integration
@@ -482,15 +510,29 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
        Cloud, `slack-sdk` for Slack, `boto3` for AWS, `stripe` for Stripe).
 
     3. **Integrate**: Write Python code that uses the SDK with the stored
-       credentials to interact with the service. Credentials are synced to
-       environment variables via the `.env` file managed by SecretManager —
-       use `os.environ` to access them after confirming their names via
-       `primitives.secrets.ask(...)`.
+       credentials to interact with the service. Static credentials and
+       non-rotating API keys are synced to environment variables via the `.env`
+       file managed by SecretManager; use `os.environ` for those after
+       confirming their names via `primitives.secrets.ask(...)`. For provider
+       SDKs that can read OAuth credentials from environment variables, prefer
+       the SDK's normal/default credential behavior. When a provider SDK,
+       client, or direct HTTP request requires an explicit refresh-token backed
+       OAuth access token, use the sandbox helper
+       `get_oauth_access_token(provider)` instead of reading access-token env
+       vars directly.
+
+       ```python
+       microsoft_token = get_oauth_access_token("microsoft")
+       google_token = get_oauth_access_token("google")
+       ```
 
     4. **Store for reuse**: After a successful integration, store reusable
        functions via `store_skills` and document the setup via
        `GuidanceManager_add_guidance` so future interactions can reuse the
-       integration without rediscovery.
+       integration without rediscovery. Reusable OAuth integrations should
+       call `get_oauth_access_token(provider)` at runtime only when an explicit
+       token is required; never store or capture a concrete access-token value
+       inside a function implementation.
 
     **Prefer Python SDKs over CLI tools.** Python packages benefit from full
     environment management (isolated venvs, dependency resolution via
@@ -500,11 +542,11 @@ _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
 
     #### Checking OAuth Scope Before API Calls
 
-    Before making Google or Microsoft API calls that rely on
-    platform-managed OAuth tokens, check whether the scope you need
-    has been granted.  `GOOGLE_GRANTED_SCOPES` and
-    `MICROSOFT_GRANTED_SCOPES` hold space-separated raw OAuth scope
-    strings — not feature names.  Examples of what you will see:
+    Before making API calls that rely on platform-managed OAuth tokens,
+    check whether the scope you need has been granted when the provider has
+    a granted-scopes secret. For the built-in providers, `GOOGLE_GRANTED_SCOPES`
+    and `MICROSOFT_GRANTED_SCOPES` hold space-separated raw OAuth scope
+    strings — not feature names. Examples of what you will see:
 
     - Google: full URLs such as
       `https://www.googleapis.com/auth/drive` and
@@ -731,12 +773,15 @@ def _build_code_act_rules_and_examples(
         _has_computer = any(
             k.startswith("primitives.computer.") for k in env.get_tools()
         )
+        _has_tasks = any(k.startswith("primitives.tasks.") for k in env.get_tools())
         _has_state = any(
             k.startswith("primitives.")
             and not k.startswith("primitives.computer.")
             and not k.startswith("primitives.actor.")
             for k in env.get_tools()
         )
+        if _has_tasks:
+            parts.append(_TASK_SCHEDULING_WORKFLOWS)
         if _has_computer and _has_state:
             from unity.actor.prompt_examples import get_mixed_examples
 
@@ -833,8 +878,10 @@ def build_code_act_prompt(
         parts.append(_EXECUTION_RULES)
         parts.append(_SEMANTIC_REASONING_SELECTION)
         from unity.common.reasoning import get_reasoning_prompt_context
+        from unity.common.runtime_oauth import get_oauth_prompt_context
 
         parts.append(get_reasoning_prompt_context())
+        parts.append(get_oauth_prompt_context())
         parts.append(_INCREMENTAL_EXECUTION)
         parts.append(_EXTERNAL_APP_INTEGRATION)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from unity.actor.simulated import SimulatedActor
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from tests.helpers import _handle_project, capture_events
 
@@ -66,7 +67,7 @@ async def test_managermethod_events_for_update():
 @pytest.mark.asyncio
 @_handle_project
 async def test_managermethod_events_for_execute():
-    ts = TaskScheduler()
+    ts = TaskScheduler(actor=SimulatedActor(steps=0))
 
     # create a simple task first
     outcome = ts._create_task(name="Demo", description="Run a demo task")
@@ -81,7 +82,7 @@ async def test_managermethod_events_for_execute():
         for e in events
         if e.payload.get("manager") == "TaskScheduler"
         and e.payload.get("method") == "execute"
-        and e.payload.get("request") == task_id
+        and e.payload.get("phase") == "incoming"
     ]
     assert incoming
     call_id = incoming[0].calling_id

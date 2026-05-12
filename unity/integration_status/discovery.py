@@ -1,24 +1,22 @@
-"""Runtime-side discovery of integration packages installed on disk.
+"""Runtime discovery of integration packages installed on disk.
 
-The deploy side (``unity_deploy.assistant_deployments.integrations``) seeds
-*registered* integrations (those declared in a deployment's
-``integrations=[...]`` list) into the ``Integrations/Manifests`` DataManager
-context.  But assistants can have credentials for *available* packages that
-weren't declared on their deployment — that's the gap this module bridges.
+This module enumerates every manifest under unity_deploy's package roots
+and projects each one into a lightweight metadata record.  It is the
+**single source of truth** for "what integration packages exist" at
+runtime — :mod:`unity.integration_status` reads from here, never from the
+persisted ``Integrations/Manifests`` DataManager context.
 
-At runtime we lazily enumerate every manifest under unity_deploy's package
-roots so we can:
-
-* Allowlist secrets for *any* installed package (not just declared ones), so
-  ``SecretManager._sync_assistant_secrets`` pulls them from Orchestra.
-* Detect when a token for an available-but-not-declared package gets pasted
-  into the assistant's secrets, and drive the hot-load that registers the
-  package's functions + guidance into the running managers.
+(Historical note: the deploy side seeds rows into ``Integrations/Manifests``
+for telemetry, and the early-May runtime read from there too.  That dual
+source produced cascading bugs — registered-vs-non-registered asymmetry,
+stale registry rows masking new disk packages — so the read side was
+collapsed to disk-only.  Deploy still writes the rows; runtime ignores
+them.)
 
 Everything is best-effort: if unity_deploy isn't importable on the runtime
-container (the only environment where this matters in practice is a unity-only
-test env), every helper here returns an empty result and callers fall back to
-pre-C behaviour.
+container (the only environment where this matters in practice is a
+unity-only test env), every helper here returns an empty result and
+callers fall through to existing behaviour.
 """
 
 from __future__ import annotations

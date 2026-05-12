@@ -32,6 +32,17 @@ class _DummyEnv:
         return {}
 
 
+class _DummyToolEnv(_DummyEnv):
+    """Minimal environment stub with configurable tool names."""
+
+    def __init__(self, prompt_context: str, tools: dict[str, Any]):
+        super().__init__(prompt_context)
+        self._tools = tools
+
+    def get_tools(self) -> dict:
+        return self._tools
+
+
 def _real_envs_mixed() -> Mapping[str, Any]:
     """Real environments that produce self-contained prompt context."""
     from unity.function_manager.primitives import ComputerPrimitives
@@ -109,6 +120,53 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     assert "neutral or uncertain" in prompt.lower()
     assert "default to returning the handle" in prompt.lower()
     assert "execute_function vs execute_code decision" in prompt
+
+
+@pytest.mark.timeout(30)
+def test_code_act_prompt_includes_task_workflow_guidance_only_with_task_primitives():
+    prompt_with_tasks = build_code_act_prompt(
+        environments={
+            "primitives": _DummyToolEnv(
+                "Task primitives are available.",
+                {"primitives.tasks.update": object()},
+            ),
+        },
+        tools={},
+    )
+    prompt_without_tasks = build_code_act_prompt(
+        environments={
+            "primitives": _DummyToolEnv(
+                "Only contact primitives are available.",
+                {"primitives.contacts.ask": object()},
+            ),
+        },
+        tools={},
+    )
+
+    assert "Durable Scheduled And Triggered Workflows" in prompt_with_tasks
+    assert "`entrypoint=None`" in prompt_with_tasks
+    assert "primitives.tasks.execute(task_id=...)" in prompt_with_tasks
+    assert "Durable Scheduled And Triggered Workflows" not in prompt_without_tasks
+
+
+@pytest.mark.timeout(30)
+def test_code_act_prompt_teaches_refresh_token_oauth_helper():
+    actor = CodeActActor()
+    prompt = build_code_act_prompt(
+        environments={},
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert "def reason(" in prompt
+    assert (
+        "def get_oauth_access_token(provider: str, *, "
+        "min_ttl_seconds: int = 300) -> str"
+    ) in prompt
+    assert 'get_oauth_access_token("microsoft")' in prompt
+    assert 'get_oauth_access_token("google")' in prompt
+    assert "refresh-token backed OAuth" in prompt
+    assert "Do not print, log, return, or store the token value." in prompt
+    assert "provider sdk/default credential behavior" in prompt.lower()
 
 
 @pytest.mark.timeout(30)

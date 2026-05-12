@@ -30,6 +30,7 @@ The script:
 import asyncio
 import io
 import json
+import os
 import signal
 import sys
 import threading
@@ -295,6 +296,26 @@ async def reason(
     return result
 
 
+def get_oauth_access_token(provider: str, *, min_ttl_seconds: int = 300) -> str:
+    """
+    Return a current OAuth access token for a refresh-token backed provider.
+
+    Custom virtual environments run in a child process whose environment can
+    be older than the parent Unity worker. This helper calls the parent process
+    over JSON-RPC so rotating OAuth access tokens are read from the current
+    assistant secret state instead of the child process's inherited env.
+
+    Examples
+    --------
+    ``token = get_oauth_access_token("microsoft")``
+    ``token = get_oauth_access_token("google")``
+    """
+    return rpc_call_sync(
+        "runtime.get_oauth_access_token",
+        {"provider": provider, "min_ttl_seconds": min_ttl_seconds},
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Execution Environment
 # ────────────────────────────────────────────────────────────────────────────
@@ -413,6 +434,7 @@ def create_safe_globals(is_async: bool = True):
         # Primitives proxy (computer and actor accessible via primitives.computer.* etc.)
         "primitives": PrimitivesProxy(is_async=is_async),
         "reason": reason,
+        "get_oauth_access_token": get_oauth_access_token,
     }
 
     # Try to add pydantic if available in this venv
@@ -736,6 +758,21 @@ def inject_state_into_globals(state: dict, globals_dict: dict) -> None:
             pass
 
 
+def apply_env_overlay(env_overlay: dict | None) -> None:
+    """Apply parent-supplied runtime env updates inside the child process.
+
+    The venv runner can be a long-lived subprocess, so inherited environment
+    variables may be older than Unity's parent runtime.  The parent sends only
+    the runtime overlay needed for execution, currently rotating OAuth token
+    variables, before each function call.
+    """
+    if not env_overlay:
+        return
+    for key, value in env_overlay.items():
+        if isinstance(key, str) and isinstance(value, str):
+            os.environ[key] = value
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Main Entry Point
 # ────────────────────────────────────────────────────────────────────────────
@@ -864,6 +901,7 @@ def main():
     call_kwargs = input_data.get("call_kwargs", {})
     is_async = input_data.get("is_async", False)
     initial_state = input_data.get("initial_state")
+    apply_env_overlay(input_data.get("env_overlay"))
 
     # Execute with RPC support, optionally with initial state
     result = run_with_rpc_loop(
@@ -1030,6 +1068,7 @@ def main_server():
         implementation = input_data.get("implementation", "")
         call_kwargs = input_data.get("call_kwargs", {})
         is_async = input_data.get("is_async", True)
+        apply_env_overlay(input_data.get("env_overlay"))
 
         # Execute with RPC support using persistent globals
         result = run_server_with_rpc_loop(

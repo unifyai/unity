@@ -2,6 +2,7 @@ from typing import Callable, Dict, Any, List, Optional, Sequence, Tuple, Type, U
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+import time
 from time import perf_counter
 
 from pydantic import BaseModel
@@ -14,6 +15,7 @@ __all__ = [
     "sig_dict",
     "unwrap_tool_callable",
     "now",
+    "get_assistant_timezone",
     "tool_name",
     "require_tools",
     "parallelism_guidance",
@@ -99,6 +101,147 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     }
 
 
+@dataclass(frozen=True)
+class _AssistantTimezoneLookup:
+    timezone: str | None
+    cache_hit: bool
+    cache_age_seconds: float
+    context_ms: float
+    get_logs_ms: float
+    extract_ms: float
+    cache_store_ms: float
+    rows_count: int
+    error_type: str
+
+
+_ASSISTANT_TIMEZONE_TTL = 300  # 5 minutes — timezone changes are very rare
+_assistant_timezone_cache: tuple[float, str, str | None] | None = None
+
+
+def _contacts_context() -> str:
+    from unity.session_details import SESSION_DETAILS
+
+    return (
+        f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
+    )
+
+
+def _lookup_assistant_timezone() -> _AssistantTimezoneLookup:
+    """Return assistant timezone lookup details with a process-local TTL cache."""
+    global _assistant_timezone_cache
+
+    _timing_t0 = perf_counter()
+    _monotonic_t0 = _timing_t0
+    monotonic_now = time.monotonic()
+    _monotonic_ms = (perf_counter() - _monotonic_t0) * 1000
+
+    _context_t0 = perf_counter()
+    contacts_ctx = _contacts_context()
+    _context_ms = (perf_counter() - _context_t0) * 1000
+
+    if _assistant_timezone_cache is not None:
+        cached_at, cached_context, cached_val = _assistant_timezone_cache
+        cache_age = monotonic_now - cached_at
+        if cached_context == contacts_ctx and cache_age < _ASSISTANT_TIMEZONE_TTL:
+            log_startup_timing(
+                LOGGER,
+                (
+                    "⏱️ [StartupTiming] timezone.assistant_lookup.detail "
+                    "total=%.0fms monotonic=%.0fms cache_hit=True cache_age=%.0fs "
+                    "context=%.0fms get_logs=0ms extract=0ms rows=0 tz=%s error="
+                ),
+                (perf_counter() - _timing_t0) * 1000,
+                _monotonic_ms,
+                cache_age,
+                _context_ms,
+                cached_val,
+            )
+            return _AssistantTimezoneLookup(
+                timezone=cached_val,
+                cache_hit=True,
+                cache_age_seconds=cache_age,
+                context_ms=_context_ms,
+                get_logs_ms=0.0,
+                extract_ms=0.0,
+                cache_store_ms=0.0,
+                rows_count=0,
+                error_type="",
+            )
+
+    import unify as _unify
+
+    result: str | None = None
+    rows_count = 0
+    error_type = ""
+    _get_logs_t0 = perf_counter()
+    try:
+        rows = _unify.get_logs(
+            context=contacts_ctx,
+            filter="contact_id == 0",
+            limit=1,
+            from_fields=["timezone"],
+        )
+        _get_logs_ms = (perf_counter() - _get_logs_t0) * 1000
+        rows_count = len(rows or [])
+        _extract_t0 = perf_counter()
+        if rows:
+            val = rows[0].entries.get("timezone")
+            if isinstance(val, str) and val.strip():
+                result = val.strip()
+    except Exception:
+        _get_logs_ms = (perf_counter() - _get_logs_t0) * 1000
+        _extract_t0 = perf_counter()
+        error_type = "get_logs"
+    _extract_ms = (perf_counter() - _extract_t0) * 1000
+
+    _cache_store_t0 = perf_counter()
+    # Only cache a real timezone. Startup can briefly query before Contacts are
+    # readable; caching that miss would pin the assistant to UTC for the full TTL.
+    if result is not None:
+        _assistant_timezone_cache = (monotonic_now, contacts_ctx, result)
+    _cache_store_ms = (perf_counter() - _cache_store_t0) * 1000
+    log_startup_timing(
+        LOGGER,
+        (
+            "⏱️ [StartupTiming] timezone.assistant_lookup.detail "
+            "total=%.0fms monotonic=%.0fms cache_hit=False cache_age=0s "
+            "context=%.0fms get_logs=%.0fms extract=%.0fms cache_store=%.0fms "
+            "rows=%d tz=%s error=%s"
+        ),
+        (perf_counter() - _timing_t0) * 1000,
+        _monotonic_ms,
+        _context_ms,
+        _get_logs_ms,
+        _extract_ms,
+        _cache_store_ms,
+        rows_count,
+        result,
+        error_type,
+    )
+    return _AssistantTimezoneLookup(
+        timezone=result,
+        cache_hit=False,
+        cache_age_seconds=0.0,
+        context_ms=_context_ms,
+        get_logs_ms=_get_logs_ms,
+        extract_ms=_extract_ms,
+        cache_store_ms=_cache_store_ms,
+        rows_count=rows_count,
+        error_type=error_type,
+    )
+
+
+def get_assistant_timezone() -> str | None:
+    """Return the assistant's configured IANA timezone, cached by assistant context."""
+    return _lookup_assistant_timezone().timezone
+
+
+def _utc_now() -> datetime:
+    from datetime import timezone as dt_timezone
+
+    return datetime.now(dt_timezone.utc)
+
+
 def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     """Return the current timestamp in the assistant's timezone.
 
@@ -117,10 +260,7 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     In tests, this function is monkeypatched by tests/conftest.py to return
     fixed or incrementing datetimes for cache consistency.
     """
-    from datetime import datetime, timezone as dt_timezone
     from zoneinfo import ZoneInfo
-    import unify as _unify
-    from unity.session_details import SESSION_DETAILS
 
     _timing_t0 = perf_counter()
     _step_t0 = _timing_t0
@@ -132,37 +272,13 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
         _step_t0 = step_now
         return elapsed_ms
 
-    _contacts_ctx = (
-        f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}/Contacts"
-    )
-    _context_ms = _mark_step()
-
     # Default to UTC if assistant row/field is unavailable
-    tz_name: str = "UTC"
-    rows_count = 0
-    error_type = ""
-    try:
-        rows = _unify.get_logs(
-            context=_contacts_ctx,
-            filter="contact_id == 0",
-            limit=1,
-            from_fields=["timezone"],
-        )
-        _get_logs_ms = _mark_step()
-        rows_count = len(rows or [])
-        if rows:
-            val = rows[0].entries.get("timezone")
-            if isinstance(val, str) and val.strip():
-                tz_name = val.strip()
-    except Exception:
-        _get_logs_ms = _mark_step()
-        error_type = "get_logs"
-        # Best-effort only; fall back to UTC
-        tz_name = "UTC"
-    _extract_ms = _mark_step()
+    lookup = _lookup_assistant_timezone()
+    _mark_step()
+    tz_name = lookup.timezone or "UTC"
 
     # Convert UTC now to the target timezone
-    utc_now = datetime.now(dt_timezone.utc)
+    utc_now = _utc_now()
     _utc_now_ms = _mark_step()
     zone_error = ""
     try:
@@ -190,21 +306,24 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
             "⏱️ [StartupTiming] timezone.prompt_now.detail "
             "total=%.0fms context=%.0fms get_logs=%.0fms extract=%.0fms "
             "utc_now=%.0fms zone_convert=%.0fms format=%.0fms "
-            "rows=%d tz=%s label=%s as_string=%s time_only=%s error=%s"
+            "rows=%d tz=%s label=%s as_string=%s time_only=%s "
+            "cache_hit=%s cache_age=%.0fs error=%s"
         ),
         (perf_counter() - _timing_t0) * 1000,
-        _context_ms,
-        _get_logs_ms,
-        _extract_ms,
+        lookup.context_ms,
+        lookup.get_logs_ms,
+        lookup.extract_ms,
         _utc_now_ms,
         _zone_convert_ms,
         _format_ms,
-        rows_count,
+        lookup.rows_count,
         tz_name,
         label,
         as_string,
         time_only,
-        error_type or zone_error or "",
+        lookup.cache_hit,
+        lookup.cache_age_seconds,
+        lookup.error_type or zone_error or "",
     )
 
     return result

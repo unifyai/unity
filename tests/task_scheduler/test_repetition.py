@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from tests.helpers import _handle_project
+from unity.actor.simulated import SimulatedActor
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.repetition import (
     Frequency,
@@ -76,6 +79,89 @@ def test_clone_task_instance_rearms_recurring_scheduled_task():
     assert latest.instance_id == 1
     assert latest.status == Status.scheduled
     assert latest.schedule_start_at == initial_start + timedelta(days=1)
+    assert latest.entrypoint is None
+
+
+@_handle_project
+def test_entrypoint_review_patches_future_description_driven_instances():
+    scheduler = TaskScheduler()
+    initial_start = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(
+        hours=1,
+    )
+    scheduler._create_task(
+        name="Daily description-driven summary",
+        description="Summarize updates every day.",
+        status=Status.scheduled,
+        schedule=Schedule(start_at=initial_start.isoformat()),
+        repeat=[RepeatPattern(frequency=Frequency.DAILY)],
+    )
+
+    current = scheduler._get_task_or_raise(0)
+    scheduler._clone_task_instance(current)
+    result = scheduler._attach_entrypoint_to_future_instances(
+        task_id=0,
+        completed_instance_id=0,
+        function_id=321,
+        rationale="The successful run revealed a stable workflow.",
+    )
+
+    rows = scheduler._filter_tasks(filter="task_id == 0")
+    current_row = min(rows, key=lambda task: task.instance_id)
+    future_row = max(rows, key=lambda task: task.instance_id)
+
+    assert result["outcome"] == "attached"
+    assert current_row.entrypoint is None
+    assert future_row.entrypoint == 321
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_recurring_execution_clones_before_entrypoint_review_patch():
+    scheduler = TaskScheduler(actor=SimulatedActor(steps=0))
+    initial_start = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(
+        hours=1,
+    )
+    scheduler._create_task(
+        name="Daily report",
+        description="Run the daily report from the task description.",
+        status=Status.scheduled,
+        schedule=Schedule(start_at=initial_start.isoformat()),
+        repeat=[RepeatPattern(frequency=Frequency.DAILY)],
+    )
+
+    handle = await scheduler.execute(task_id=0)
+    await handle.result()
+
+    rows_after_run = sorted(
+        scheduler._filter_tasks(filter="task_id == 0"),
+        key=lambda task: task.instance_id,
+    )
+    assert [row.instance_id for row in rows_after_run] == [0, 1]
+    assert rows_after_run[0].entrypoint is None
+    assert rows_after_run[1].entrypoint is None
+
+    result = scheduler._attach_entrypoint_to_future_instances(
+        task_id=0,
+        completed_instance_id=0,
+        function_id=321,
+        rationale="The completed run was stable enough to reuse.",
+    )
+    assert result["outcome"] == "attached"
+
+    patched_next = [
+        row
+        for row in scheduler._filter_tasks(filter="task_id == 0")
+        if row.instance_id == 1
+    ][0]
+    assert patched_next.entrypoint == 321
+
+    scheduler._clone_task_instance(patched_next)
+    cloned_from_patched = [
+        row
+        for row in scheduler._filter_tasks(filter="task_id == 0")
+        if row.instance_id == 2
+    ][0]
+    assert cloned_from_patched.entrypoint == 321
 
 
 @_handle_project

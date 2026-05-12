@@ -1,21 +1,39 @@
-"""Unit tests for ``unity.integration_status``.
+"""Unit tests for ``unity.integration_status`` enablement read.
 
-These tests exercise the enablement-detection logic with synthetic registry
-rows so we don't need a real DataManager context provisioned.  Live-context
-tests live separately under ``tests/secret_manager/`` once we wire the
-hook end-to-end against Orchestra.
+Exercises the pure read API (``get_enabled_integrations``,
+``get_setup_completeness``, ``enabled_summary_for_prompt``,
+``build_guidance_filter_scope``) against synthetic disk-package metadata
+and synthetic secret keysets.
+
+Synthetic state is injected by stubbing two helpers:
+
+* ``discover_available_packages`` from
+  ``unity.integration_status.discovery`` — returns the list of
+  package-metadata dicts the assistant has on disk.
+* ``_read_local_secret_keyset`` on the ``unity.integration_status``
+  module — returns the set of currently-present secret names in the
+  assistant's local Secrets context.
+
+Manager-coupled helpers (``enabled_function_ids``,
+``enabled_guidance_ids``) are tested separately under
+``tests/test_integration_status/test_manager_resolution.py`` (TODO) once
+we have lightweight FunctionManager / GuidanceManager fakes.
 """
 
 from __future__ import annotations
 
-import json
+from pathlib import Path
 
 import pytest
 
 from unity import integration_status as IS
 
+# ---------------------------------------------------------------------------
+# Test fixtures
+# ---------------------------------------------------------------------------
 
-def _row(
+
+def _pkg(
     *,
     slug: str,
     label: str,
@@ -24,403 +42,314 @@ def _row(
     function_names: list[str] | None = None,
     guidance_titles: list[str] | None = None,
 ) -> dict:
+    """Build a synthetic package-metadata dict matching the shape returned
+    by ``discover_available_packages``."""
     return {
         "slug": slug,
         "label": label,
         "category": "test",
         "version": "0.1.0",
         "tier": "api",
-        "quality": "bronze",
-        "required_secrets_json": json.dumps(required),
-        "optional_secrets_json": json.dumps(optional or []),
-        "function_names_json": json.dumps(function_names or []),
-        "guidance_titles_json": json.dumps(guidance_titles or []),
-        "capability_ids_json": "[]",
-        "tags_json": "[]",
-        "homepage": "",
-        "description": f"{label} description",
+        "root_dir": Path("/nonexistent"),
+        "required_secrets": required,
+        "optional_secrets": optional or [],
+        "function_names": function_names or [],
+        "guidance_titles": guidance_titles or [],
+        "function_dir": None,
+        "guidance_dir": None,
     }
 
 
+def _stub_packages_and_keyset(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    packages: list[dict],
+    keyset: set[str] | None = None,
+) -> None:
+    """Stub disk discovery + local keyset reads for an enablement test."""
+    from unity.integration_status import discovery as D
+
+    monkeypatch.setattr(D, "discover_available_packages", lambda: packages)
+    monkeypatch.setattr(IS, "_read_local_secret_keyset", lambda: set(keyset or set()))
+
+
 @pytest.fixture(autouse=True)
-def _reset_cache(monkeypatch):
-    """Reset the per-session cache and reload the registry from the supplied
-    rows on each test.  Bypasses DataManager entirely.
-
-    Stubs ``schedule_hot_load`` so ``recompute_enablement`` doesn't spawn
-    daemon threads that would race with the test's cache-reset teardown.
-
-    Stubs ``_read_local_secret_keyset`` to return an empty set by default
-    so tests that pass ``secrets={...}`` to ``recompute_enablement`` see
-    that argument as the sole keyset source (production reads from the
-    local Secrets context too, but in unit tests that context isn't
-    provisioned).  Individual tests can override via monkeypatch.
-
-    Tests that specifically care about hot-load scheduling or local-context
-    keys can re-stub via monkeypatch + assert on the calls."""
+def _reset_cache():
     IS.reset_session_cache()
-    monkeypatch.setattr(IS, "schedule_hot_load", lambda slug: None)
-    monkeypatch.setattr(IS, "_read_local_secret_keyset", lambda: set())
     yield
     IS.reset_session_cache()
 
 
-def _seed_registry(monkeypatch, rows: list[dict]) -> None:
-    """Patch ``_load_registry`` to return *rows* and prime the cache."""
-
-    def _fake_load() -> list[dict]:
-        cache = IS._session_cache()
-        cache["registry_loaded"] = True
-        cache["registry"] = rows
-        return rows
-
-    monkeypatch.setattr(IS, "_load_registry", _fake_load)
-
-
 # ---------------------------------------------------------------------------
-# Empty registry → no detection
+# get_enabled_integrations — basic enablement logic
 # ---------------------------------------------------------------------------
 
 
-def test_recompute_with_no_registry_returns_empty(monkeypatch):
-    _seed_registry(monkeypatch, [])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={"HUBSPOT_PRIVATE_APP_TOKEN": "tok"},
+def test_no_packages_returns_empty(monkeypatch):
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[],
+        keyset={"HUBSPOT_PRIVATE_APP_TOKEN"},
     )
-
-    assert IS.get_enabled_integrations() == []
-    assert IS.get_setup_completeness() == {}
+    assert IS.get_enabled_integrations() == {}
 
 
-def test_summary_empty_when_no_registry(monkeypatch):
-    _seed_registry(monkeypatch, [])
-    IS.recompute_enablement(assistant_id=1, secrets={})
+def test_required_secret_present_enables_package(monkeypatch):
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[
+            _pkg(
+                slug="hubspot",
+                label="HubSpot",
+                required=["HUBSPOT_PRIVATE_APP_TOKEN"],
+            ),
+        ],
+        keyset={"HUBSPOT_PRIVATE_APP_TOKEN"},
+    )
+    enabled = IS.get_enabled_integrations()
+    assert set(enabled.keys()) == {"hubspot"}
+    assert enabled["hubspot"]["label"] == "HubSpot"
+
+
+def test_required_secret_missing_disables_package(monkeypatch):
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[
+            _pkg(
+                slug="hubspot",
+                label="HubSpot",
+                required=["HUBSPOT_PRIVATE_APP_TOKEN"],
+            ),
+        ],
+        keyset=set(),
+    )
+    assert IS.get_enabled_integrations() == {}
+
+
+def test_no_required_secrets_means_always_enabled(monkeypatch):
+    """Packages with no declared required secrets are read-only / always-on
+    and should be enabled unconditionally."""
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[_pkg(slug="public_data", label="Public Data", required=[])],
+        keyset=set(),
+    )
+    assert "public_data" in IS.get_enabled_integrations()
+
+
+def test_multi_secret_AND_requires_all_present(monkeypatch):
+    eh = _pkg(
+        slug="employment_hero",
+        label="Employment Hero",
+        required=["EH_CLIENT_ID", "EH_CLIENT_SECRET"],
+    )
+    # Only one of two required secrets present.
+    _stub_packages_and_keyset(monkeypatch, packages=[eh], keyset={"EH_CLIENT_ID"})
+    assert IS.get_enabled_integrations() == {}
+
+    # Both present → enabled.
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[eh],
+        keyset={"EH_CLIENT_ID", "EH_CLIENT_SECRET"},
+    )
+    assert "employment_hero" in IS.get_enabled_integrations()
+
+
+def test_multiple_packages_independently_enabled(monkeypatch):
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[
+            _pkg(slug="hubspot", label="HubSpot", required=["HUBSPOT_TOKEN"]),
+            _pkg(slug="webex", label="Webex", required=["WEBEX_TOKEN"]),
+            _pkg(slug="salesforce", label="Salesforce", required=["SF_TOKEN"]),
+        ],
+        keyset={"HUBSPOT_TOKEN", "WEBEX_TOKEN"},  # SF missing
+    )
+    enabled = IS.get_enabled_integrations()
+    assert set(enabled.keys()) == {"hubspot", "webex"}
+
+
+# ---------------------------------------------------------------------------
+# get_setup_completeness — fully_connected vs configured
+# ---------------------------------------------------------------------------
+
+
+def test_completeness_configured_when_optional_missing(monkeypatch):
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[
+            _pkg(
+                slug="hubspot",
+                label="HubSpot",
+                required=["HUBSPOT_TOKEN"],
+                optional=["HUBSPOT_PORTAL_ID"],
+            ),
+        ],
+        keyset={"HUBSPOT_TOKEN"},
+    )
+    comp = IS.get_setup_completeness()
+    assert comp["hubspot"]["status"] == "configured"
+    assert comp["hubspot"]["missing_optional_secrets"] == ["HUBSPOT_PORTAL_ID"]
+    assert comp["hubspot"]["missing_required_secrets"] == []
+
+
+def test_completeness_fully_connected_when_optional_present(monkeypatch):
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[
+            _pkg(
+                slug="hubspot",
+                label="HubSpot",
+                required=["HUBSPOT_TOKEN"],
+                optional=["HUBSPOT_PORTAL_ID"],
+            ),
+        ],
+        keyset={"HUBSPOT_TOKEN", "HUBSPOT_PORTAL_ID"},
+    )
+    comp = IS.get_setup_completeness()
+    assert comp["hubspot"]["status"] == "fully_connected"
+    assert comp["hubspot"]["missing_optional_secrets"] == []
+
+
+def test_completeness_only_includes_enabled(monkeypatch):
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[
+            _pkg(slug="hubspot", label="HubSpot", required=["HUBSPOT_TOKEN"]),
+            _pkg(slug="webex", label="Webex", required=["WEBEX_TOKEN"]),
+        ],
+        keyset={"HUBSPOT_TOKEN"},
+    )
+    comp = IS.get_setup_completeness()
+    assert set(comp.keys()) == {"hubspot"}
+
+
+# ---------------------------------------------------------------------------
+# enabled_summary_for_prompt — prompt block rendering
+# ---------------------------------------------------------------------------
+
+
+def test_summary_empty_when_no_packages(monkeypatch):
+    _stub_packages_and_keyset(monkeypatch, packages=[], keyset=set())
     assert IS.enabled_summary_for_prompt() == ""
 
 
-def test_build_guidance_filter_scope_returns_none_when_registry_empty(monkeypatch):
-    _seed_registry(monkeypatch, [])
-    IS.recompute_enablement(assistant_id=1, secrets={})
+def test_summary_renders_active_and_inactive(monkeypatch):
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[
+            _pkg(slug="hubspot", label="HubSpot", required=["HUBSPOT_TOKEN"]),
+            _pkg(slug="webex", label="Webex", required=["WEBEX_TOKEN"]),
+        ],
+        keyset={"HUBSPOT_TOKEN"},
+    )
+    summary = IS.enabled_summary_for_prompt()
+    assert "### Integrations" in summary
+    assert "HubSpot" in summary
+    assert "Webex" in summary
+    assert "WEBEX_TOKEN" in summary
+    # HubSpot should be in the "Active" section, Webex in "Inactive".
+    active_section, inactive_section = summary.split(
+        "Inactive (credentials not configured):",
+    )
+    assert "HubSpot" in active_section
+    assert "Webex" in inactive_section
+
+
+def test_summary_no_inactive_section_when_all_active(monkeypatch):
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[_pkg(slug="hubspot", label="HubSpot", required=["HUBSPOT_TOKEN"])],
+        keyset={"HUBSPOT_TOKEN"},
+    )
+    summary = IS.enabled_summary_for_prompt()
+    assert "Active integrations:" in summary
+    assert "Inactive" not in summary
+
+
+# ---------------------------------------------------------------------------
+# build_guidance_filter_scope — guidance gating
+# ---------------------------------------------------------------------------
+
+
+def test_filter_scope_none_when_no_packages(monkeypatch):
+    """No integration packages on disk → don't filter (preserve existing
+    behaviour for non-integration callers)."""
+    _stub_packages_and_keyset(monkeypatch, packages=[], keyset={"FOO"})
     assert IS.build_guidance_filter_scope() is None
 
 
-# ---------------------------------------------------------------------------
-# Single-integration enablement: HubSpot
-# ---------------------------------------------------------------------------
-
-
-def _hubspot_row() -> dict:
-    return _row(
-        slug="hubspot",
-        label="HubSpot",
-        required=["HUBSPOT_PRIVATE_APP_TOKEN"],
-        optional=["HUBSPOT_PORTAL_ID"],
-        function_names=["get_hubspot_contact", "search_hubspot_contacts"],
-        guidance_titles=["Hubspot Overview", "Hubspot Crm Contacts"],
+def test_filter_scope_never_match_when_packages_exist_but_none_enabled(monkeypatch):
+    """Packages on disk but none enabled → hide all integration guidance."""
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[_pkg(slug="hubspot", label="HubSpot", required=["HUBSPOT_TOKEN"])],
+        keyset=set(),
     )
-
-
-def test_hubspot_enabled_when_required_token_present(monkeypatch):
-    _seed_registry(monkeypatch, [_hubspot_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={"HUBSPOT_PRIVATE_APP_TOKEN": "tok"},
-    )
-
-    assert IS.get_enabled_integrations() == ["hubspot"]
-    completeness = IS.get_setup_completeness()
-    assert completeness["hubspot"]["status"] == "configured"
-    assert completeness["hubspot"]["missing_optional_secrets"] == ["HUBSPOT_PORTAL_ID"]
-
-
-def test_hubspot_disabled_without_required_token(monkeypatch):
-    _seed_registry(monkeypatch, [_hubspot_row()])
-
-    IS.recompute_enablement(assistant_id=1, secrets={"HUBSPOT_PORTAL_ID": "12345"})
-
-    assert IS.get_enabled_integrations() == []
-
-
-def test_hubspot_fully_connected_when_optional_present(monkeypatch):
-    _seed_registry(monkeypatch, [_hubspot_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={
-            "HUBSPOT_PRIVATE_APP_TOKEN": "tok",
-            "HUBSPOT_PORTAL_ID": "12345",
-        },
-    )
-
-    completeness = IS.get_setup_completeness()
-    assert completeness["hubspot"]["status"] == "fully_connected"
-    assert completeness["hubspot"]["missing_optional_secrets"] == []
-
-
-def test_empty_string_secret_treated_as_missing(monkeypatch):
-    """Orchestra returns ``""`` for unset secrets in some paths.  Treat
-    empty/whitespace as not-present so we don't false-positive enablement."""
-    _seed_registry(monkeypatch, [_hubspot_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={"HUBSPOT_PRIVATE_APP_TOKEN": ""},
-    )
-
-    assert IS.get_enabled_integrations() == []
+    assert IS.build_guidance_filter_scope() == "guidance_id in ()"
 
 
 # ---------------------------------------------------------------------------
-# Multi-secret AND: Employment Hero (CLIENT_ID + CLIENT_SECRET both required)
+# register_available_integrations — startup pass
 # ---------------------------------------------------------------------------
 
 
-def _eh_row() -> dict:
-    return _row(
-        slug="employment_hero",
-        label="Employment Hero",
-        required=[
-            "EMPLOYMENTHERO_OAUTH_CLIENT_ID",
-            "EMPLOYMENTHERO_OAUTH_CLIENT_SECRET",
+def test_register_is_idempotent(monkeypatch):
+    """Re-running register_available_integrations doesn't double-process
+    packages already in registered_slugs."""
+    calls = {"functions": 0, "guidance": 0}
+
+    def fake_register_functions(pkg):
+        calls["functions"] += 1
+        return 0
+
+    def fake_register_guidance(pkg):
+        calls["guidance"] += 1
+        return 0
+
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[_pkg(slug="hubspot", label="HubSpot", required=["X"])],
+        keyset=set(),
+    )
+    monkeypatch.setattr(IS, "_register_functions", fake_register_functions)
+    monkeypatch.setattr(IS, "_register_guidance", fake_register_guidance)
+
+    IS.register_available_integrations()
+    assert calls == {"functions": 1, "guidance": 1}
+
+    # Second call should be a no-op for the already-registered slug.
+    IS.register_available_integrations()
+    assert calls == {"functions": 1, "guidance": 1}
+
+
+def test_register_per_package_failure_does_not_halt_others(monkeypatch):
+    """If one package's functions/guidance step raises, the remaining
+    packages still get processed."""
+
+    def failing_functions(pkg):
+        if pkg["slug"] == "broken":
+            raise RuntimeError("simulated failure")
+        return 0
+
+    _stub_packages_and_keyset(
+        monkeypatch,
+        packages=[
+            _pkg(slug="broken", label="Broken", required=[]),
+            _pkg(slug="hubspot", label="HubSpot", required=[]),
         ],
-        optional=[
-            "EMPLOYMENTHERO_REFRESH_TOKEN",
-            "EMPLOYMENTHERO_ORGANISATION_ID",
-        ],
-        function_names=["get_employmenthero_employee"],
-        guidance_titles=["Employmenthero Overview"],
+        keyset=set(),
     )
+    monkeypatch.setattr(IS, "_register_functions", failing_functions)
+    monkeypatch.setattr(IS, "_register_guidance", lambda pkg: 0)
 
+    # Should not raise.
+    IS.register_available_integrations()
 
-def test_eh_disabled_when_only_client_id_present(monkeypatch):
-    _seed_registry(monkeypatch, [_eh_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={"EMPLOYMENTHERO_OAUTH_CLIENT_ID": "id"},
-    )
-
-    assert IS.get_enabled_integrations() == []
-
-
-def test_eh_configured_with_both_required_but_oauth_not_complete(monkeypatch):
-    """Once CLIENT_ID + CLIENT_SECRET are pasted, EH is *configured* but the
-    OAuth Connect flow that populates REFRESH_TOKEN hasn't run.  We surface
-    that gap via ``missing_optional_secrets`` so the prompt can guide the
-    user to complete setup."""
-    _seed_registry(monkeypatch, [_eh_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={
-            "EMPLOYMENTHERO_OAUTH_CLIENT_ID": "id",
-            "EMPLOYMENTHERO_OAUTH_CLIENT_SECRET": "secret",
-        },
-    )
-
-    enabled = IS.get_enabled_integrations()
-    assert enabled == ["employment_hero"]
-    completeness = IS.get_setup_completeness()
-    assert completeness["employment_hero"]["status"] == "configured"
-    assert (
-        "EMPLOYMENTHERO_REFRESH_TOKEN"
-        in completeness["employment_hero"]["missing_optional_secrets"]
-    )
-
-
-def test_eh_fully_connected_with_full_oauth_set(monkeypatch):
-    _seed_registry(monkeypatch, [_eh_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={
-            "EMPLOYMENTHERO_OAUTH_CLIENT_ID": "id",
-            "EMPLOYMENTHERO_OAUTH_CLIENT_SECRET": "secret",
-            "EMPLOYMENTHERO_REFRESH_TOKEN": "rt",
-            "EMPLOYMENTHERO_ORGANISATION_ID": "org",
-        },
-    )
-
-    completeness = IS.get_setup_completeness()
-    assert completeness["employment_hero"]["status"] == "fully_connected"
-
-
-# ---------------------------------------------------------------------------
-# Mid-session recompute (the core promise of the _sync_assistant_secrets hook)
-# ---------------------------------------------------------------------------
-
-
-def test_mid_session_recompute_picks_up_newly_added_secret(monkeypatch):
-    """Simulates the user pasting a HubSpot token mid-session.  The first
-    sync call runs with no token; the second runs after the user adds it.
-    The enabled set must update without any session restart."""
-    _seed_registry(monkeypatch, [_hubspot_row()])
-
-    IS.recompute_enablement(assistant_id=1, secrets={})
-    assert IS.get_enabled_integrations() == []
-
-    # User pastes the token.  Next _sync_assistant_secrets fires.
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={"HUBSPOT_PRIVATE_APP_TOKEN": "tok"},
-    )
-    assert IS.get_enabled_integrations() == ["hubspot"]
-
-
-def test_mid_session_recompute_drops_disabled_integration(monkeypatch):
-    """Symmetric: user revokes a token mid-session → integration falls out
-    of the enabled set on next sync."""
-    _seed_registry(monkeypatch, [_hubspot_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={"HUBSPOT_PRIVATE_APP_TOKEN": "tok"},
-    )
-    assert IS.get_enabled_integrations() == ["hubspot"]
-
-    IS.recompute_enablement(assistant_id=1, secrets={})
-    assert IS.get_enabled_integrations() == []
-
-
-# ---------------------------------------------------------------------------
-# Multi-integration: HubSpot + Employment Hero
-# ---------------------------------------------------------------------------
-
-
-def test_multi_integration_independent_enablement(monkeypatch):
-    """HubSpot and EH should enable independently of each other."""
-    _seed_registry(monkeypatch, [_hubspot_row(), _eh_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={"HUBSPOT_PRIVATE_APP_TOKEN": "tok"},
-    )
-
-    enabled = sorted(IS.get_enabled_integrations())
-    assert enabled == ["hubspot"]
-
-
-# ---------------------------------------------------------------------------
-# Allowlist union (drives SecretManager._resolve_secret_allowlist)
-# ---------------------------------------------------------------------------
-
-
-def test_all_known_secret_names_unions_all_required_and_optional(monkeypatch):
-    _seed_registry(monkeypatch, [_hubspot_row(), _eh_row()])
-
-    names = IS.all_known_secret_names()
-
-    # Required secrets from both packages.
-    assert "HUBSPOT_PRIVATE_APP_TOKEN" in names
-    assert "EMPLOYMENTHERO_OAUTH_CLIENT_ID" in names
-    assert "EMPLOYMENTHERO_OAUTH_CLIENT_SECRET" in names
-    # Optional secrets from both packages.
-    assert "HUBSPOT_PORTAL_ID" in names
-    assert "EMPLOYMENTHERO_REFRESH_TOKEN" in names
-
-
-def test_all_known_secret_names_empty_when_registry_empty(monkeypatch):
-    """``all_known_secret_names`` unions the persisted registry with disk
-    discovery (added in the hot-load PR).  To assert "empty result", both
-    sources must be patched to empty — otherwise the function legitimately
-    returns disk-discovered packages installed alongside this venv."""
-    _seed_registry(monkeypatch, [])
-
-    from unity.integration_status import discovery as IS_DISCOVERY
-
-    monkeypatch.setattr(
-        IS_DISCOVERY,
-        "discover_available_packages",
-        lambda *, force_reload=False: [],
-    )
-
-    assert IS.all_known_secret_names() == set()
-
-
-# ---------------------------------------------------------------------------
-# Prompt-block rendering
-# ---------------------------------------------------------------------------
-
-
-def test_summary_lists_active_and_inactive_with_setup_hint(monkeypatch):
-    _seed_registry(monkeypatch, [_hubspot_row(), _eh_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={
-            "HUBSPOT_PRIVATE_APP_TOKEN": "tok",
-            "HUBSPOT_PORTAL_ID": "12345",
-        },
-    )
-
-    summary = IS.enabled_summary_for_prompt()
-    # HubSpot ends up in Active.
-    assert "Active integrations:" in summary
-    assert "HubSpot (fully_connected)" in summary
-    # Employment Hero ends up in Inactive with the missing required keys
-    # spelled out, so the LLM can guide the user.
-    assert "Inactive (credentials not configured):" in summary
-    assert "Employment Hero" in summary
-    assert "EMPLOYMENTHERO_OAUTH_CLIENT_ID" in summary
-    assert "EMPLOYMENTHERO_OAUTH_CLIENT_SECRET" in summary
-
-
-def test_summary_active_with_configured_lists_missing_optional(monkeypatch):
-    """When an integration is configured (required met) but missing optional
-    secrets like REFRESH_TOKEN, the prompt should call this out so the LLM
-    can guide the user through the OAuth Connect step."""
-    _seed_registry(monkeypatch, [_eh_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={
-            "EMPLOYMENTHERO_OAUTH_CLIENT_ID": "id",
-            "EMPLOYMENTHERO_OAUTH_CLIENT_SECRET": "secret",
-        },
-    )
-
-    summary = IS.enabled_summary_for_prompt()
-    assert "Active integrations:" in summary
-    assert "configured" in summary
-    assert "EMPLOYMENTHERO_REFRESH_TOKEN" in summary
-
-
-# ---------------------------------------------------------------------------
-# Filter scope construction (used to set GuidanceManager.filter_scope)
-# ---------------------------------------------------------------------------
-
-
-def test_build_guidance_filter_scope_returns_empty_set_when_registry_seeded_but_no_enablement(
-    monkeypatch,
-):
-    """When integrations exist on the deployment but none have credentials,
-    we want guidance retrieval to actively *exclude* integration guidance,
-    not fall through silently.  ``guidance_id in ()`` matches nothing —
-    this is intentional."""
-    _seed_registry(monkeypatch, [_hubspot_row()])
-    IS.recompute_enablement(assistant_id=1, secrets={})
-
-    scope = IS.build_guidance_filter_scope()
-    assert scope == "guidance_id in ()"
-
-
-# ---------------------------------------------------------------------------
-# Cache reset
-# ---------------------------------------------------------------------------
-
-
-def test_reset_session_cache_clears_state(monkeypatch):
-    _seed_registry(monkeypatch, [_hubspot_row()])
-
-    IS.recompute_enablement(
-        assistant_id=1,
-        secrets={"HUBSPOT_PRIVATE_APP_TOKEN": "tok"},
-    )
-    assert IS.get_enabled_integrations() == ["hubspot"]
-
-    IS.reset_session_cache()
-    assert IS.get_enabled_integrations() == []
-    assert IS.get_setup_completeness() == {}
+    # Both slugs should be marked registered (per-step try/except in the
+    # implementation; the broken slug's failure is logged but not
+    # propagated, and registration of guidance still ran).
+    cache = IS._session_cache()
+    assert "broken" in cache["registered_slugs"]
+    assert "hubspot" in cache["registered_slugs"]

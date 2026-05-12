@@ -72,6 +72,23 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 3) Execute (run now)
    - Guards single‑active. If given a numeric id, can run in isolation (detach, followers keep schedule) or as a chain (preserve links). This path does not use an async LLM tool loop or an execute system prompt; it returns an `ActiveQueue` handle (direct delegation for isolated/single‑task).
 
+4) Scheduled activation
+   - User-authored scheduled task rows are projected by Orchestra into machine-facing activation rows.
+   - Communication materializes scheduled live activations as Cloud Tasks targeting the adapters `/scheduled/tasks/due` endpoint.
+   - The live wake reason is delivered to ConversationManager, which asks the slow brain to start with `primitives.tasks.execute(task_id=...)`.
+   - Cloud Scheduler is used for platform maintenance jobs; per-task cadence is delivered by dynamic Cloud Tasks.
+
+5) Trigger activation
+   - Trigger definitions are projected into activation rows and mechanically matched by medium/contact filters when inbound communication events arrive.
+   - Live trigger candidates are surfaced to the slow brain, which performs semantic acceptance and calls `primitives.tasks.execute(task_id=..., trigger_attempt_token=...)` so the run adopts the exact inbound provenance.
+   - Recurring triggerable tasks clone a future triggerable instance before the current instance is marked active.
+
+6) Offline activation
+   - Offline means the hidden headless lane: the live ConversationManager and main actor are not woken.
+   - Offline scheduled activations use Cloud Tasks targeting Communication's offline-dispatch endpoint, which creates a short-lived Unity Kubernetes job.
+   - The job runs `offline_runner.py`, which executes exactly one stored FunctionManager entrypoint through `SingleFunctionActor(headless=True)`.
+   - Offline tasks require an entrypoint. Description-only tasks should remain live unless a later successful run is distilled into a stored function.
+
 
 ### Queue/schedule invariants (enforced centrally)
 
@@ -99,6 +116,13 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 
 - `ActiveTask`: internal steerable handle for a single running task; mirrors status and clears the scheduler’s active pointer when done.
 - `ActiveQueue`: public execution handle that sequences tasks using persisted `next_task` links, supports interjection routing across the queue, and provides a completion summary. Uses direct delegation when the queue is a singleton/isolated.
+
+### Entrypoints and description-driven execution
+
+- `entrypoint` is optional for live tasks. When it is null, execution is actor-driven: a contained child actor run interprets the task name, description, schedule/trigger metadata, repeat pattern, and response policy.
+- `entrypoint` is required for offline tasks because the headless lane executes one stored function without booting the live assistant runtime.
+- Direct `TaskScheduler.execute(...)` needs either a run-scoped actor delegate or an explicitly configured actor. A production live wake normally reaches execution through `Actor.act` and `primitives.tasks.execute(...)`; tests can still inject a simulated actor explicitly.
+- After a successful recurring or triggerable description-driven run, the actor always runs a storage review that considers whether the observed trajectory is stable enough to store as a function. The write is conditional: if future runs still need broad planning or tool discovery, the task remains description-driven. Stored functions may still use focused `reason(...)` calls for bounded judgment.
 
 
 ### Clarification and contacts

@@ -19,7 +19,6 @@ from typing import Dict, List, Any, Optional, Type, Union, Callable, Tuple
 from typing import Literal, overload
 from pydantic import BaseModel
 from dataclasses import dataclass
-from functools import cached_property
 
 from ..settings import SETTINGS
 from ..common.embed_utils import ensure_vector_column
@@ -64,11 +63,12 @@ from ..manager_registry import ManagerRegistry
 from ..common.model_to_fields import model_to_fields
 from .prompt_builders import (
     build_ask_prompt,
+    build_task_execution_request,
+    build_task_run_guidelines,
     build_update_prompt,
 )
 from .base import BaseTaskScheduler
 from ..actor.base import BaseActor
-from ..actor.simulated import SimulatedActor
 from .active_task import ActiveTask
 from .active_queue import ActiveQueue
 
@@ -155,8 +155,9 @@ class TaskScheduler(BaseTaskScheduler):
         Parameters
         ----------
         actor : BaseActor | None, default ``None``
-            Actor used to execute the steps of an active task. When ``None``, a
-            ``SimulatedActor(duration=20)`` is used.
+            Explicit fallback actor used for direct scheduler execution when no
+            run-scoped execution delegate is active. When ``None``, direct
+            execution fails loudly instead of creating an implicit actor.
         rolling_summary_in_prompts : bool, default ``True``
             Whether to inject the rolling activity summary into system prompts sent to the LLM.
 
@@ -296,18 +297,105 @@ class TaskScheduler(BaseTaskScheduler):
         # this cache remains coherent without extra backend reads between tool calls.
         self._num_tasks_cached: Optional[int] = None
 
-    @cached_property
-    def _actor(self) -> BaseActor:
-        if self.__actor is None:
-            self.__actor = SimulatedActor(duration=SETTINGS.task.SIM_ACTOR_DURATION)
-        return self.__actor
-
     def _actor_for_task_run(self) -> BaseActor | None:
         """Return the fallback actor only when task execution is not delegated."""
 
         if current_task_execution_delegate.get() is not None:
             return None
-        return self._actor
+        return self.__actor
+
+    def _build_task_entrypoint_review(
+        self,
+        *,
+        task: Task,
+        reason: ActivatedBy,
+    ) -> dict[str, Any] | None:
+        """Return post-run entrypoint review context for description-driven tasks."""
+
+        if task.entrypoint is not None:
+            return None
+        if task.repeat is None and task.trigger is None:
+            return None
+
+        metadata: dict[str, Any] = {
+            "task_id": task.task_id,
+            "instance_id": task.instance_id,
+            "task_name": task.name,
+            "task_description": task.description,
+            "activation_reason": reason.value,
+            "response_policy": task.response_policy,
+            "schedule": (
+                task.schedule.model_dump(mode="json")
+                if task.schedule is not None
+                else None
+            ),
+            "trigger": (
+                task.trigger.model_dump(mode="json")
+                if task.trigger is not None
+                else None
+            ),
+            "repeat": (
+                [pattern.model_dump(mode="json") for pattern in task.repeat]
+                if task.repeat is not None
+                else None
+            ),
+        }
+
+        def _attach_entrypoint(*, function_id: int, rationale: str) -> dict[str, Any]:
+            return self._attach_entrypoint_to_future_instances(
+                task_id=task.task_id,
+                completed_instance_id=task.instance_id,
+                function_id=function_id,
+                rationale=rationale,
+            )
+
+        return {
+            "metadata": metadata,
+            "attach_entrypoint": _attach_entrypoint,
+        }
+
+    def _attach_entrypoint_to_future_instances(
+        self,
+        *,
+        task_id: int,
+        completed_instance_id: int,
+        function_id: int,
+        rationale: str,
+    ) -> dict[str, Any]:
+        """Attach an entrypoint to future non-terminal instances of a logical task."""
+
+        if function_id < 0:
+            raise ValueError("function_id must be a non-negative integer.")
+        future_logs = self._view.get_rows(
+            filter=(
+                f"task_id == {task_id} and instance_id > {completed_instance_id} "
+                "and entrypoint is None and status not in ('completed','cancelled','failed','active')"
+            ),
+            return_ids_only=False,
+        )
+        if not future_logs:
+            return {
+                "outcome": "no_future_instances",
+                "task_id": task_id,
+                "completed_instance_id": completed_instance_id,
+                "function_id": function_id,
+                "rationale": rationale,
+            }
+
+        log_ids = [log.id for log in future_logs]
+        self._write_log_entries(
+            logs=log_ids,
+            entries={"entrypoint": int(function_id)},
+        )
+        return {
+            "outcome": "attached",
+            "task_id": task_id,
+            "patched_instance_ids": [
+                log.entries.get("instance_id") for log in future_logs
+            ],
+            "function_id": int(function_id),
+            "rationale": rationale,
+        }
 
     # ------------------------------ Provisioning ----------------------------- #
     def warm_embeddings(self) -> None:
@@ -746,6 +834,13 @@ class TaskScheduler(BaseTaskScheduler):
             else:
                 reason = ActivatedBy.explicit
 
+        fallback_actor = self._actor_for_task_run()
+        if fallback_actor is None and current_task_execution_delegate.get() is None:
+            raise RuntimeError(
+                "TaskScheduler.execute requires a run-scoped actor delegate or an explicit actor. "
+                "Description-driven tasks should be executed from Actor.act via primitives.tasks.execute(...).",
+            )
+
         task_run_source_type = (
             "triggered"
             if trigger_attempt_token
@@ -770,12 +865,9 @@ class TaskScheduler(BaseTaskScheduler):
             unlink_from_prev=unlink_from_prev,
         )
 
-        # Start task execution (delegated to the current execution environment when available)
-        # and wrap the resulting handle for Tasks-table synchronization.
-
         handle = await ActiveTask.create(
-            self._actor_for_task_run(),
-            task_description=task.description or task.name,
+            fallback_actor,
+            task_description=build_task_execution_request(task),
             _parent_chat_context=parent_chat_context,
             _clarification_up_q=clarification_up_q,
             _clarification_down_q=clarification_down_q,
@@ -784,6 +876,11 @@ class TaskScheduler(BaseTaskScheduler):
             scheduler=self,
             entrypoint=task.entrypoint,
             task_run_provenance=task_run_provenance,
+            task_entrypoint_review=self._build_task_entrypoint_review(
+                task=task,
+                reason=reason,
+            ),
+            task_guidelines=build_task_run_guidelines(task, reason),
         )
 
         self._active_task = TaskScheduler.ActivePointer(

@@ -18,7 +18,11 @@ from typing import Optional, Dict, TYPE_CHECKING, List, Any
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
-from unity.common.task_execution_context import current_task_execution_delegate
+from unity.common.task_execution_context import (
+    PostRunReviewContext,
+    current_post_run_review_context,
+    current_task_execution_delegate,
+)
 from unity.common._async_tool.messages import forward_handle_call
 from .machine_state import (
     TaskRunProvenance,
@@ -167,6 +171,8 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         entrypoint: Optional[int] = None,
         task_run_reference: Optional[TaskRunReference] = None,
         task_run_provenance: Optional[TaskRunProvenance] = None,
+        task_entrypoint_review: Optional[dict[str, Any]] = None,
+        task_guidelines: Optional[str] = None,
     ) -> "ActiveTask":
         """
         Create an ActiveTask by starting work through a delegate or fallback actor.
@@ -177,44 +183,63 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         because execution is routed through the delegate instead.
         """
         delegate = current_task_execution_delegate.get()
+        review_token = None
+        if task_entrypoint_review is not None:
+            review_token = current_post_run_review_context.set(
+                PostRunReviewContext(
+                    display_label="Storing reusable workflow",
+                    instructions=(
+                        "Review the successful task trajectory and decide whether "
+                        "a stable reusable workflow should be stored and attached "
+                        "to future scheduled or triggered task instances."
+                    ),
+                    extensions={"task_entrypoint_review": task_entrypoint_review},
+                ),
+            )
         try:
-            if delegate is not None:
-                actor_steerable_handle = await delegate.start_task_run(
-                    task_description=task_description,
-                    entrypoint=entrypoint,
-                    parent_chat_context=_parent_chat_context,
-                    clarification_up_q=_clarification_up_q,
-                    clarification_down_q=_clarification_down_q,
-                )
-            else:
-                if fallback_actor is None:
-                    raise RuntimeError(
-                        "Task execution requires an actor when no run-scoped delegate is active.",
+            try:
+                if delegate is not None:
+                    actor_steerable_handle = await delegate.start_task_run(
+                        task_description=task_description,
+                        entrypoint=entrypoint,
+                        parent_chat_context=_parent_chat_context,
+                        clarification_up_q=_clarification_up_q,
+                        clarification_down_q=_clarification_down_q,
+                        guidelines=task_guidelines,
                     )
-                actor_steerable_handle = await fallback_actor.act(
-                    task_description,
-                    _parent_chat_context=_parent_chat_context,
-                    _clarification_up_q=_clarification_up_q,
-                    _clarification_down_q=_clarification_down_q,
-                    # Always pass entrypoint to the actor so it can immediately run the function
-                    entrypoint=entrypoint,
-                    persist=False,  # Scheduler-run plans should complete instead of pausing for interjection
-                )
-        except Exception as exc:
-            if task_run_reference is not None:
-                await asyncio.to_thread(
-                    update_task_run_record,
-                    task_run_reference,
-                    {
-                        "state": "failed",
-                        "completed_at": _now_iso(),
-                        "error": _truncate_task_run_text(str(exc)),
-                        "result_summary": _truncate_task_run_text(
-                            f"Task failed before execution fully started: {type(exc).__name__}({exc})",
-                        ),
-                    },
-                )
-            raise
+                else:
+                    if fallback_actor is None:
+                        raise RuntimeError(
+                            "Task execution requires an actor when no run-scoped delegate is active.",
+                        )
+                    actor_steerable_handle = await fallback_actor.act(
+                        task_description,
+                        guidelines=task_guidelines,
+                        _parent_chat_context=_parent_chat_context,
+                        _clarification_up_q=_clarification_up_q,
+                        _clarification_down_q=_clarification_down_q,
+                        # Always pass entrypoint to the actor so it can immediately run the function
+                        entrypoint=entrypoint,
+                        persist=False,  # Scheduler-run plans should complete instead of pausing for interjection
+                    )
+            except Exception as exc:
+                if task_run_reference is not None:
+                    await asyncio.to_thread(
+                        update_task_run_record,
+                        task_run_reference,
+                        {
+                            "state": "failed",
+                            "completed_at": _now_iso(),
+                            "error": _truncate_task_run_text(str(exc)),
+                            "result_summary": _truncate_task_run_text(
+                                f"Task failed before execution fully started: {type(exc).__name__}({exc})",
+                            ),
+                        },
+                    )
+                raise
+        finally:
+            if review_token is not None:
+                current_post_run_review_context.reset(review_token)
         materialized_task_run_reference = task_run_reference
         if materialized_task_run_reference is None and task_run_provenance is not None:
             try:

@@ -32,6 +32,8 @@ from unity.conversation_manager.domains.renderer import (
     _get_assistant_email_role,
 )
 
+pytestmark = pytest.mark.no_unify_context
+
 # =============================================================================
 # Test Fixtures
 # =============================================================================
@@ -787,6 +789,48 @@ class TestRenderStateWithTracking:
         msg = next(m for m in result.messages if "Hello there!" in m.rendered)
         assert msg.contact_id == 1
         assert msg.timestamp == ts1
+
+    def test_render_state_uses_shared_assistant_timezone_helper(
+        self,
+        renderer,
+        contact_index,
+        notification_bar,
+        monkeypatch,
+    ):
+        """Active conversation rendering gets assistant timezone from common helper."""
+        from unity.conversation_manager.cm_types import Medium
+
+        calls = []
+
+        def fake_get_assistant_timezone():
+            calls.append(True)
+            return "America/New_York"
+
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.renderer.get_assistant_timezone",
+            fake_get_assistant_timezone,
+        )
+        contact_index._fallback_contacts[1]["timezone"] = "America/Los_Angeles"
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        contact_index.push_message(
+            contact_id=1,
+            sender_name="Alice",
+            thread_name=Medium.SMS_MESSAGE,
+            message_content="Hello there!",
+            timestamp=ts1,
+            role="user",
+        )
+
+        result = renderer.render_state(
+            contact_index,
+            notification_bar,
+            in_flight_actions={},
+            last_snapshot=datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc),
+        )
+
+        assert calls == [True]
+        assert "America/New_York" in result.full_render
+        assert "America/Los_Angeles" in result.full_render
 
     def test_tracks_notifications(self, renderer, contact_index, notification_bar):
         """Notifications are tracked with identity."""

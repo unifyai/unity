@@ -357,6 +357,22 @@ class TasksStore:
             return [TasksStore._norm(x) for x in v]
         return v
 
+    @staticmethod
+    def _with_explicit_task_types(entries: Any) -> Any:
+        if isinstance(entries, list):
+            return [TasksStore._with_explicit_task_types(entry) for entry in entries]
+        if not isinstance(entries, dict):
+            return entries
+        if entries.get("schedule") is None:
+            return entries
+        out = dict(entries)
+        explicit_types = dict(out.get("explicit_types") or {})
+        schedule_types = dict(explicit_types.get("schedule") or {})
+        schedule_types["type"] = "dict"
+        explicit_types["schedule"] = schedule_types
+        out["explicit_types"] = explicit_types
+        return out
+
     # ------------------------------- Writes --------------------------------
     def update(
         self,
@@ -392,7 +408,9 @@ class TasksStore:
                 ]
             return value
 
-        norm_entries = _strip_nones(TasksStore._norm(entries), top_level=True)
+        norm_entries = TasksStore._with_explicit_task_types(
+            _strip_nones(TasksStore._norm(entries), top_level=True),
+        )
         return unify.update_logs(
             logs=logs,
             context=self._ctx,
@@ -401,7 +419,7 @@ class TasksStore:
         )
 
     def log(self, *, entries: Dict[str, Any], new: bool = True) -> unify.Log:
-        norm_entries = TasksStore._norm(entries)
+        norm_entries = TasksStore._with_explicit_task_types(TasksStore._norm(entries))
         # Create with expanded fields so auto-counting applies when ids are omitted
         return unity_log(
             project=self._project,
@@ -420,7 +438,10 @@ class TasksStore:
         with auto-incremented row identifiers.
         """
 
-        normalised = [{**TasksStore._norm(e)} for e in entries_list]
+        normalised = [
+            TasksStore._with_explicit_task_types({**TasksStore._norm(e)})
+            for e in entries_list
+        ]
         try:
             return unity_create_logs(
                 project=self._project,

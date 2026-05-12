@@ -71,6 +71,12 @@ class _LimitCheckResult:
     limit_set_at: Optional[str] = None  # ISO format timestamp
     organization_id: Optional[int] = None  # For member limits
     credit_balance: Optional[float] = None  # Billing account credit balance
+    # Billing mode of the underlying account: "CREDITS" (pre-paid wallet,
+    # subject to the credit_balance gate) or "METERED" (invoiced
+    # monthly, gate must be skipped). Defaults to None when the spend
+    # endpoint didn't surface the field — older Orchestra builds — in
+    # which case we fall back to the legacy CREDITS-mode behaviour.
+    billing_mode: Optional[str] = None
 
 
 def _get_current_month(timezone: str = "UTC") -> str:
@@ -95,9 +101,14 @@ def _parse_spend_result(
     spend = data.get("cumulative_spend", 0)
     limit_set_at = data.get("limit_set_at")
     credit_balance = data.get("credit_balance")
+    billing_mode = data.get("billing_mode")
 
     if limit is None:
-        return _LimitCheckResult(exceeded=False, credit_balance=credit_balance)
+        return _LimitCheckResult(
+            exceeded=False,
+            credit_balance=credit_balance,
+            billing_mode=billing_mode,
+        )
 
     return _LimitCheckResult(
         exceeded=spend >= limit,
@@ -109,6 +120,7 @@ def _parse_spend_result(
         limit_set_at=limit_set_at,
         organization_id=organization_id,
         credit_balance=credit_balance,
+        billing_mode=billing_mode,
     )
 
 
@@ -325,6 +337,7 @@ async def check_spending_limits_callback(
             return None
 
     credit_balance: Optional[float] = None
+    billing_mode: Optional[str] = None
 
     for result in results:
         if isinstance(result, Exception):
@@ -333,6 +346,8 @@ async def check_spending_limits_callback(
 
         if credit_balance is None and result.credit_balance is not None:
             credit_balance = result.credit_balance
+        if billing_mode is None and result.billing_mode is not None:
+            billing_mode = result.billing_mode
 
         if result.exceeded:
             current = (
@@ -355,7 +370,13 @@ async def check_spending_limits_callback(
                 entity_name=result.entity_name,
             )
 
-    if credit_balance is not None and credit_balance <= 0:
+    # Credit-balance gate. METERED accounts pay by monthly invoice via
+    # ``monthly_metered_invoicer`` and intentionally have a zero wallet
+    # balance (``deduct_credits`` doesn't mutate it on METERED), so the
+    # legacy gate would block every call. Skip it for METERED, keep it
+    # for CREDITS (and for the no-billing-mode-yet legacy case so we
+    # don't loosen the gate during a partial Orchestra rollout).
+    if billing_mode != "METERED" and credit_balance is not None and credit_balance <= 0:
         return LimitCheckResponse(
             allowed=False,
             reason=(

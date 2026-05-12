@@ -8,17 +8,15 @@ early in prompts and referenced throughout.
 
 from __future__ import annotations
 
+import json
 from typing import Dict, Callable, Union, List
 
 from .types.task import Task
+from .types.activated_by import ActivatedBy
 from ..common.prompt_helpers import (
-    clarification_guidance,
-    sig_dict,
-    now,
     tool_name,
     require_tools,
     get_custom_columns,
-    # New standardized composer utilities
     PromptSpec,
     PromptParts,
     compose_system_prompt,
@@ -31,6 +29,69 @@ from ..common.prompt_helpers import (
 # ─────────────────────────────────────────────────────────────────────────────
 # Public builders
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_task_execution_request(task: Task) -> str:
+    """Build the actor-facing request for one task instance."""
+
+    lines = [
+        "Execute this TaskScheduler task as a contained task run.",
+        "",
+        f"Task id: {task.task_id}",
+        f"Instance id: {task.instance_id}",
+        f"Task name: {task.name}",
+        "",
+        "Task description:",
+        task.description or task.name,
+    ]
+    if task.response_policy:
+        lines.extend(["", "Task response policy:", task.response_policy])
+    if task.schedule is not None:
+        lines.extend(
+            [
+                "",
+                "Schedule metadata:",
+                json.dumps(task.schedule.model_dump(mode="json"), default=str),
+            ],
+        )
+    if task.trigger is not None:
+        lines.extend(
+            [
+                "",
+                "Trigger metadata:",
+                json.dumps(task.trigger.model_dump(mode="json"), default=str),
+            ],
+        )
+    if task.repeat is not None:
+        lines.extend(
+            [
+                "",
+                "Repeat metadata:",
+                json.dumps(
+                    [r.model_dump(mode="json") for r in task.repeat],
+                    default=str,
+                ),
+            ],
+        )
+    return "\n".join(lines)
+
+
+def build_task_run_guidelines(task: Task, reason: ActivatedBy) -> str:
+    """Build execution guidelines for a contained actor task run."""
+
+    return (
+        "You are executing exactly one TaskScheduler task. Treat the task "
+        "name, description, schedule, trigger, repeat, and response policy "
+        "as the authoritative instruction for this run. Complete the task "
+        "itself; do not create another task unless the task description "
+        "explicitly asks you to create or modify tasks. If this task has no "
+        "stored entrypoint, interpret the natural-language description "
+        "directly using the available primitives and functions. Keep any "
+        "progress notifications focused on this task run.\n\n"
+        f"Activation reason: {reason.value}\n"
+        f"Task id: {task.task_id}\n"
+        f"Instance id: {task.instance_id}"
+    )
 
 
 def build_ask_prompt(
@@ -361,6 +422,21 @@ def build_update_prompt(
     usage_examples_lines.extend(
         [
             "",
+            "Recurring and triggered workflows",
+            "---------------------------------",
+            '• For requests like "do this every Monday" or "send this report daily", create a live scheduled task with `schedule.start_at` for the first run and `repeat` for the cadence.',
+            "• For requests like \"whenever Alice emails about invoices\", create a live triggerable task with `trigger` and status 'triggerable'. Use contact lookup first when the trigger references a person.",
+            "• A scheduled/triggered live task may have `entrypoint=None`. This is the normal default for newly described natural-language workflows: execution will wake a contained actor run that interprets the description.",
+            "• Do not create an entrypoint function merely because a recurring task is being created. Entrypoint creation should follow an explicit user request or a successful run that has been reviewed as stable enough to store.",
+            "• If the user asks to repeat a workflow that just succeeded interactively and also wants hidden/offline execution, the workflow must first be stored as a function-backed skill; offline tasks require a numeric `entrypoint`.",
+            "• A stored entrypoint can still call `reason(...)` for bounded semantic judgment such as summarization, classification, ranking, drafting, or source selection. Keep broad planning and changing tool discovery actor-driven.",
+            "",
+            "Repeat field examples",
+            "---------------------",
+            "• Daily at a fixed time: set `schedule.start_at` to the first due datetime and `repeat=[{'frequency':'daily','interval':1}]`.",
+            "• Weekly on Monday at 12:00 UTC: set first `schedule.start_at` to the next Monday 12:00 UTC and `repeat=[{'frequency':'weekly','interval':1,'weekdays':['MO'],'time_of_day':'12:00'}]`.",
+            "• End after N runs: include `count`. End after a date: include `until`.",
+            "",
             "Schedule/Queue invariants (must-follow)",
             "---------------------------------------",
             "• If you provide a schedule with start_at on the head (prev_task is None), status must be 'scheduled' – never 'queued'.",
@@ -385,6 +461,7 @@ def build_update_prompt(
             "Triggers vs Schedules",
             "----------------------",
             f"• A task with a `trigger` must be in state 'triggerable'. Use `{update_task_fname}(task_id=<id>, trigger=...)` to add/remove triggers. Do not set `start_at` on trigger‑based tasks.",
+            "• `schedule` and `trigger` are mutually exclusive. Use `repeat` with `schedule` for cadence-based tasks; use `trigger` for inbound-event tasks.",
         ],
     )
 
