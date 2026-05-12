@@ -246,6 +246,24 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         If the task is to be started *immediately*, then just put the current datetime as the `start_at`,
         and omit the deadline if one is not specified.
 
+        Entrypoints, live tasks, and offline tasks
+        -----------------------------------------
+        A live scheduled or triggered task may start with ``entrypoint=None``.
+        In that case, execution wakes a contained actor run that interprets the
+        task's natural-language name/description and metadata. This is the
+        normal default for newly described recurring workflows.
+
+        Offline tasks run in the hidden headless lane and must have a numeric
+        entrypoint before ``offline=True`` is set. Do not create a description-only
+        offline task.
+
+        Do not create an entrypoint function merely because a new recurring task
+        was described. Entrypoint persistence should follow an explicit user
+        request or a successful execution reviewed as stable enough to store.
+        Stored functions may still use focused ``reason(...)`` calls for bounded
+        semantic judgment, but open-ended planning/tool discovery should remain
+        actor-driven.
+
         All parameters mirror :pymeth:`ask`; refer there for detailed
         semantics.
         """
@@ -290,11 +308,12 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
 
         Execution delegation
         --------------------
-        When a run-scoped execution environment is available, task execution may be
-        delegated to that environment to maintain context continuity. Otherwise,
-        execution proceeds through the scheduler's configured execution strategy.
-        In both cases, a live steerable handle is returned that supports the full
-        steering interface.
+        When a run-scoped execution environment is available, task execution is
+        delegated through that environment while keeping one returned handle per
+        task run. A task without an entrypoint is executed by a contained actor
+        run dedicated to that task. Without a run-scoped delegate, direct
+        execution requires an explicitly configured actor; otherwise execution
+        fails loudly instead of silently using a simulated fallback.
 
         Returns
         -------
