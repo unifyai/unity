@@ -901,6 +901,38 @@ async def execute_task_by_description_with_guidance(description: str) -> str:
 '''
 
 
+def get_primitives_task_recurring_creation_example() -> str:
+    """Example: creating durable scheduled and triggered tasks."""
+
+    return """
+# Example: durable recurring and triggered workflow creation
+async def create_description_driven_recurring_tasks() -> str:
+    # User: "Every Monday at 12:00 UTC, research AI/agentic AI work from
+    # the last week and email me a summary document."
+    scheduled = await primitives.tasks.update(
+        "Create a live scheduled recurring task. Name: Weekly AI research report. "
+        "Description: Every Monday at 12:00 UTC, research important AI and agentic AI "
+        "work from the previous week, summarize the most important developments, "
+        "create a concise document, and email it to me. Set the first start_at to "
+        "the next Monday 12:00 UTC and repeat weekly on Monday at 12:00 UTC. "
+        "Leave entrypoint as null unless there is already a proven stored function. "
+        "Do not mark it offline."
+    )
+    scheduled_result = await scheduled.result()
+
+    # User: "Whenever Alice emails about invoices, summarize it and draft a reply."
+    triggered = await primitives.tasks.update(
+        "Create a live triggerable task. Name: Alice invoice email follow-up. "
+        "Description: When Alice emails about invoices, summarize the inbound email, "
+        "identify what action is needed, and draft a reply for review. Resolve Alice "
+        "to the right contact id before setting trigger filters. Leave entrypoint as "
+        "null; this should wake a live actor to interpret the description."
+    )
+    triggered_result = await triggered.result()
+    return f"{scheduled_result}\\n{triggered_result}"
+"""
+
+
 def get_primitives_dynamic_methods_example() -> str:
     """Example: using dynamic handle methods."""
 
@@ -1929,6 +1961,7 @@ def get_example_function_map() -> dict[str, callable]:
         "get_primitives_contact_update_example": get_primitives_contact_update_example,
         # Tasks
         "get_primitives_task_execute_example": get_primitives_task_execute_example,
+        "get_primitives_task_recurring_creation_example": get_primitives_task_recurring_creation_example,
         "get_primitives_dynamic_methods_example": get_primitives_dynamic_methods_example,
         # Knowledge
         "get_primitives_knowledge_ask_example": get_primitives_cross_manager_example,

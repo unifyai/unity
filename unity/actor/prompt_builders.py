@@ -464,6 +464,34 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     straight to `compress_context`.
 """).strip()
 
+_TASK_SCHEDULING_WORKFLOWS = textwrap.dedent("""
+    ### Durable Scheduled And Triggered Workflows
+
+    When the user asks for work to happen later, repeatedly, or in response to
+    future inbound events, represent that durable intent with the task
+    primitives rather than only doing the work once.
+
+    Use `primitives.tasks.update(...)` for requests like:
+    - "Repeat this every Monday at 12:00 UTC"
+    - "Send me this report every day"
+    - "Whenever Alice emails about invoices, summarize it and draft a reply"
+    - "Turn what we just did into a recurring workflow"
+
+    Natural-language recurring tasks should normally start as live
+    description-driven tasks with `entrypoint=None`. The future due wake will
+    call `primitives.tasks.execute(task_id=...)`; execution then runs a
+    contained child actor dedicated to that task. Do not write and attach an
+    untested entrypoint function at task creation unless the user explicitly
+    requested a stored function-backed workflow.
+
+    If a workflow has just been completed interactively and the user wants it
+    repeated, include the relevant context in the task description. Use
+    `store_skills` or direct FunctionManager writes only when the user asks to
+    store the workflow, or when the completed trajectory clearly reveals a
+    reusable function worth saving. Offline tasks require a stored entrypoint;
+    description-only recurring work should remain live.
+""").strip()
+
 
 _EXTERNAL_APP_INTEGRATION = textwrap.dedent("""
     ### External App Integration
@@ -745,12 +773,15 @@ def _build_code_act_rules_and_examples(
         _has_computer = any(
             k.startswith("primitives.computer.") for k in env.get_tools()
         )
+        _has_tasks = any(k.startswith("primitives.tasks.") for k in env.get_tools())
         _has_state = any(
             k.startswith("primitives.")
             and not k.startswith("primitives.computer.")
             and not k.startswith("primitives.actor.")
             for k in env.get_tools()
         )
+        if _has_tasks:
+            parts.append(_TASK_SCHEDULING_WORKFLOWS)
         if _has_computer and _has_state:
             from unity.actor.prompt_examples import get_mixed_examples
 
