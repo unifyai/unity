@@ -41,6 +41,8 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
 )
 from unity.common.task_execution_context import (
+    PostRunReviewContext,
+    current_post_run_review_context,
     TaskExecutionDelegate,
     current_task_execution_delegate,
 )
@@ -365,14 +367,16 @@ class _CodeActTaskExecutionDelegate:
         """Start one task run using this actor's CodeAct execution machinery."""
 
         _ = images
+        task_guidelines = kwargs.pop("guidelines", None)
         return await self._actor.act(
             task_description,
+            guidelines=task_guidelines,
             _parent_chat_context=parent_chat_context,
             _clarification_up_q=clarification_up_q,
             _clarification_down_q=clarification_down_q,
             entrypoint=entrypoint,
             persist=False,
-            _reuse_actor_slot=True,
+            _reuse_actor_slot=entrypoint is not None,
             **kwargs,
         )
 
@@ -380,6 +384,11 @@ class _CodeActTaskExecutionDelegate:
 # ---------------------------------------------------------------------------
 # Shared storage-review prompt sections
 # ---------------------------------------------------------------------------
+
+_DEFAULT_STORAGE_REVIEW_LABEL = "Storing reusable skills"
+_DEFAULT_STORAGE_REVIEW_INSTRUCTIONS = (
+    "Review the trajectory and store any reusable functions and compositional guidance."
+)
 
 _STORAGE_WHAT_CAN_BE_STORED = (
     "## What Can Be Stored\n\n"
@@ -623,6 +632,7 @@ def _build_storage_tools(
     actor: "CodeActActor",
     ask_tools: dict,
     completed_tool_metadata: dict | None = None,
+    task_entrypoint_review: dict[str, Any] | None = None,
 ) -> tuple[Dict[str, Callable], list[str]]:
     """Build the tool dict shared by both post-processing and proactive storage loops.
 
@@ -801,6 +811,45 @@ def _build_storage_tools(
         tools["pause_inner_storage"] = pause_inner_storage
         tools["resume_inner_storage"] = resume_inner_storage
 
+    if task_entrypoint_review:
+        attach_entrypoint = task_entrypoint_review.get("attach_entrypoint")
+        metadata = dict(task_entrypoint_review.get("metadata") or {})
+        task_id = metadata.get("task_id")
+        instance_id = metadata.get("instance_id")
+        task_name = metadata.get("task_name") or metadata.get("name") or "the task"
+
+        async def attach_entrypoint_to_recurring_task(
+            function_id: int,
+            rationale: str,
+        ) -> str:
+            """Attach a stored FunctionManager entrypoint to future runs of this task.
+
+            Use this only after you have reviewed the completed trajectory and
+            decided that the stored function captures a stable reusable workflow
+            for future scheduled or triggered instances. Leaving the task
+            description-driven is valid when future runs still need broad
+            planning or tool discovery.
+            """
+
+            if not callable(attach_entrypoint):
+                return "No task entrypoint attachment hook is available."
+            return str(
+                attach_entrypoint(
+                    function_id=int(function_id),
+                    rationale=str(rationale),
+                ),
+            )
+
+        attach_entrypoint_to_recurring_task.__doc__ += (
+            f"\n\nCurrent task: {task_name} "
+            f"(task_id={task_id}, completed instance_id={instance_id}). "
+            "The tool only patches future non-terminal instances; it never "
+            "rewrites the completed run."
+        )
+        tools["attach_entrypoint_to_recurring_task"] = (
+            attach_entrypoint_to_recurring_task
+        )
+
     return tools, storage_active_lines
 
 
@@ -819,6 +868,7 @@ def _start_storage_check_loop(
     parent_lineage: list[str] | None = None,
     stop_reason: str | None = None,
     proactive_summaries: list[str] | None = None,
+    post_run_review_context: PostRunReviewContext | None = None,
 ) -> "AsyncToolLoopHandle | None":
     """Start a loop that reviews a completed trajectory for reusable knowledge.
 
@@ -837,11 +887,17 @@ def _start_storage_check_loop(
     gm = actor.guidance_manager
     if fm is None or gm is None:
         return None
+    task_entrypoint_review = (
+        post_run_review_context.extensions.get("task_entrypoint_review")
+        if post_run_review_context is not None
+        else None
+    )
 
     tools, storage_active_lines = _build_storage_tools(
         actor=actor,
         ask_tools=ask_tools,
         completed_tool_metadata=completed_tool_metadata,
+        task_entrypoint_review=task_entrypoint_review,
     )
 
     # ── Build prompt ──────────────────────────────────────────────────
@@ -926,6 +982,31 @@ def _start_storage_check_loop(
             "be worth storing.\n\n"
         )
 
+    task_entrypoint_section = ""
+    if task_entrypoint_review:
+        metadata = dict(task_entrypoint_review.get("metadata") or {})
+        metadata_json = json.dumps(metadata, indent=2, default=str)
+        task_entrypoint_section = (
+            "## Recurring Task Entrypoint Review\n\n"
+            "This trajectory completed a scheduled or triggered task that had "
+            "no stored entrypoint when it ran. You must explicitly consider "
+            "whether the successful run revealed a stable reusable workflow "
+            "worth attaching to future task instances.\n\n"
+            "No-op is valid: keep the task description-driven if future runs "
+            "need broad planning, changing tool discovery, or open-ended "
+            "judgment. If the workflow can be stabilized as code, it may still "
+            "use focused `reason(...)` calls for bounded semantic substeps "
+            "such as summarization, classification, ranking, drafting, or "
+            "source selection.\n\n"
+            "If you store a FunctionManager function and decide it is stable "
+            "enough for future runs, call "
+            "`attach_entrypoint_to_recurring_task(function_id=..., "
+            "rationale=...)`. Do not call that tool unless the function has "
+            "already been persisted and you have the numeric function_id.\n\n"
+            "Task metadata:\n"
+            f"```json\n{metadata_json}\n```\n\n"
+        )
+
     system_prompt = (
         "You are a skill librarian. A CodeActActor has just completed a task. "
         "Your job is to review the execution trajectory and decide whether "
@@ -936,6 +1017,7 @@ def _start_storage_check_loop(
         "## Final Result\n\n"
         f"{original_result}\n\n"
         f"{stop_context_section}"
+        f"{task_entrypoint_section}"
         f"{inner_storage_section}"
         f"{proactive_storage_section}"
         f"{_STORAGE_WHAT_CAN_BE_STORED}"
@@ -1095,9 +1177,11 @@ class _StorageCheckHandle(SteerableToolHandle):
         *,
         inner: "AsyncToolLoopHandle",
         actor: "CodeActActor",
+        post_run_review_context: PostRunReviewContext | None = None,
     ) -> None:
         self._inner = inner
         self._actor = actor
+        self._post_run_review_context = post_run_review_context
         self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
         self._task_done_event = asyncio.Event()
         self._completion_event = asyncio.Event()
@@ -1167,9 +1251,11 @@ class _StorageCheckHandle(SteerableToolHandle):
 
             try:
                 self._original_result = await self._inner.result()
+                task_succeeded = not self._stopped
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                task_succeeded = False
                 self._original_result = (
                     f"Error: inner task failed: {type(exc).__name__}: {exc}"
                 )
@@ -1230,14 +1316,27 @@ class _StorageCheckHandle(SteerableToolHandle):
             _sc_suffix_token = _PENDING_LOOP_SUFFIX.set(_sc_suffix)
 
             try:
+                active_review_context = (
+                    self._post_run_review_context if task_succeeded else None
+                )
+                review_display_label = (
+                    active_review_context.display_label
+                    if active_review_context is not None
+                    else _DEFAULT_STORAGE_REVIEW_LABEL
+                )
+                review_instructions = (
+                    active_review_context.instructions
+                    if active_review_context is not None
+                    else _DEFAULT_STORAGE_REVIEW_INSTRUCTIONS
+                )
                 await publish_manager_method_event(
                     _sc_call_id,
                     "CodeActActor",
                     "StorageCheck",
                     phase="incoming",
-                    display_label="Storing reusable skills",
+                    display_label=review_display_label,
                     hierarchy=_sc_hierarchy,
-                    instructions="Review the trajectory and store any reusable functions and compositional guidance.",
+                    instructions=review_instructions,
                 )
 
                 proactive_summaries: list[str] = []
@@ -1259,6 +1358,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                     parent_lineage=_sc_parent_lineage,
                     stop_reason=self._stop_reason,
                     proactive_summaries=proactive_summaries or None,
+                    post_run_review_context=active_review_context,
                 )
 
                 if storage_handle is None:
@@ -1267,7 +1367,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                         "CodeActActor",
                         "StorageCheck",
                         phase="outgoing",
-                        display_label="Storing reusable skills",
+                        display_label=review_display_label,
                         hierarchy=_sc_hierarchy,
                     )
                 else:
@@ -1284,7 +1384,7 @@ class _StorageCheckHandle(SteerableToolHandle):
                         "CodeActActor",
                         "StorageCheck",
                         phase="outgoing",
-                        display_label="Storing reusable skills",
+                        display_label=review_display_label,
                         hierarchy=_sc_hierarchy,
                     )
             finally:
@@ -4063,9 +4163,15 @@ class CodeActActor(BaseCodeActActor):
         # Update agent context with handle reference
         new_ctx.handle = handle
 
+        post_run_review_context = current_post_run_review_context.get()
+
         # Wrap in StorageCheckHandle for post-completion function review.
-        if effective_can_store:
-            handle = _StorageCheckHandle(inner=handle, actor=self)
+        if effective_can_store or post_run_review_context is not None:
+            handle = _StorageCheckHandle(
+                inner=handle,
+                actor=self,
+                post_run_review_context=post_run_review_context,
+            )
 
         return handle
 
