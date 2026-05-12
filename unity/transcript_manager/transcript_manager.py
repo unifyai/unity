@@ -434,7 +434,7 @@ class TranscriptManager(BaseTranscriptManager):
             messages may be logged asynchronously in any order.
         destination : str | None, default None
             Internal routing destination for the transcript rows. Omitted means
-            personal. Session synthesis owns this value for implicit writes.
+            personal.
 
         Notes
         -----
@@ -1560,7 +1560,6 @@ class TranscriptManager(BaseTranscriptManager):
         """Log the first message of a brand-new exchange and set initial metadata.
 
         Returns (exchange_id, message_id) for the newly created exchange and message.
-        The destination is managed internally by session synthesis for implicit writes.
         """
         try:
             transcripts_context = self._transcripts_context_for_destination(destination)

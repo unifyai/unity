@@ -490,6 +490,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             List[Union[Dict[str, Any], Message]],
         ],
         synchronous: bool = False,
+        destination: str | None = None,
     ) -> List[Message]:
         """
         Simulated message logging: validates inputs, assigns ids, and stores in-memory.
@@ -500,6 +501,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             {
                 "count": (len(messages) if isinstance(messages, list) else 1),
                 "synchronous": synchronous,
+                "destination": destination,
             },
         )
 
@@ -805,6 +807,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
+        destination: str | None = None,
     ) -> tuple[int, int]:
         """
         Start a new exchange, assign a fresh id, log the first message, and upsert metadata.
@@ -836,7 +839,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         # Log first message
         payload["exchange_id"] = new_exid
         # Let log_messages validate and store
-        logged_msgs = self.log_messages(payload, synchronous=True)
+        logged_msgs = self.log_messages(
+            payload,
+            synchronous=True,
+            destination=destination,
+        )
         tm_message_id = logged_msgs[0].message_id if logged_msgs else -1
         if sched:
             label, cid, t0 = sched

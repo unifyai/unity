@@ -1085,6 +1085,9 @@ async def log_message(
     # publish transcript on a separate thread
     def _publish_transcript() -> int:
         global _pre_hire_exchange_id
+        implicit_destinations = ContextRegistry.implicit_shared_destinations()
+        primary_destination = implicit_destinations[0]
+        message_ids_by_destination: dict[str | None, int] = {}
         try:
             nonlocal exchange_id
             LOGGER.debug(
@@ -1148,8 +1151,25 @@ async def log_message(
                 exchange_id, tm_message_id = (
                     cm.transcript_manager.log_first_message_in_new_exchange(
                         msg_data,
+                        destination=primary_destination,
                     )
                 )
+                if tm_message_id is not None:
+                    message_ids_by_destination[primary_destination] = tm_message_id
+                for destination in implicit_destinations[1:]:
+                    replicated_message = {
+                        **msg_data,
+                        "exchange_id": exchange_id,
+                    }
+                    replica_logs = cm.transcript_manager.log_messages(
+                        replicated_message,
+                        synchronous=True,
+                        destination=destination,
+                    )
+                    if isinstance(replica_logs, list) and replica_logs:
+                        replica_message_id = replica_logs[0].message_id
+                        if replica_message_id is not None:
+                            message_ids_by_destination[destination] = replica_message_id
                 # Cache the exchange_id for subsequent pre-hire messages in the batch
                 if isinstance(event, PreHireMessage):
                     _pre_hire_exchange_id = exchange_id
@@ -1169,15 +1189,28 @@ async def log_message(
                     msg_data["attachments"] = attachments
                 if metadata:
                     msg_data["metadata"] = metadata
-                logged_msgs = cm.transcript_manager.log_messages(
-                    msg_data,
-                    synchronous=True,
-                )
-                if logged_msgs:
-                    tm_message_id = logged_msgs[0].message_id
+                for destination in implicit_destinations:
+                    logged_msgs = cm.transcript_manager.log_messages(
+                        msg_data,
+                        synchronous=True,
+                        destination=destination,
+                    )
+                    if not logged_msgs:
+                        continue
+                    destination_message_id = logged_msgs[0].message_id
+                    if destination_message_id is None:
+                        continue
+                    message_ids_by_destination[destination] = destination_message_id
+                    if tm_message_id is None:
+                        tm_message_id = destination_message_id
 
             if local_message_id is not None and tm_message_id is not None:
                 cm._local_to_global_message_ids[local_message_id] = tm_message_id
+            if local_message_id is not None and message_ids_by_destination:
+                cm._local_to_global_message_ids_by_destination[local_message_id] = (
+                    message_ids_by_destination
+                )
+                cm._local_message_destinations[local_message_id] = primary_destination
 
             LOGGER.debug(
                 f"{ICONS['managers_worker']} [ManagersWorker] Logged message: {medium}"

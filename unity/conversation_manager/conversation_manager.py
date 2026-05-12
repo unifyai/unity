@@ -255,6 +255,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # global message_id (persistent backend TM id), populated by
         # log_message() for post-hoc screenshot image updates.
         self._local_to_global_message_ids: dict[int, int] = {}
+        # Per-destination transcript message ids for fanout writes.
+        self._local_to_global_message_ids_by_destination: dict[
+            int,
+            dict[str | None, int],
+        ] = {}
+        # Primary destination used when one id is needed for compatibility paths.
+        self._local_message_destinations: dict[int, str | None] = {}
 
         # mapping from conference_name/room_name to exchange_id, populated
         # at call/meet end so the async RecordingReady handler can resolve
@@ -626,8 +633,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # 1. Register with ImageManager to get persistent image_ids.
         image_ids: list[int] = []
+        image_ids_by_destination: dict[str | None, list[int]] = {}
+        implicit_destinations: list[str | None] = [None]
         try:
             from unity.manager_registry import ManagerRegistry
+            from unity.common.context_registry import ContextRegistry
 
             image_manager = ManagerRegistry.get_image_manager()
             items = [
@@ -638,11 +648,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 }
                 for entry, path in zip(screenshots, screenshot_paths)
             ]
-            image_ids = await asyncio.to_thread(
-                image_manager.add_images,
-                items,
-                synchronous=True,
-            )
+            implicit_destinations = ContextRegistry.implicit_shared_destinations()
+            for destination in implicit_destinations:
+                destination_image_ids = await asyncio.to_thread(
+                    image_manager.add_images,
+                    items,
+                    synchronous=True,
+                    destination=destination,
+                )
+                image_ids_by_destination[destination] = destination_image_ids
+            primary_destination = implicit_destinations[0]
+            image_ids = image_ids_by_destination.get(primary_destination, [])
         except Exception as e:
             self._session_logger.warning(
                 "screenshot_registration",
@@ -651,7 +667,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             return
 
         # 2. Annotate CM Message objects with image_ids and build TM refs.
-        msg_to_image_refs: dict[int, list[dict]] = {}
+        msg_to_image_refs: dict[tuple[int, str | None], list[dict]] = {}
         for i, (entry, _path) in enumerate(zip(screenshots, screenshot_paths)):
             if entry.local_message_id is None or i >= len(image_ids):
                 continue
@@ -668,23 +684,48 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     break
 
             label = source_labels.get(entry.source, "Screenshot")
-            msg_to_image_refs.setdefault(mid, []).append(
-                {
-                    "raw_image_ref": {"image_id": img_id},
-                    "annotation": f"{label} -- '{entry.utterance}'",
-                },
-            )
+            for destination, destination_image_ids in image_ids_by_destination.items():
+                if i >= len(destination_image_ids):
+                    continue
+                msg_to_image_refs.setdefault((mid, destination), []).append(
+                    {
+                        "raw_image_ref": {"image_id": destination_image_ids[i]},
+                        "annotation": f"{label} -- '{entry.utterance}'",
+                    },
+                )
 
         # 3. Post-hoc update TM messages with AnnotatedImageRefs.
         if msg_to_image_refs and self.transcript_manager is not None:
-            for local_mid, refs in msg_to_image_refs.items():
-                tm_msg_id = self._local_to_global_message_ids.get(local_mid)
+            for (local_mid, destination), refs in msg_to_image_refs.items():
+                destination_map = self._local_to_global_message_ids_by_destination.get(
+                    local_mid,
+                    {},
+                )
+                tm_msg_id = destination_map.get(destination)
+                effective_destination = destination
+                if tm_msg_id is None:
+                    if destination is not None:
+                        self._session_logger.warning(
+                            "screenshot_tm_update",
+                            (
+                                "Skipping screenshot transcript update for "
+                                f"local_mid={local_mid}, destination={destination!r}: "
+                                "destination message mapping missing."
+                            ),
+                        )
+                        continue
+                    tm_msg_id = self._local_to_global_message_ids.get(local_mid)
+                    effective_destination = self._local_message_destinations.get(
+                        local_mid,
+                        destination,
+                    )
                 if tm_msg_id is not None:
                     try:
                         await asyncio.to_thread(
                             self.transcript_manager.update_message_images,
                             tm_msg_id,
                             refs,
+                            destination=effective_destination,
                         )
                     except Exception as e:
                         self._session_logger.warning(

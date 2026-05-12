@@ -129,6 +129,8 @@ def _make_cm_for_log_message() -> MagicMock:
         return_value={"contact_id": 1, "first_name": "Test", "surname": "User"},
     )
     cm._local_to_global_message_ids = {}
+    cm._local_to_global_message_ids_by_destination = {}
+    cm._local_message_destinations = {}
     return cm
 
 
