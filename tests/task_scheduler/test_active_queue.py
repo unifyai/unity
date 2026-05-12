@@ -8,11 +8,25 @@ from typing import Dict
 import pytest
 
 from tests.helpers import _handle_project
-from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.task_scheduler import task_scheduler as task_scheduler_module
+from unity.task_scheduler.task_scheduler import TaskScheduler as _TaskScheduler
 from unity.task_scheduler.types.task import Task
-from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
+from unity.actor.simulated import (
+    SimulatedActor,
+    SimulatedActorHandle,
+    _StaticAnswerHandle,
+)
 from unity.task_scheduler.types.status import Status
 import inspect
+
+task_scheduler_module.SimulatedActor = SimulatedActor
+
+
+def TaskScheduler(*args, **kwargs):
+    if "actor" not in kwargs:
+        actor_cls = getattr(task_scheduler_module, "SimulatedActor", SimulatedActor)
+        kwargs["actor"] = actor_cls()
+    return _TaskScheduler(*args, **kwargs)
 
 
 async def _make_ordered_queue(
@@ -625,6 +639,9 @@ async def test_handle_ask_includes_queue_context(monkeypatch):
         def __init__(self, *a, **kw):
             pass
 
+        def set_on_log_file_pending(self, callback):
+            return None
+
         def set_system_message(self, sys_msg):
             try:
                 prompt_capture["system"] = str(sys_msg)
@@ -1203,7 +1220,7 @@ async def test_singleton_direct_delegation_to_inner_handle(monkeypatch):
             self.simulate_step()
         except Exception:
             pass
-        return "OK"
+        return _StaticAnswerHandle("OK")
 
     async def spy_actor_interject(self, instruction: str, *, images=None):  # type: ignore[override]
         interject_calls["count"] += 1
