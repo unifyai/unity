@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from unity.actor.code_act_actor import CodeActActor, _StorageCheckHandle
+from unity.common.task_execution_context import PostRunReviewContext
 
 # ---------------------------------------------------------------------------
 # Symbolic: _StorageCheckHandle runs Phase 2 after stop
@@ -228,6 +229,76 @@ async def test_storage_check_incoming_event_has_instructions():
         instructions,
         str,
     ), f"StorageCheck incoming event must have a non-null instructions kwarg, got {instructions!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_task_entrypoint_review_uses_reusable_workflow_event_label():
+    result_future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+
+    inner = MagicMock()
+
+    async def _await_result():
+        return await result_future
+
+    inner.result = _await_result
+    inner.next_notification = AsyncMock(side_effect=lambda: asyncio.Event().wait())
+
+    async def _stop(**kwargs):
+        if not result_future.done():
+            result_future.set_result("done")
+
+    inner.stop = AsyncMock(side_effect=_stop)
+    inner._client = MagicMock(messages=[{"role": "user", "content": "do task"}])
+
+    mock_task = MagicMock()
+    mock_task.get_ask_tools = MagicMock(return_value={})
+    mock_task.get_completed_tool_metadata = MagicMock(return_value={})
+    inner._task = mock_task
+
+    actor = MagicMock()
+    actor.function_manager = None
+    actor.guidance_manager = None
+
+    review_context = PostRunReviewContext(
+        display_label="Storing reusable workflow",
+        instructions="Review the completed recurring workflow.",
+        extensions={"task_entrypoint_review": {"metadata": {"task_id": 1}}},
+    )
+
+    with (
+        patch("unity.actor.code_act_actor._start_storage_check_loop") as mock_loop,
+        patch(
+            "unity.actor.code_act_actor.publish_manager_method_event",
+            new_callable=AsyncMock,
+        ) as mock_publish,
+    ):
+        mock_loop.return_value = None
+        handle = _StorageCheckHandle(
+            inner=inner,
+            actor=actor,
+            post_run_review_context=review_context,
+        )
+
+        result_future.set_result("done")
+
+        deadline = asyncio.get_event_loop().time() + 10
+        while not handle.done():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("Handle did not complete")
+            await asyncio.sleep(0.1)
+
+    incoming_calls = [
+        call
+        for call in mock_publish.call_args_list
+        if call.kwargs.get("phase") == "incoming" and call.args[2] == "StorageCheck"
+    ]
+    assert incoming_calls[0].kwargs["display_label"] == "Storing reusable workflow"
+    assert (
+        incoming_calls[0].kwargs["instructions"]
+        == "Review the completed recurring workflow."
+    )
+    assert mock_loop.call_args.kwargs["post_run_review_context"] is review_context
 
 
 # ---------------------------------------------------------------------------

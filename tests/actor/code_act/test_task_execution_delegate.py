@@ -5,14 +5,69 @@ from __future__ import annotations
 import pytest
 
 from tests.helpers import _handle_project
-from unity.actor.code_act_actor import CodeActActor
+from unity.actor.code_act_actor import CodeActActor, _CodeActTaskExecutionDelegate
 from unity.actor.environments.state_managers import StateManagerEnvironment
+from unity.actor.simulated import SimulatedActor
 from unity.common.task_execution_context import current_task_execution_delegate
 from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import PrimitiveScope, Primitives
 from unity.manager_registry import ManagerRegistry
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.status import Status
+
+
+@pytest.mark.asyncio
+async def test_codeact_task_delegate_runs_description_tasks_in_child_actor_slot():
+    calls = []
+    actor = SimulatedActor(steps=0)
+
+    original_act = actor.act
+
+    async def _spy_act(*args, **kwargs):
+        calls.append(kwargs)
+        return await original_act(*args, **kwargs)
+
+    actor.act = _spy_act  # type: ignore[method-assign]
+    delegate = _CodeActTaskExecutionDelegate(actor)  # type: ignore[arg-type]
+
+    handle = await delegate.start_task_run(
+        task_description="Run the description-driven task.",
+        entrypoint=None,
+        parent_chat_context=None,
+        clarification_up_q=None,
+        clarification_down_q=None,
+    )
+    await handle.result()
+
+    assert calls[0]["_reuse_actor_slot"] is False
+    assert calls[0]["persist"] is False
+
+
+@pytest.mark.asyncio
+async def test_codeact_task_delegate_reuses_actor_slot_for_entrypoint_tasks():
+    calls = []
+    actor = SimulatedActor(steps=0)
+
+    original_act = actor.act
+
+    async def _spy_act(*args, **kwargs):
+        calls.append(kwargs)
+        return await original_act(*args, **kwargs)
+
+    actor.act = _spy_act  # type: ignore[method-assign]
+    delegate = _CodeActTaskExecutionDelegate(actor)  # type: ignore[arg-type]
+
+    handle = await delegate.start_task_run(
+        task_description="Run the function-backed task.",
+        entrypoint=123,
+        parent_chat_context=None,
+        clarification_up_q=None,
+        clarification_down_q=None,
+    )
+    await handle.result()
+
+    assert calls[0]["_reuse_actor_slot"] is True
+    assert calls[0]["entrypoint"] == 123
 
 
 @pytest.mark.asyncio
