@@ -30,6 +30,7 @@ class TaskBase(BaseModel):
     schedule: Optional[Schedule] = Field(
         default=None,
         description="Information about task scheduling, including adjacent tasks in the queue and ideal start time",
+        json_schema_extra={"unify_type": "dict"},
     )
     trigger: Optional[Trigger] = Field(
         default=None,
@@ -41,7 +42,11 @@ class TaskBase(BaseModel):
     )
     repeat: Optional[List[RepeatPattern]] = Field(
         default=None,
-        description="Pattern defining how the task recurs over time",
+        description=(
+            "Pattern defining how the task recurs over time. Recurring live tasks "
+            "may begin with entrypoint=null and execute from the natural-language "
+            "description until a post-run review stores a stable function."
+        ),
     )
     priority: Priority = Field(
         description="Importance level of the task (low, normal, high, urgent)",
@@ -58,7 +63,10 @@ class TaskBase(BaseModel):
         default=None,
         description=(
             "Optional function_id from the Functions table that should be invoked to perform this task. "
-            "When null, the task is executed by an Actor interpreting the free-form description on the fly."
+            "When null, a live task is executed by a contained Actor run interpreting the free-form "
+            "description on the fly. Do not set this for a newly described workflow unless the user "
+            "explicitly asks for a stored function-backed workflow or a successful execution has been "
+            "reviewed and distilled into a stable function."
         ),
     )
     offline: bool = Field(
