@@ -23,7 +23,9 @@ from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
 from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.activated_by import ActivatedBy
+from unity.task_scheduler.types.repetition import Frequency, RepeatPattern
 from unity.task_scheduler.types.status import Status
+from unity.common.task_execution_context import current_post_run_review_context
 
 #  The helper used in the existing test‑suite – applies project‑level monkey‐
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -231,7 +233,7 @@ async def test_execute_interject(monkeypatch):
     @functools.wraps(original_interject)
     async def spy_interject(self, instruction: str, *, images=None) -> None:  # type: ignore[override]
         calls["interject"] += 1
-        await original_interject(self, instruction, images=images)
+        await original_interject(self, instruction)
 
     monkeypatch.setattr(SimulatedActorHandle, "interject", spy_interject, raising=True)
 
@@ -344,6 +346,7 @@ async def test_execute_result_and_done():
     # Perform an interjection for activity, then stop explicitly
     await task.interject("Provide initial outline first.")
     await task.stop(cancel=False)
+    await task.result()
 
     assert task.done(), "`done()` must return True after explicit stop"
 
@@ -544,6 +547,63 @@ async def test_execute_sets_activated_by_explicit():
     # Verify activated_by on the activated instance (may already be completed)
     rows = ts._filter_tasks(filter=f"task_id == {task_id}")
     assert any(r.activated_by == ActivatedBy.explicit for r in rows)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_without_delegate_or_actor_fails_before_mutation():
+    ts = TaskScheduler()
+    task_id = ts._create_task(name="Needs actor", description="Needs actor")["details"][
+        "task_id"
+    ]
+    initial_status = ts._get_task_or_raise(task_id).status
+
+    with pytest.raises(RuntimeError, match="run-scoped actor delegate"):
+        await ts.execute(task_id=task_id)
+
+    row = ts._get_task_or_raise(task_id)
+    assert row.status == initial_status
+    assert ts._active_task is None
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_direct_description_driven_recurring_execution_passes_entrypoint_review():
+    calls = []
+    actor = SimulatedActor(steps=0)
+    original_act = actor.act
+
+    async def _spy_act(*args, **kwargs):
+        calls.append(
+            {
+                "kwargs": kwargs,
+                "post_run_review_context": current_post_run_review_context.get(),
+            },
+        )
+        return await original_act(*args, **kwargs)
+
+    actor.act = _spy_act  # type: ignore[method-assign]
+    ts = TaskScheduler(actor=actor)
+    task_id = ts._create_task(
+        name="Recurring no-entrypoint task",
+        description="Run from the natural-language description every day.",
+        status=Status.scheduled,
+        schedule=Schedule(start_at=datetime.now(timezone.utc)),
+        repeat=[RepeatPattern(frequency=Frequency.DAILY)],
+    )["details"]["task_id"]
+
+    handle = await ts.execute(task_id=task_id)
+    await handle.result()
+
+    assert "task_entrypoint_review" not in calls[0]["kwargs"]
+    post_run_review_context = calls[0]["post_run_review_context"]
+    assert post_run_review_context is not None
+    assert post_run_review_context.display_label == "Storing reusable workflow"
+    review = post_run_review_context.extensions.get("task_entrypoint_review")
+    assert review is not None
+    assert review["metadata"]["task_id"] == task_id
+    assert review["metadata"]["task_name"] == "Recurring no-entrypoint task"
+    assert callable(review["attach_entrypoint"])
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 
 from tests.helpers import _handle_project
+from unity.actor.simulated import SimulatedActor
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.status import Status
 from unity.task_scheduler.types.schedule import Schedule
@@ -178,7 +179,7 @@ async def test_triggerable_start_clones_instance():
     • create a **new** row with the same `task_id` but `instance_id` 1
       that remains in the *triggerable* state
     """
-    ts = TaskScheduler()
+    ts = TaskScheduler(actor=SimulatedActor(steps=None, duration=None))
 
     trig = Trigger(medium=Medium.EMAIL, recurring=False)
     tid = ts._create_task(
@@ -201,6 +202,20 @@ async def test_triggerable_start_clones_instance():
     status_by_inst = {r.instance_id: r.status for r in rows_after}
     assert status_by_inst[0] == Status.active
     assert status_by_inst[1] == Status.triggerable
+
+    result = ts._attach_entrypoint_to_future_instances(
+        task_id=tid,
+        completed_instance_id=0,
+        function_id=654,
+        rationale="The triggered run revealed a stable reusable workflow.",
+    )
+    assert result["outcome"] == "attached"
+    future_row = [
+        row
+        for row in ts._filter_tasks(filter=f"task_id == {tid}")
+        if row.instance_id == 1
+    ][0]
+    assert future_row.entrypoint == 654
 
     # Clean-up (avoid background thread leaks)
     await handle.stop(cancel=True)
