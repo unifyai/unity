@@ -23,7 +23,8 @@ This is a cyclic routing problem:
 Here, it enables run-scoped delegation:
 
 - **Run-scoped**: a delegate is set at the top of an async execution context and
-  reset in a `finally` block.
+  reset in a `finally` block. The delegate owns how the task run is contained
+  inside that environment, such as starting a child actor run for one task.
 - **Async-safe**: `ContextVar` propagation ensures each async task tree sees the
   correct delegate under concurrency.
 - **No leakage**: callers must reset to prevent delegates persisting across runs.
@@ -50,6 +51,7 @@ Anti-patterns
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from contextvars import ContextVar
 from typing import Any, Optional, Protocol, TYPE_CHECKING, runtime_checkable
 
@@ -74,8 +76,8 @@ class TaskExecutionDelegate(Protocol):
     Usage
     -----
     This protocol is used by task execution routing to run tasks through the
-    same execution environment that initiated the task, rather than spawning a
-    new one.
+    execution environment that initiated the task while preserving one task run
+    per returned handle.
     """
 
     async def start_task_run(
@@ -123,5 +125,20 @@ class TaskExecutionDelegate(Protocol):
 #   actor/environment instantiation).
 current_task_execution_delegate: ContextVar[TaskExecutionDelegate | None] = ContextVar(
     "current_task_execution_delegate",
+    default=None,
+)
+
+
+@dataclass(frozen=True)
+class PostRunReviewContext:
+    """Run-scoped metadata for an optional post-completion storage review."""
+
+    display_label: str
+    instructions: str
+    extensions: dict[str, Any] = field(default_factory=dict)
+
+
+current_post_run_review_context: ContextVar[PostRunReviewContext | None] = ContextVar(
+    "current_post_run_review_context",
     default=None,
 )
