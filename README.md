@@ -183,60 +183,25 @@ A persistent **interaction loop** (the `ConversationManager`) stays present with
 
 ```mermaid
 flowchart TB
-    classDef userNode fill:#fbbf24,stroke:#92400e,stroke-width:2px,color:#1f2937
-    classDef mediumNode fill:#60a5fa,stroke:#1e40af,stroke-width:1px,color:#fff
-    classDef brokerNode fill:#111827,stroke:#000,stroke-width:2px,color:#fbbf24
-    classDef interactionNode fill:#f9a8d4,stroke:#9d174d,stroke-width:2px,color:#1f2937
-    classDef actorNode fill:#86efac,stroke:#14532d,stroke-width:2px,color:#1f2937
-    classDef managerNode fill:#e5e7eb,stroke:#6b7280,stroke-width:1px,color:#1f2937
-    classDef libraryNode fill:#c4b5fd,stroke:#5b21b6,stroke-width:2px,color:#1f2937
+    classDef interaction fill:#fce7f3,stroke:#be185d,stroke-width:2px,color:#1f2937
+    classDef actor fill:#bbf7d0,stroke:#15803d,stroke-width:2px,color:#1f2937
+    classDef neutral fill:#f9fafb,stroke:#9ca3af,stroke-width:1px,color:#374151
+    classDef accent fill:#1f2937,stroke:#000,stroke-width:1px,color:#fef3c7
 
-    User(["👤 User"]):::userNode
+    User(["User"]):::neutral
+    Mediums["💬 chat &nbsp;·&nbsp; 📞 voice / phone &nbsp;·&nbsp; 🎥 video / screen-share &nbsp;·&nbsp; ✉️ email · SMS"]:::neutral
+    Broker["⚡ Event Broker"]:::accent
+    CM["<b>ConversationManager</b> · interaction loop (always present)<br/>per-handle steering tools: pause · resume · interject · stop · ask"]:::interaction
+    Actor["<b>Actor</b> · background reasoner<br/>writes Python that composes primitives.*"]:::actor
+    BackOffice["<b>The Back Office</b> · typed state managers, English-language APIs<br/>Contacts · Knowledge · Tasks · Transcripts · Files · Images · Web · Secrets · ⚙️ Functions · 📖 Guidance"]:::neutral
 
-    subgraph Mediums["Mediums &nbsp;·&nbsp; the assistant's senses"]
-        direction LR
-        Text["💬 Text"]:::mediumNode
-        Voice["📞 Voice / Phone<br/>(LiveKit)"]:::mediumNode
-        Video["🎥 Video / Screen-share<br/>(Unify Meet)"]:::mediumNode
-        Email["✉️ Email · SMS"]:::mediumNode
-    end
-
-    Broker[("⚡ Event Broker · single in-process pub/sub")]:::brokerNode
-
-    subgraph CM["ConversationManager &nbsp;·&nbsp; interaction loop (always present)"]
-        direction TB
-        SlowBrain["slow-brain turn<br/>renders in_flight_actions into its own context"]:::interactionNode
-        SteerTools["per-handle steering tools<br/>(generated dynamically for each live handle)<br/>pause · resume · interject · stop · ask"]:::interactionNode
-    end
-
-    subgraph Actor["Actor &nbsp;·&nbsp; background reasoner"]
-        CodeAct["CodeAct loop<br/>writes Python that composes primitives.*"]:::actorNode
-    end
-
-    subgraph BackOffice["The Back Office &nbsp;·&nbsp; typed state managers, English-language APIs"]
-        direction LR
-        Contacts["Contacts"]:::managerNode
-        Knowledge["Knowledge"]:::managerNode
-        Transcripts["Transcripts"]:::managerNode
-        Tasks["Tasks"]:::managerNode
-        Files["Files"]:::managerNode
-        Images["Images"]:::managerNode
-        Secrets["Secrets"]:::managerNode
-        Web["Web"]:::managerNode
-        Functions["⚙️ Functions<br/><i>executable code</i>"]:::libraryNode
-        Guidance["📖 Guidance<br/><i>procedural prose</i>"]:::libraryNode
-    end
-
-    User ==>|"any modality"| Mediums
-    Mediums ==>|"events"| Broker
-    Broker ==>|"wakes turn"| CM
-    CM ==>|"act(prompt)"| Actor
+    User ==> Mediums ==> Broker ==> CM
+    CM ==>|"act(...)"| Actor
     Actor ==>|"primitives.*"| BackOffice
 
     BackOffice -.->|"SteerableToolHandle"| Actor
-    Actor -.->|"SteerableToolHandle<br/>+ notifications"| CM
-    CM -.->|"streamed responses"| Mediums
-    Mediums -.->|"back to user"| User
+    Actor -.->|"SteerableToolHandle + notifications"| CM
+    CM -.->|"streamed responses"| User
 ```
 
 **Solid arrows** are dispatch flow. **Dotted arrows** are the *steering bus* — every level returns the same `SteerableToolHandle` type, so steering signals propagate down through the call stack while results and notifications propagate up.
@@ -279,57 +244,28 @@ sequenceDiagram
 
 ## How does this compare to other open-source agents?
 
-The clearest way to see what's distinctive about Unity is to draw the same diagram for adjacent projects, using the same visual language. **Pink** means *persistent supervising loop*. **Black** means *unified event broker*. Click to expand.
+The clearest way to see what's distinctive about Unity is to draw the same diagram for adjacent projects, using the same visual language. **Pink** means *persistent supervising loop* (only Unity has one). Click to expand.
 
 <details>
 <summary><b>OpenClaw</b> — channel-first dispatcher + single Pi agent loop</summary>
 
 ```mermaid
 flowchart TB
-    classDef userNode fill:#fbbf24,stroke:#92400e,stroke-width:2px,color:#1f2937
-    classDef mediumNode fill:#60a5fa,stroke:#1e40af,stroke-width:1px,color:#fff
-    classDef agentNode fill:#86efac,stroke:#14532d,stroke-width:2px,color:#1f2937
-    classDef pluginNode fill:#c4b5fd,stroke:#5b21b6,stroke-width:2px,color:#1f2937
-    classDef stateNode fill:#e5e7eb,stroke:#6b7280,stroke-width:1px,color:#1f2937
-    classDef dispatchNode fill:#fed7aa,stroke:#c2410c,stroke-width:2px,color:#1f2937
+    classDef agent fill:#bbf7d0,stroke:#15803d,stroke-width:2px,color:#1f2937
+    classDef neutral fill:#f9fafb,stroke:#9ca3af,stroke-width:1px,color:#374151
+    classDef dispatch fill:#fed7aa,stroke:#c2410c,stroke-width:2px,color:#1f2937
 
-    User(["👤 User"]):::userNode
+    User(["User"]):::neutral
+    Channels["💬 Telegram · Discord · Slack · SMS · Nodes (devices)"]:::neutral
+    Gateway["<b>Gateway daemon</b> · dispatcher<br/>per-session lane (1 active run); steer = abort + redeliver"]:::dispatch
+    PiAgent["<b>Pi embedded agent</b> · single tool-calling loop<br/>no supervising loop runs in parallel"]:::agent
+    Tools["<b>Tools</b> · core + plugin + MCP bridge<br/>core (web · exec · sessions_spawn) · 📞 voice-call plugin (discrete actions: initiate · speak · end) · mcporter → MCP servers"]:::neutral
+    State["<b>State</b> · local-first artefacts<br/>JSONL sessions · workspace files (📖 SKILL.md · SOUL.md · AGENTS.md) · memory plugin (one slot at a time)"]:::neutral
 
-    subgraph Channels["Channel adapters &nbsp;·&nbsp; one per platform"]
-        direction LR
-        TG["Telegram"]:::mediumNode
-        Disc["Discord"]:::mediumNode
-        Slack["Slack"]:::mediumNode
-        SMS["SMS"]:::mediumNode
-        Nodes["Nodes (devices)"]:::mediumNode
-    end
-
-    Gateway["Gateway daemon &nbsp;·&nbsp; dispatcher<br/>per-session lane: 1 active run<br/>steer = abort + redeliver"]:::dispatchNode
-
-    subgraph PiAgent["Pi embedded agent &nbsp;·&nbsp; single tool-calling loop"]
-        Loop["no supervising loop runs in parallel;<br/>execution gated by approval hooks"]:::agentNode
-    end
-
-    subgraph Tools["Tools (native + plugin + MCP bridge)"]
-        direction LR
-        Core["core tools<br/>(web · exec · sessions_spawn · ...)"]:::stateNode
-        VoicePlug["📞 voice-call plugin<br/><i>discrete tool actions:</i><br/>initiate · speak · end"]:::pluginNode
-        Subagents["🪄 sessions_spawn<br/>(flat subagent fork)"]:::pluginNode
-        MCP["mcporter → MCP servers"]:::stateNode
-    end
-
-    subgraph State["State &nbsp;·&nbsp; local-first artefacts"]
-        direction LR
-        JSONL["JSONL sessions<br/>~/.openclaw/agents/.../"]:::stateNode
-        Workspace["workspace files<br/>📖 SKILL.md · SOUL.md · AGENTS.md"]:::pluginNode
-        MemPlug["memory plugin<br/>(one slot at a time)"]:::stateNode
-    end
-
-    User ==>|"messages"| Channels
-    Channels ==>|"events"| Gateway
+    User ==> Channels ==> Gateway
     Gateway ==>|"start / abort run"| PiAgent
-    PiAgent ==>|"tool calls"| Tools
-    PiAgent <==>|"read / write"| State
+    PiAgent ==> Tools
+    PiAgent <==> State
 ```
 
 OpenClaw is a local-first control plane with a wide channel matrix and a plugin marketplace. The Gateway *dispatches* runs but doesn't supervise them; voice is a plugin tool the agent invokes through discrete actions; steering is implemented as abort-and-redeliver. OpenClaw's `VISION.md` explicitly takes "no agent-hierarchy frameworks (manager-of-managers)" as a non-goal — a deliberate, principled bet in the opposite direction from Unity. If you want a personal-assistant **product** with broad channel coverage, OpenClaw is excellent. If you want a runtime built around mid-task steering and structured long-lived state, Unity is shaped differently.
@@ -341,42 +277,16 @@ OpenClaw is a local-first control plane with a wide channel matrix and a plugin 
 
 ```mermaid
 flowchart TB
-    classDef userNode fill:#fbbf24,stroke:#92400e,stroke-width:2px,color:#1f2937
-    classDef mediumNode fill:#60a5fa,stroke:#1e40af,stroke-width:1px,color:#fff
-    classDef agentNode fill:#86efac,stroke:#14532d,stroke-width:2px,color:#1f2937
-    classDef pluginNode fill:#c4b5fd,stroke:#5b21b6,stroke-width:2px,color:#1f2937
-    classDef stateNode fill:#e5e7eb,stroke:#6b7280,stroke-width:1px,color:#1f2937
-    classDef triggerNode fill:#fed7aa,stroke:#c2410c,stroke-width:2px,color:#1f2937
+    classDef agent fill:#bbf7d0,stroke:#15803d,stroke-width:2px,color:#1f2937
+    classDef neutral fill:#f9fafb,stroke:#9ca3af,stroke-width:1px,color:#374151
+    classDef trigger fill:#fed7aa,stroke:#c2410c,stroke-width:2px,color:#1f2937
 
-    User(["👤 User"]):::userNode
-    Cron["⏰ cron + webhooks<br/>automation triggers"]:::triggerNode
-
-    subgraph Surfaces["Surfaces &nbsp;·&nbsp; each composes its own toolset bundle"]
-        direction LR
-        CLI["CLI"]:::mediumNode
-        TUI["TUI (Ink + JSON-RPC)"]:::mediumNode
-        Gw["Gateway<br/>(Telegram · Discord · Slack · SMS)"]:::mediumNode
-        ACP["ACP<br/>(IDE)"]:::mediumNode
-    end
-
-    AIAgent["AIAgent &nbsp;·&nbsp; single ~12k-LOC sync tool-calling loop<br/><i>steer() = inject text into next tool result</i><br/><i>interrupt() = thread-scoped abort flag</i>"]:::agentNode
-
-    subgraph Tools["Tools"]
-        direction LR
-        Native["native tools<br/>(auto-discovered tools/*.py)"]:::stateNode
-        ExecCode["execute_code<br/><i>ephemeral Python<br/>against fixed RPC stubs</i>"]:::pluginNode
-        Voice["TTS · voice_mode (PTT)<br/>SMS adapter<br/><i>(no live phone call)</i>"]:::pluginNode
-        Delegate["delegate_tool<br/>(bounded subagents)"]:::pluginNode
-        MCPH["MCP servers<br/>(optional)"]:::stateNode
-    end
-
-    subgraph State["State"]
-        direction LR
-        SQLite["SQLite sessions<br/>+ FTS5 search"]:::stateNode
-        Files["MEMORY.md · USER.md<br/>workspace files"]:::stateNode
-        SkillsLib["📖 SKILL.md library<br/>(hundreds of markdown files)"]:::pluginNode
-        MemProv["memory provider plugin<br/>(mem0 · honcho · ...)"]:::stateNode
-    end
+    User(["User"]):::neutral
+    Cron["⏰ cron + webhooks (automation triggers)"]:::trigger
+    Surfaces["💬 CLI · TUI · Gateway (Telegram · Discord · Slack · SMS) · ACP (IDE)"]:::neutral
+    AIAgent["<b>AIAgent</b> · single ~12k-LOC sync tool-calling loop<br/>steer() = inject text into next tool result; interrupt() = thread-scoped abort flag"]:::agent
+    Tools["<b>Tools</b><br/>native tools · execute_code (ephemeral Python against fixed RPC stubs) · TTS / voice_mode / SMS (no live phone call) · delegate_tool · MCP servers"]:::neutral
+    State["<b>State</b><br/>SQLite sessions + FTS5 · MEMORY.md / USER.md workspace files · 📖 SKILL.md library · memory provider plugin (mem0 · honcho · ...)"]:::neutral
 
     User ==> Surfaces
     Cron ==> Surfaces
