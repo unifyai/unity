@@ -454,15 +454,9 @@ State Managers (each runs its own async LLM tool loop)
 
 ---
 
-## What's open and what isn't
+## The runtime stack
 
-Unity is the **open core** of the Unify platform. This repository contains the agent runtime: the managers, async tool loops, CodeAct actor, dual-brain voice coordination, event backbone, and memory consolidation.
-
-The supporting infrastructure is open-source too: [Orchestra](https://github.com/unifyai/orchestra) (persistence, runs locally via Docker), [Unify](https://github.com/unifyai/unify) (Python SDK), and [UniLLM](https://github.com/unifyai/unillm) (provider-agnostic LLM client).
-
-**Not open-sourced** is the managed platform layer around the runtime: hosted communication routing, telephony and SIP infrastructure, Microsoft 365 tenant integration, the assistant session control plane, the web dashboard ([console.unify.ai](https://console.unify.ai)), and identity. Features that depend on the managed platform layer only work against the hosted service.
-
-A small note on the Orchestra source tree: it ships with Stripe and credits routines that exist for the hosted product. **They are dormant in local mode** — no external calls fire, no signups, no charges; the local install simply ignores them. They live in the same repo to keep one canonical persistence layer rather than fork it for self-hosting.
+Unity is one of four MIT-licensed repos that make up the runtime. The installer wires them together for the local install; you can also use any of them independently.
 
 | Repo | Role |
 |------|------|
@@ -470,8 +464,6 @@ A small note on the Orchestra source tree: it ships with Stripe and credits rout
 | **[orchestra](https://github.com/unifyai/orchestra)** | Persistence backend — FastAPI + Postgres + pgvector. Installer spins it up locally in Docker |
 | **[unify](https://github.com/unifyai/unify)** | Python SDK — the client Unity uses to talk to Orchestra |
 | **[unillm](https://github.com/unifyai/unillm)** | LLM access layer — OpenAI, Anthropic, or any compatible endpoint |
-
-All MIT-licensed.
 
 ---
 
@@ -538,18 +530,6 @@ unity/
 ├── agent-service/                # Node.js desktop/browser automation
 └── deploy/                       # Dockerfile, Cloud Build, virtual desktop
 ```
-
----
-
-## Design principles
-
-**No regex or substring matching for routing user intent.** Everything goes through LLM reasoning, guided by prompts and tool docstrings. If the system handles something wrong, we fix the prompt — not add a hardcoded rule.
-
-**No mocked LLMs in tests.** Every test uses real inference, cached for speed. Delete the cache and you're re-evaluating against live models.
-
-**No defensive coding.** No try/except around things that shouldn't fail. No null checks for things that shouldn't be null. The system fails loud when assumptions break.
-
-**English as an API.** Managers communicate through natural-language interfaces. The Actor orchestrates through English-language primitives. The whole system stays inspectable without reading implementation code.
 
 ---
 
