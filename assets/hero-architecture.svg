@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#a8b5d0" flood-opacity="0.5"/>
+    </filter>
+    <marker id="arrowEnd" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#7a8595"/>
+    </marker>
+    <style>
+      .title  { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; font-size: 21px; font-weight: 500; fill: #222; }
+      .sub    { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; font-size: 14px; fill: #7a8595; }
+      .meta   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; font-size: 13px; fill: #909bab; }
+      .edge   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; font-size: 14px; fill: #444; }
+      .edgeS  { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; font-size: 13px; fill: #888; }
+      .zone   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; font-size: 14px; fill: #909bab; font-style: italic; letter-spacing: 0.5px; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="720" fill="#faf9f6"/>
+
+  <!--
+       ACTOR  (top-center, with self-loop for primitives)
+  -->
+  <g filter="url(#softGlow)">
+    <rect x="430" y="70" width="280" height="100" rx="14" fill="#ffffff" stroke="#a8b5d0" stroke-width="1.5"/>
+  </g>
+  <text x="570" y="115" text-anchor="middle" class="title">Actor</text>
+  <text x="570" y="142" text-anchor="middle" class="sub">background reasoner</text>
+
+  <!-- Actor self-loop: a small ear hanging off the upper-right -->
+  <path d="M 700 90 C 770 70, 815 80, 815 110 C 815 142, 760 158, 700 142"
+        fill="none" stroke="#7a8595" stroke-width="1.5" marker-end="url(#arrowEnd)"/>
+  <text x="830" y="92"  class="edge">primitives.*</text>
+  <text x="830" y="111" class="edgeS">Contacts &#183; Knowledge &#183; Tasks</text>
+  <text x="830" y="130" class="edgeS">Files &#183; Images &#183; ...</text>
+
+  <!--
+       SLOW BRAIN ARROWS to/from ACTOR  (act() up; handle down)
+  -->
+  <line x1="525" y1="280" x2="525" y2="172" stroke="#7a8595" stroke-width="1.5" marker-end="url(#arrowEnd)"/>
+  <text x="515" y="218" text-anchor="end" class="edge">act(...)</text>
+  <text x="515" y="237" text-anchor="end" class="edgeS">+ context</text>
+
+  <line x1="615" y1="170" x2="615" y2="278" stroke="#7a8595" stroke-width="1.5" marker-end="url(#arrowEnd)"/>
+  <text x="625" y="218" class="edge">handle</text>
+  <text x="625" y="237" class="edgeS">+ notifications</text>
+
+  <!--
+       SLOW BRAIN  (middle, the new tier vs the TML two-layer model)
+  -->
+  <g filter="url(#softGlow)">
+    <rect x="370" y="280" width="460" height="100" rx="14" fill="#ffffff" stroke="#a8b5d0" stroke-width="1.5"/>
+  </g>
+  <text x="600" y="318" text-anchor="middle" class="title">Slow Brain</text>
+  <text x="600" y="343" text-anchor="middle" class="sub">ConversationManager &#183; always present</text>
+  <text x="600" y="365" text-anchor="middle" class="meta">generates per-handle steering tools</text>
+
+  <!--
+       USER ARROWS to/from SLOW BRAIN  (chat/text, short diagonal pair)
+  -->
+  <line x1="305" y1="538" x2="372" y2="388" stroke="#7a8595" stroke-width="1.5" marker-end="url(#arrowEnd)"/>
+  <line x1="385" y1="382" x2="318" y2="532" stroke="#7a8595" stroke-width="1.5" marker-end="url(#arrowEnd)"/>
+  <text x="322" y="456" text-anchor="middle" class="edge" transform="rotate(-66 322 456)">chat / text</text>
+
+  <!--
+       SLOW BRAIN ARROWS to/from FAST BRAIN  (IPC channel)
+  -->
+  <line x1="600" y1="540" x2="600" y2="382" stroke="#7a8595" stroke-width="1.5" marker-end="url(#arrowEnd)"/>
+  <text x="590" y="430" text-anchor="end" class="edge">voice context</text>
+  <text x="590" y="448" text-anchor="end" class="edgeS">+ frames</text>
+
+  <line x1="690" y1="380" x2="690" y2="538" stroke="#7a8595" stroke-width="1.5" marker-end="url(#arrowEnd)"/>
+  <text x="700" y="430" class="edge">SPEAK &#183; NOTIFY</text>
+  <text x="700" y="448" class="edge">BLOCK</text>
+
+  <!--
+       REAL-TIME zone  (dashed boundary around user + fast brain)
+  -->
+  <rect x="130" y="475" width="700" height="200" rx="14"
+        fill="none" stroke="#a8b5d0" stroke-width="1.5"
+        stroke-dasharray="6 4" opacity="0.55"/>
+  <text x="155" y="500" class="zone">real-time</text>
+
+  <!--
+       USER  (bottom-left, inside real-time)
+  -->
+  <g filter="url(#softGlow)">
+    <rect x="190" y="540" width="120" height="80" rx="14" fill="#ffffff" stroke="#a8b5d0" stroke-width="1.5"/>
+  </g>
+  <text x="250" y="588" text-anchor="middle" class="title">user</text>
+
+  <!--
+       USER ARROWS to/from FAST BRAIN  (voice / video, horizontal pair)
+  -->
+  <line x1="312" y1="565" x2="508" y2="565" stroke="#7a8595" stroke-width="1.5" marker-end="url(#arrowEnd)"/>
+  <line x1="508" y1="595" x2="312" y2="595" stroke="#7a8595" stroke-width="1.5" marker-end="url(#arrowEnd)"/>
+  <text x="410" y="555" text-anchor="middle" class="edge">voice / video</text>
+  <text x="410" y="616" text-anchor="middle" class="edgeS">+ screen-share</text>
+
+  <!--
+       FAST BRAIN  (bottom-right, inside real-time)
+  -->
+  <g filter="url(#softGlow)">
+    <rect x="510" y="540" width="240" height="80" rx="14" fill="#ffffff" stroke="#a8b5d0" stroke-width="1.5"/>
+  </g>
+  <text x="630" y="575" text-anchor="middle" class="title">Fast Brain</text>
+  <text x="630" y="600" text-anchor="middle" class="sub">LiveKit voice agent</text>
+</svg>

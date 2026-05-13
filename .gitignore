@@ -48,7 +48,11 @@ unity.egg-info/
 .tmux_logs/
 intranet/logs/
 *:Zone.Identifier
-assets/
+# assets/ holds local screenshots by default; allow-list specific repo-shipped
+# diagrams below. (Use 'assets/*' rather than 'assets/' so the exceptions take
+# effect — git can't un-ignore a file inside a fully-ignored directory.)
+assets/*
+!assets/hero-architecture.svg
 discord_messages.md
 .cursor/debug.log
 # ConversationManager sandbox persistent config (project-local)

@@ -14,6 +14,10 @@
 
 **Open-source virtual teammates that take voice and video calls — and let you interrupt, redirect, or pause them mid-task without restarting.**
 
+<p align="center">
+  <img src="assets/hero-architecture.svg" alt="Unity's three-layer architecture: a Fast Brain on a real-time voice/video call with the user, a Slow Brain (ConversationManager) that always stays present, and an Actor (background reasoner) that does the deep work — extending the interaction-model / background-model pattern with a third supervisory tier." width="820">
+</p>
+
 Hop on a call with one. Send a follow-up text. Drop them a calendar invite. They remember who you are next time, what you talked about last week, and what they promised to do about it.
 
 Most agents stop the moment you talk. They make you wait for a tool call to finish, then re-explain when you change your mind. Unity's teammates stay listening through everything — chat, voice, phone, video, screen-share — and treat your interjections, corrections, and questions as first-class inputs rather than interruptions to recover from. Whether the assistant is researching flights, drafting an email, or sitting on a live call with a vendor, you can ask *"how's it going?"*, say *"actually do X instead"*, or pause for ten minutes — without losing context.
