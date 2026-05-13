@@ -2068,17 +2068,37 @@ def build_voice_agent_prompt(
         boss_details_lines.append(f"- Bio: {boss_bio}")
     boss_details = "\n".join(boss_details_lines) if boss_details_lines else None
 
-    if demo_mode:
-        if is_boss_user:
+    boss_full_name = " ".join(
+        part for part in [boss_first_name, boss_surname] if part
+    ).strip()
+    contact_full_name = " ".join(
+        part for part in [contact_first_name, contact_surname] if part
+    ).strip()
+
+    if is_boss_user:
+        caller_name = boss_full_name
+        caller_relationship = "Boss"
+        if demo_mode:
             caller_description = "my boss (who I am meeting for the first time)"
         else:
+            caller_description = f"my boss, {caller_name}" if caller_name else "my boss"
+    else:
+        caller_name = contact_full_name
+        caller_relationship = (
+            "Unify colleague introducing my future boss"
+            if demo_mode
+            else "One of my boss's contacts"
+        )
+        if demo_mode:
             caller_description = (
                 "a colleague from Unify who is introducing me to my future boss"
             )
-    else:
-        caller_description = (
-            "a colleague" if is_boss_user else "one of my boss's contacts"
-        )
+        else:
+            caller_description = (
+                f"{caller_name}, one of my boss's contacts"
+                if caller_name
+                else "one of my boss's contacts"
+            )
 
     # Build name intro for context section
     name_intro = f"I'm {assistant_name}, on" if assistant_name else "I'm on"
@@ -2286,16 +2306,38 @@ The following are my boss's details:
 {boss_details}""",
         )
 
+    if not participants:
+        current_caller_lines = [f"- Relationship: {caller_relationship}"]
+        if caller_name:
+            current_caller_lines.append(f"- Name: {caller_name}")
+        else:
+            current_caller_lines.append("- Name: not on file")
+        parts.add(
+            "Primary caller context\n"
+            "----------------------\n"
+            "This is the primary caller identity at call start:\n"
+            + "\n".join(current_caller_lines)
+            + "\n\n"
+            + "- Default to this block for caller-identity questions.\n"
+            + "- If the caller explicitly self-identifies with newer information, "
+            + "use that newer identity.\n"
+            + "- Say I don't know only when neither this block nor explicit "
+            + "self-identification provides a name.",
+        )
+
     # Add contact block if not boss
     if not is_boss_user:
         has_name = contact_first_name or contact_surname
         if has_name:
-            contact_lines = [
-                f"- First Name: {contact_first_name}",
-                f"- Surname: {contact_surname}",
-                f"- Phone Number: {contact_phone_number}",
-                f"- Email: {contact_email}",
-            ]
+            contact_lines = []
+            if contact_first_name:
+                contact_lines.append(f"- First Name: {contact_first_name}")
+            if contact_surname:
+                contact_lines.append(f"- Surname: {contact_surname}")
+            if contact_phone_number:
+                contact_lines.append(f"- Phone Number: {contact_phone_number}")
+            if contact_email:
+                contact_lines.append(f"- Email: {contact_email}")
             if contact_bio:
                 contact_lines.append(f"- Bio: {contact_bio}")
             contact_details = "\n".join(contact_lines)

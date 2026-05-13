@@ -124,6 +124,15 @@ def assert_contains(response: str, expected: str, context: str = "") -> None:
     )
 
 
+def assert_not_contains(response: str, unexpected: str, context: str = "") -> None:
+    """Assert that the response does not contain a substring (case-insensitive)."""
+    assert unexpected.lower() not in response.lower(), (
+        f"Unexpected '{unexpected}' in response!\n"
+        f"Full response: {response}\n"
+        f"{f'Context: {context}' if context else ''}"
+    )
+
+
 def assert_concise(response: str, max_words: int = 50, context: str = "") -> None:
     """Assert that the response is concise (phone-call brevity).
 
@@ -300,6 +309,45 @@ class TestContactBio:
             response,
             "cloud migration",
             "Should mention cloud migration from bio",
+        )
+
+
+# =============================================================================
+# Test Class: Caller Identity
+# =============================================================================
+
+
+@pytest.mark.llm_call
+@pytest.mark.asyncio
+class TestCallerIdentity:
+    """Tests that the fast brain grounds caller identity correctly."""
+
+    async def test_knows_boss_name_when_asked_who_i_am(self, boss_call_prompt: str):
+        """
+        When the caller is the boss, asking "who am I?" should return the boss
+        name from prompt context without deferring.
+        """
+        response = await ask_fast_brain(boss_call_prompt, "Do you know who I am?")
+
+        assert_no_deferral(response, "Asked boss identity from prompt context")
+        assert_contains(response, "Sarah", "Should mention boss first name")
+
+    async def test_knows_contact_name_when_asked_who_i_am(
+        self,
+        contact_call_prompt: str,
+    ):
+        """
+        When the caller is an external contact, asking "who am I?" should use
+        contact details and avoid switching to the boss identity.
+        """
+        response = await ask_fast_brain(contact_call_prompt, "Do you know who I am?")
+
+        assert_no_deferral(response, "Asked contact identity from prompt context")
+        assert_contains(response, "Marcus", "Should mention contact first name")
+        assert_not_contains(
+            response,
+            "Sarah Chen",
+            "Should not answer with boss identity on a non-boss call",
         )
 
 
