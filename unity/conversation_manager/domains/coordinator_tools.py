@@ -644,36 +644,103 @@ class CoordinatorTools:
         self,
         *,
         space_id: int,
-        assistant_id: int,
+        assistant_id: int | None = None,
+        member_user_id: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Add a reachable assistant to a reachable space after membership is agreed."""
+        """Add a member-targeted coordinator or reachable assistant to a space."""
+        has_assistant_id = assistant_id is not None
+        normalized_member_user_id = (
+            member_user_id.strip() if isinstance(member_user_id, str) else None
+        )
+        has_member_user_id = bool(normalized_member_user_id)
+        if has_assistant_id == has_member_user_id:
+            return _invalid_argument(
+                message="Provide exactly one of `assistant_id` or `member_user_id`.",
+                details={
+                    "assistant_id": assistant_id,
+                    "member_user_id": member_user_id,
+                },
+            )
         suppression = self._suppress_duplicate_commissioning_tool(
             tool_name="add_space_member",
-            tool_args={"space_id": space_id, "assistant_id": assistant_id},
+            tool_args={
+                "space_id": space_id,
+                "assistant_id": assistant_id,
+                "member_user_id": normalized_member_user_id,
+            },
         )
         if suppression is not None:
             return suppression
 
+        resolved_target_assistant_id = assistant_id
         activity_id = self._publish_activity(
             phase="started",
             stage="implementation",
             title="Adding colleague to workspace",
             surfaces=["membership"],
-            related_entities=_membership_entities(space_id, assistant_id),
+            related_entities=_membership_entities(
+                space_id,
+                assistant_id=resolved_target_assistant_id,
+                member_user_id=normalized_member_user_id,
+            ),
         )
-        invalid = self._validate_space_and_assistant(space_id, assistant_id)
-        if invalid is not None:
+        reachable_space = self._space_is_reachable(space_id)
+        if isinstance(reachable_space, dict):
             self._publish_failure(
                 activity_id,
                 title="Could not add colleague to workspace",
-                error=invalid,
+                error=reachable_space,
             )
-            return invalid
+            return reachable_space
+        if not reachable_space:
+            error = _space_not_found(space_id)
+            self._publish_failure(
+                activity_id,
+                title="Could not add colleague to workspace",
+                error=error,
+            )
+            return error
+        if assistant_id is not None:
+            reachable_assistant = self._assistant_is_reachable(assistant_id)
+            if isinstance(reachable_assistant, dict):
+                self._publish_failure(
+                    activity_id,
+                    title="Could not add colleague to workspace",
+                    error=reachable_assistant,
+                )
+                return reachable_assistant
+            if not reachable_assistant:
+                error = _assistant_not_found(assistant_id)
+                self._publish_failure(
+                    activity_id,
+                    title="Could not add colleague to workspace",
+                    error=error,
+                )
+                return error
+        else:
+            member_user_id_for_lookup = normalized_member_user_id or ""
+            member_reachable = self._org_member_is_reachable(member_user_id_for_lookup)
+            if isinstance(member_reachable, dict):
+                self._publish_failure(
+                    activity_id,
+                    title="Could not add colleague to workspace",
+                    error=member_reachable,
+                )
+                return member_reachable
+            if not member_reachable:
+                error = _org_member_not_found(member_user_id_for_lookup)
+                self._publish_failure(
+                    activity_id,
+                    title="Could not add colleague to workspace",
+                    error=error,
+                )
+                return error
 
         try:
             result = unify.add_space_member(
                 space_id,
-                assistant_id,
+                assistant_id=assistant_id,
+                member_user_id=normalized_member_user_id,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
@@ -684,12 +751,19 @@ class CoordinatorTools:
                 error=error,
             )
             return error
+        resolved_target_assistant_id = _extract_assistant_id(result)
+        if resolved_target_assistant_id is not None:
+            self._known_assistant_ids.add(str(resolved_target_assistant_id))
         self._publish_activity(
             phase="completed",
             stage="implementation",
             title="Added colleague to workspace",
             surfaces=["membership"],
-            related_entities=_membership_entities(space_id, assistant_id),
+            related_entities=_membership_entities(
+                space_id,
+                assistant_id=resolved_target_assistant_id,
+                member_user_id=normalized_member_user_id,
+            ),
             activity_id=activity_id,
         )
         return result
@@ -820,7 +894,10 @@ class CoordinatorTools:
             related_entities=[
                 _assistant_entity(assistant_row, fallback=colleague_name),
                 _space_entity(space_row, fallback=workspace_name),
-                *_membership_entities(resolved_space_id, resolved_assistant_id),
+                *_membership_entities(
+                    resolved_space_id,
+                    assistant_id=resolved_assistant_id,
+                ),
             ],
             activity_id=activity_id,
         )
@@ -839,7 +916,10 @@ class CoordinatorTools:
             stage="implementation",
             title="Removing colleague from workspace",
             surfaces=["membership"],
-            related_entities=_membership_entities(space_id, assistant_id),
+            related_entities=_membership_entities(
+                space_id,
+                assistant_id=assistant_id,
+            ),
         )
         invalid = self._validate_space_and_assistant(space_id, assistant_id)
         if invalid is not None:
@@ -869,7 +949,10 @@ class CoordinatorTools:
             stage="implementation",
             title="Removed colleague from workspace",
             surfaces=["membership"],
-            related_entities=_membership_entities(space_id, assistant_id),
+            related_entities=_membership_entities(
+                space_id,
+                assistant_id=assistant_id,
+            ),
             activity_id=activity_id,
         )
         return result
@@ -931,106 +1014,6 @@ class CoordinatorTools:
                 assistant_id,
                 api_key=SESSION_DETAILS.unify_key,
             )
-        except RequestError as exc:
-            return _request_error_to_tool_error(exc)
-
-    def invite_assistant_to_space(
-        self,
-        *,
-        space_id: int,
-        assistant_id: int,
-    ) -> dict[str, Any] | ToolError:
-        """Invite a reachable assistant's owner to a space after membership is agreed."""
-
-        activity_id = self._publish_activity(
-            phase="started",
-            stage="implementation",
-            title="Sending workspace invitation",
-            surfaces=["invitations", "membership"],
-            related_entities=_membership_entities(space_id, assistant_id),
-        )
-        invalid = self._validate_space_and_assistant(space_id, assistant_id)
-        if invalid is not None:
-            self._publish_failure(
-                activity_id,
-                title="Could not send workspace invitation",
-                error=invalid,
-            )
-            return invalid
-
-        try:
-            result = unify.invite_assistant_to_space(
-                space_id,
-                assistant_id,
-                api_key=SESSION_DETAILS.unify_key,
-            )
-        except RequestError as exc:
-            error = _request_error_to_tool_error(exc)
-            self._publish_failure(
-                activity_id,
-                title="Could not send workspace invitation",
-                error=error,
-            )
-            return error
-        self._publish_activity(
-            phase="completed",
-            stage="implementation",
-            title="Sent workspace invitation",
-            surfaces=["invitations", "membership"],
-            related_entities=[
-                *_membership_entities(space_id, assistant_id),
-                _invitation_entity(result),
-            ],
-            activity_id=activity_id,
-        )
-        return result
-
-    def cancel_space_invitation(self, *, invite_id: int) -> dict[str, Any] | ToolError:
-        """Cancel a pending space invitation created by the Coordinator owner.
-
-        Space invitations are keyed by invite id; Orchestra enforces that only
-        the inviter can cancel an invitation.
-        """
-
-        activity_id = self._publish_activity(
-            phase="started",
-            stage="implementation",
-            title="Cancelling workspace invitation",
-            surfaces=["invitations"],
-            related_entities=[
-                activity_entity("invitation", name="Invitation", entity_id=invite_id),
-            ],
-        )
-        try:
-            result = unify.cancel_space_invitation(
-                invite_id,
-                api_key=SESSION_DETAILS.unify_key,
-            )
-        except RequestError as exc:
-            error = _request_error_to_tool_error(exc)
-            self._publish_failure(
-                activity_id,
-                title="Could not cancel workspace invitation",
-                error=error,
-            )
-            return error
-        self._publish_activity(
-            phase="completed",
-            stage="implementation",
-            title="Cancelled workspace invitation",
-            surfaces=["invitations"],
-            related_entities=[
-                activity_entity("invitation", name="Invitation", entity_id=invite_id),
-            ],
-            activity_id=activity_id,
-        )
-        return result
-
-    def list_pending_invitations(self) -> list[dict[str, Any]] | ToolError:
-        """List pending space invitations for the Coordinator owner."""
-
-        try:
-            return unify.list_pending_invitations(api_key=SESSION_DETAILS.unify_key)
         except RequestError as exc:
             return _request_error_to_tool_error(exc)
 
@@ -1345,13 +1328,26 @@ class CoordinatorTools:
             "commission_colleague_into_workspace": (
                 self.commission_colleague_into_workspace
             ),
-            "invite_assistant_to_space": self.invite_assistant_to_space,
-            "cancel_space_invitation": self.cancel_space_invitation,
-            "list_pending_invitations": self.list_pending_invitations,
             "set_setup_state": self.set_setup_state,
             "add_setup_checklist_item": self.add_setup_checklist_item,
             "update_setup_checklist_item": self.update_setup_checklist_item,
         }
+
+    def _org_member_is_reachable(self, member_user_id: str) -> bool | ToolError:
+        """Return whether a user id belongs to this Coordinator's org roster."""
+
+        if SESSION_DETAILS.org_id is None:
+            return _invalid_argument(
+                message="`member_user_id` targeting is only available in organization workspaces.",
+                details={"member_user_id": member_user_id},
+            )
+        members = self.list_org_members()
+        if _is_tool_error(members):
+            return members
+        return any(
+            str(member.get("user_id") or member.get("id") or "") == str(member_user_id)
+            for member in members
+        )
 
     def _assistant_is_reachable(self, agent_id: int) -> bool | ToolError:
         if str(agent_id) in self._known_assistant_ids:
@@ -1583,24 +1579,34 @@ def _space_entity(
     )
 
 
-def _membership_entities(space_id: int, assistant_id: int):
-    return [
+def _membership_entities(
+    space_id: int,
+    *,
+    assistant_id: int | None = None,
+    member_user_id: str | None = None,
+):
+    entities: list[CoordinatorActivityEntity | dict[str, Any]] = [
         activity_entity("workspace", name="Workspace", entity_id=space_id),
-        activity_entity("colleague", name="Colleague", entity_id=assistant_id),
     ]
+    if assistant_id is not None:
+        entities.append(
+            activity_entity("colleague", name="Colleague", entity_id=assistant_id),
+        )
+    if member_user_id:
+        entities.append(
+            activity_entity("human", name="Member", entity_id=member_user_id),
+        )
+    return entities
 
 
-def _invitation_entity(invitation: dict[str, Any]):
-    return activity_entity(
-        "invitation",
-        name="Invitation",
-        entity_id=(
-            invitation.get("invite_id")
-            or invitation.get("inviteId")
-            or invitation.get("invitation_id")
-            or invitation.get("id")
-        ),
-    )
+def _extract_assistant_id(result: dict[str, Any]) -> int | None:
+    assistant_id = result.get("assistant_id") or result.get("agent_id")
+    if assistant_id is None:
+        return None
+    try:
+        return int(assistant_id)
+    except (TypeError, ValueError):
+        return None
 
 
 def _surfaces_for_preseed(
@@ -1643,6 +1649,18 @@ def _space_not_found(space_id: int) -> ToolError:
         "error_kind": "not_found",
         "message": f"Space {space_id} is not reachable by this Coordinator.",
         "details": {"space_id": space_id},
+    }
+
+
+def _org_member_not_found(member_user_id: str) -> ToolError:
+    """Build a tool error for org member ids outside the reachable set."""
+
+    return {
+        "error_kind": "not_found",
+        "message": (
+            f"Organization member {member_user_id} is not reachable by this Coordinator."
+        ),
+        "details": {"member_user_id": member_user_id},
     }
 
 

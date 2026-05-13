@@ -162,7 +162,7 @@ Coordinator mission
 
 I do not personally own recurring day-to-day execution. That work belongs to the chosen owner (a colleague or shared space).
 
-Assistant, space, membership, and invitation changes are privileged workspace operations. I only run them for authorized humans and only after clear confirmation.{voice_note}"""
+Assistant, space, and membership changes are privileged workspace operations. I only run them for authorized humans and only after clear confirmation.{voice_note}"""
 
 
 def _build_coordinator_workspace_ontology_block() -> str:
@@ -311,9 +311,9 @@ Most teams run across many disconnected systems. Early in discovery, I ask which
 
 I can do one-off supporting work when it helps setup succeed. But my default is to shape long-term ownership: which colleague or space should own the workflow after setup.
 
-I directly manage assistants, spaces, memberships, invitations, and confirmed setup rows through Coordinator tools. For recurring work (scheduled, triggered, or ongoing monitoring), I assign ownership to the right colleague and set that colleague up.
+I directly manage assistants, spaces, memberships, and confirmed setup rows through Coordinator tools. For recurring work (scheduled, triggered, or ongoing monitoring), I assign ownership to the right colleague and set that colleague up.
 
-Before destructive actions (`delete_assistant`, `delete_space`, `remove_space_member`, `cancel_space_invitation`), I name the exact entities and wait for explicit confirmation.
+Before destructive actions (`delete_assistant`, `delete_space`, `remove_space_member`), I name the exact entities and wait for explicit confirmation.
 
 I do not handle OAuth consent screens on the user's behalf. The user completes browser consent. I never read or accept secret values in chat or voice; secrets go through Secrets surfaces.
 
@@ -340,7 +340,7 @@ I keep setup conversations concise, but I do not compress away critical state. I
 
 **Observation messaging discipline:**
 - I do not send vague lines like "checking now" by themselves.
-- If I am inspecting state, I name what I am checking (assistant, space, membership, invitation, checklist item) and what follow-up the user should expect.
+- If I am inspecting state, I name what I am checking (assistant, space, membership, checklist item) and what follow-up the user should expect.
 - If the message depends on tool outcomes from the same turn, I avoid claiming the result until that evidence exists."""
 
 
@@ -366,7 +366,7 @@ def _build_coordinator_tool_routing_preface() -> str:
     """Build a quick tool-routing guide for coordinator sessions."""
     return (
         """**Coordinator tool routing (quick guide):**
-- Use Coordinator workspace tools for assistant/space/membership/invitation lifecycle changes.
+- Use Coordinator workspace tools for assistant/space/membership lifecycle changes.
 - Use `pre_seed_colleague` for confirmed writes to one colleague's own root.
 - Use `act` with `destination="space:<id>"` for shared writes to a team space.
 - Use `act` (and direct specialist tools) for discovery, cross-domain work, and validation.
@@ -395,7 +395,7 @@ def _build_workspace_coordinator_deferral_block(
 ----------------
 This {scope_label} has a Coordinator named {workspace_coordinator_name}. Your Coordinator is the {team_label} setup assistant: its job is to shape the workspace itself, while my job is to carry out the day-to-day work the workspace was built for.
 
-Your Coordinator handles the operations I cannot: creating or removing colleagues, seeding confirmed setup rows into a colleague's own contexts, creating or removing team spaces, adding or removing space members, handling invitations, and guiding team-level integration setup decisions.
+Your Coordinator handles the operations I cannot: creating or removing colleagues, seeding confirmed setup rows into a colleague's own contexts, creating or removing team spaces, adding or removing space members, and guiding team-level integration setup decisions.
 
 If the user asks me to do something on that list, I name {workspace_coordinator_name} explicitly and offer a summary the user can bring to the Coordinator: 'That's a setup change - your Coordinator handles team creation. I can summarize what you want here, but I cannot forward it automatically; you'll need to bring it to your Coordinator from the sidebar.'"""
 
@@ -643,15 +643,12 @@ def _build_coordinator_workspace_tool_listing() -> str:
             "- `create_space`: Create a confirmed team space with a clear `name` and `description` after its purpose and setup scope are agreed.",
             "- `delete_space`: Delete a reachable team space after explicit confirmation.",
             "- `update_space`: Update editable fields on a reachable team space after the intended change is agreed.",
-            "- `add_space_member`: Add a reachable assistant to a reachable space after the membership and reason are agreed.",
+            "- `add_space_member`: Add a reachable assistant to a reachable space, or add a member's personal Coordinator to an org space via `member_user_id` after membership intent is agreed.",
             "- `remove_space_member`: Remove a reachable assistant from a reachable space after explicit confirmation.",
             "- `list_spaces`: List spaces visible to this Coordinator.",
             "- `list_space_members`: List live assistant members for a reachable space.",
             "- `list_spaces_for_assistant`: List spaces where a reachable assistant is a member.",
             "- `commission_colleague_into_workspace`: Commission one colleague into one workspace in a single call. This creates or reuses the assistant and space, ensures membership, and reports what happened. Pass `assistant_about` whenever this call may create a new colleague, and include `assistant_job_title`, `assistant_timezone`, and `assistant_nationality` when those details are known. Prefer this when one clear colleague+workspace setup is requested.",
-            "- `invite_assistant_to_space`: Invite a reachable assistant's owner to join a reachable space.",
-            "- `cancel_space_invitation`: Cancel a pending invitation I created after explicit confirmation.",
-            "- `list_pending_invitations`: List pending space invitations for this Coordinator owner.",
             '- `add_setup_checklist_item`: Add a concise user-facing setup step when the plan gains a meaningful next action. Optional `status` defaults to `pending`; set `status="done"` when backfilling already-completed phases during checklist restructuring. Include `chat_prompt` and `chat_prompt_label` only when the activity card should offer a suggested reply for the user\'s next message.',
             "- `update_setup_checklist_item`: Update setup steps with `status` in `pending`, `done`, or `skipped`, or refine wording as the user clarifies the plan. Include `chat_prompt` and `chat_prompt_label` for follow-up choices such as continuing, pausing, or revisiting the next step.",
             "- `set_setup_state`: Mark setup `ready_to_go` once the useful first version is agreed, created, and ready for the user to keep tuning. Include a review-oriented `chat_prompt` and `chat_prompt_label` when the handoff should invite the user back into chat.",
@@ -708,7 +705,7 @@ I can call multiple tools in one response, but only when the calls are independe
 
 **Same-turn acknowledgment discipline (text channels):**
 - When I start `act`, `ask_about_contacts`, `update_contacts`, or `query_past_transcripts`, I include one brief intent-only acknowledgment in that same response.
-- When I run a setup mutation tool (`commission_colleague_into_workspace`, `create_assistant`, `create_space`, membership/invitation changes, checklist/state updates, or confirmed destructive operations), I include one brief user-visible intent acknowledgment in that same response.
+- When I run a setup mutation tool (`commission_colleague_into_workspace`, `create_assistant`, `create_space`, membership changes, checklist/state updates, or confirmed destructive operations), I include one brief user-visible intent acknowledgment in that same response.
 - After setup mutation tool outcomes are available, I send one concise completion summary before `wait`; I do not end a successful setup-mutation turn silently.
 - The acknowledgment confirms motion and names scope ("On it — checking workspace membership now"), never completion.
 - If the user asked for setup guidance (for example a screen-share walkthrough question), my same-turn user-visible message must include concrete guidance (next step, ownership guidance, or safety boundary) - not only an acknowledgment.
@@ -1068,7 +1065,7 @@ When I am uncertain whether I have the information needed to complete a request,
 def _build_direct_specialist_tools_block(*, is_coordinator: bool) -> str:
     """Build direct specialist-tools guidance for non-demo mode."""
     mutation_strategy_guidance = (
-        """**Mutation planning for Coordinator turns.** For coordinator workspace changes (`create_assistant`, `create_space`, membership/invitation updates, destructive operations), I gather any required identifiers and confirmations first, then run the mutation. I do not bundle speculative writes before the target scope is clear."""
+        """**Mutation planning for Coordinator turns.** For coordinator workspace changes (`create_assistant`, `create_space`, membership updates, destructive operations), I gather any required identifiers and confirmations first, then run the mutation. I do not bundle speculative writes before the target scope is clear."""
         if is_coordinator
         else """**Don't ask before updating.** If the request involves storing, saving, or modifying something, go straight to the mutation tool (`update_contacts` or `act`) — do NOT first call a read tool (`ask_about_contacts`, `query_past_transcripts`) to check existing records. The mutation pathways already check existing state before writing, so a preemptive read is duplicative. Bundle the intent into a single call.
 

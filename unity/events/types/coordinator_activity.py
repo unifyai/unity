@@ -18,7 +18,6 @@ CoordinatorActivityEntityType = Literal[
     "dashboard",
     "function",
     "data",
-    "invitation",
     "validation",
 ]
 
@@ -47,7 +46,6 @@ CoordinatorActivitySurface = Literal[
     "colleagues",
     "workspaces",
     "membership",
-    "invitations",
     "credentials",
     "tasks",
     "memory",

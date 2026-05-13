@@ -277,7 +277,6 @@ def _fallback_entity_name(entity_type: CoordinatorActivityEntityType) -> str:
         "dashboard": "Dashboard",
         "function": "Function",
         "data": "Data",
-        "invitation": "Invitation",
         "validation": "Validation",
     }[entity_type]
 

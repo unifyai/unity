@@ -66,8 +66,6 @@ COMMISSIONING_MUTATION_TOOL_NAMES = frozenset(
         "update_space",
         "add_space_member",
         "remove_space_member",
-        "invite_assistant_to_space",
-        "cancel_space_invitation",
         "set_setup_state",
         "add_setup_checklist_item",
         "update_setup_checklist_item",
