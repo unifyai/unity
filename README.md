@@ -389,6 +389,14 @@ Hermes pairs a single ~12k-LOC `AIAgent` loop with four surfaces (CLI, TUI, gate
 
 </details>
 
+> **A small bit of history.** This architecture has been running in Unity since 2025 — well ahead of the wider conversation about it. For the record:
+>
+> - **`SteerableToolHandle`** (the universal steering protocol) — first commit **September 23, 2025**. That predates OpenClaw's first commit (Nov 24, 2025), Hermes Agent's `interrupt()` (Feb 3, 2026) and `steer()` (Apr 18, 2026).
+> - **`ConversationManager` + dual-brain LiveKit voice** — first commit **November 12, 2025**. That predates OpenClaw's `voice-call` plugin (Jan 11, 2026) by two months.
+> - **The two-tier interaction-loop / background-reasoner pattern** as a whole — operational since November 2025. The Thinking Machines paper that articulated the same architecture was published **May 11, 2026**, six months later.
+>
+> We're not claiming foresight; the convergence is just interesting if you find architectural archaeology fun. Repo dates verifiable in `git log`.
+
 ---
 
 ## Under the hood
