@@ -215,28 +215,28 @@ sequenceDiagram
     autonumber
     actor User
     participant CM as ConversationManager
-    participant Actor
+    participant Ax as Actor
     participant TM as TranscriptManager
 
     User->>CM: "find when Sarah last mentioned Berlin"
-    CM->>Actor: act(prompt)
-    activate Actor
-    Actor-->>CM: handle_A (SteerableToolHandle)
+    CM->>Ax: act(prompt)
+    activate Ax
+    Ax-->>CM: handle_A (SteerableToolHandle)
     Note over CM: handle_A stored in<br/>in_flight_actions
-    Actor->>TM: transcripts.ask(...)
+    Ax->>TM: transcripts.ask(...)
     activate TM
-    TM-->>Actor: handle_B (nested SteerableToolHandle)
+    TM-->>Ax: handle_B (nested SteerableToolHandle)
 
     User->>CM: "actually include emails too"
     Note over CM: slow brain wakes,<br/>picks the steering tool<br/>for handle_A
-    CM->>Actor: handle_A.interject("...also emails")
-    Actor->>TM: handle_B.interject("...also emails")
-    TM-->>Actor: refined results
+    CM->>Ax: handle_A.interject("...also emails")
+    Ax->>TM: handle_B.interject("...also emails")
+    TM-->>Ax: refined results
     deactivate TM
-    Actor-->>CM: notification (intermediate progress)
+    Ax-->>CM: notification (intermediate progress)
     CM-->>User: "scanning emails too..."
-    Actor-->>CM: handle_A.result
-    deactivate Actor
+    Ax-->>CM: handle_A.result
+    deactivate Ax
     CM-->>User: final answer
 ```
 
