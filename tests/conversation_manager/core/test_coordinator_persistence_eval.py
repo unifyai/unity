@@ -528,7 +528,6 @@ async def test_coordinator_persists_confirmed_shared_space_guidance():
                     "pre_seed_colleague",
                     "create_space",
                     "add_space_member",
-                    "invite_assistant_to_space",
                 },
             ),
             space_summaries=(space_summary,),

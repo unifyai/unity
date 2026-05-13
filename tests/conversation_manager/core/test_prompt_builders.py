@@ -173,7 +173,7 @@ class TestCoordinatorPrompt:
         assert "one colleague root only" in prompt
         assert 'destination="space:<id>"' in prompt
         assert "remove_space_member" in prompt
-        assert "cancel_space_invitation" in prompt
+        assert "add_space_member" in prompt
         assert "cannot upload local custom media for colleague profiles" in prompt
         assert "fine-grained per-user permissions" in prompt
 
@@ -246,7 +246,7 @@ class TestCoordinatorPrompt:
         assert "your Coordinator" in prompt
         assert "creating or removing colleagues" in prompt
         assert "creating or removing team spaces" in prompt
-        assert "handling invitations" in prompt
+        assert "adding or removing space members" in prompt
         assert "I cannot forward it automatically" in prompt
         assert "you'll need to bring it to your Coordinator from the sidebar" in prompt
         assert "`create_assistant`" not in prompt

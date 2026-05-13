@@ -48,9 +48,6 @@ class TestCoordinatorTools:
             "list_space_members",
             "list_spaces_for_assistant",
             "commission_colleague_into_workspace",
-            "invite_assistant_to_space",
-            "cancel_space_invitation",
-            "list_pending_invitations",
             "set_setup_state",
             "add_setup_checklist_item",
             "update_setup_checklist_item",
@@ -604,7 +601,69 @@ class TestCoordinatorTools:
         )
 
         assert result == {"membership_status": "active"}
-        assert member_calls == [((11, 42), {"api_key": "owner-key"})]
+        assert member_calls == [
+            (
+                (11,),
+                {
+                    "assistant_id": 42,
+                    "member_user_id": None,
+                    "api_key": "owner-key",
+                },
+            ),
+        ]
+
+    def test_space_member_writes_support_member_targeting(self, monkeypatch):
+        member_calls = []
+
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_spaces",
+            lambda **_: [{"space_id": 11}],
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.list_org_members",
+            lambda *_, **__: [{"user_id": "member-1"}],
+        )
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.add_space_member",
+            lambda *args, **kwargs: member_calls.append((args, kwargs))
+            or {"membership_status": "active", "assistant_id": 91},
+        )
+
+        result = CoordinatorTools(cm=object()).add_space_member(
+            space_id=11,
+            member_user_id="member-1",
+        )
+
+        assert result == {"membership_status": "active", "assistant_id": 91}
+        assert member_calls == [
+            (
+                (11,),
+                {
+                    "assistant_id": None,
+                    "member_user_id": "member-1",
+                    "api_key": "owner-key",
+                },
+            ),
+        ]
+
+    def test_space_member_writes_require_exactly_one_target_shape(self):
+        tools = CoordinatorTools(cm=object())
+
+        missing_target = tools.add_space_member(space_id=11)
+        assert missing_target["error_kind"] == "invalid_argument"
+
+        duplicate_target = tools.add_space_member(
+            space_id=11,
+            assistant_id=42,
+            member_user_id="member-1",
+        )
+        assert duplicate_target["error_kind"] == "invalid_argument"
+
+        blank_member_target = tools.add_space_member(
+            space_id=11,
+            member_user_id="   ",
+        )
+        assert blank_member_target["error_kind"] == "invalid_argument"
 
     def test_remaining_space_wrappers_forward_after_reachability(
         self,
@@ -639,16 +698,6 @@ class TestCoordinatorTools:
             lambda *args, **kwargs: calls.append(("assistant_spaces", args, kwargs))
             or [{"space_id": 11}],
         )
-        monkeypatch.setattr(
-            "unity.conversation_manager.domains.coordinator_tools.unify.invite_assistant_to_space",
-            lambda *args, **kwargs: calls.append(("invite", args, kwargs))
-            or {"invite_id": 13},
-        )
-        monkeypatch.setattr(
-            "unity.conversation_manager.domains.coordinator_tools.unify.list_pending_invitations",
-            lambda **kwargs: calls.append(("pending", (), kwargs))
-            or [{"invite_id": 13}],
-        )
 
         tools = CoordinatorTools(cm=object())
 
@@ -658,19 +707,12 @@ class TestCoordinatorTools:
         ) == {"space_id": 11, "name": "Ops Team"}
         assert tools.list_space_members(space_id=11) == [{"assistant_id": 42}]
         assert tools.list_spaces_for_assistant(assistant_id=42) == [{"space_id": 11}]
-        assert tools.invite_assistant_to_space(
-            space_id=11,
-            assistant_id=42,
-        ) == {"invite_id": 13}
         assert tools.remove_space_member(space_id=11, assistant_id=42) == {}
-        assert tools.list_pending_invitations() == [{"invite_id": 13}]
         assert calls == [
             ("update", (11, {"name": "Ops Team"}), {"api_key": "owner-key"}),
             ("members", (11,), {"api_key": "owner-key"}),
             ("assistant_spaces", (42,), {"api_key": "owner-key"}),
-            ("invite", (11, 42), {"api_key": "owner-key"}),
             ("remove", (11, 42), {"api_key": "owner-key"}),
-            ("pending", (), {"api_key": "owner-key"}),
         ]
 
     def test_fabricated_space_id_returns_tool_error_without_sdk_write(
@@ -717,19 +759,6 @@ class TestCoordinatorTools:
 
         assert result["error_kind"] == "conflict"
         assert result["details"]["status_code"] == 409
-
-    def test_cancel_space_invitation_uses_owner_key(self, monkeypatch):
-        calls = []
-
-        monkeypatch.setattr(
-            "unity.conversation_manager.domains.coordinator_tools.unify.cancel_space_invitation",
-            lambda *args, **kwargs: calls.append((args, kwargs)) or {},
-        )
-
-        result = CoordinatorTools(cm=object()).cancel_space_invitation(invite_id=13)
-
-        assert result == {}
-        assert calls == [((13,), {"api_key": "owner-key"})]
 
     def test_commission_colleague_into_workspace_creates_missing_resources(
         self,
