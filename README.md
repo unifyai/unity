@@ -12,13 +12,15 @@
 
 # Unity
 
-**The open-source AI agent that takes voice and video calls — and lets you interrupt, redirect, or pause it mid-task without restarting from scratch.**
+**Open-source virtual teammates that take voice and video calls — and let you interrupt, redirect, or pause them mid-task without restarting.**
 
-Most agents stop the moment you talk. They make you wait for a tool call to finish, then re-explain when you change your mind. Unity stays listening through everything — chat, voice, phone, video, screen-share — and treats your interjections, corrections, and questions as first-class inputs rather than interruptions to recover from. Whether the agent is researching flights, drafting an email, or sitting on a live call with a vendor, you can ask *"how's it going?"*, say *"actually do X instead"*, or pause it for ten minutes — without losing context.
+Hop on a call with one. Send a follow-up text. Drop them a calendar invite. They remember who you are next time, what you talked about last week, and what they promised to do about it.
 
-It's built around long-lived state, not one-shot conversations. Contacts, projects, files, knowledge, and follow-ups persist as queryable structure — so the assistant remembers who Sarah is, what the Henderson project is about, and what you committed to last Wednesday, regardless of which channel you raised it on.
+Most agents stop the moment you talk. They make you wait for a tool call to finish, then re-explain when you change your mind. Unity's teammates stay listening through everything — chat, voice, phone, video, screen-share — and treat your interjections, corrections, and questions as first-class inputs rather than interruptions to recover from. Whether the assistant is researching flights, drafting an email, or sitting on a live call with a vendor, you can ask *"how's it going?"*, say *"actually do X instead"*, or pause for ten minutes — without losing context.
 
-> **Start here:** [Overview](https://docs.unify.ai/basics/overview) • [Quickstart](https://docs.unify.ai/basics/quickstart) • [Demos](https://docs.unify.ai/basics/demos) • [ARCHITECTURE.md](ARCHITECTURE.md)
+It's built around long-lived state, not one-shot conversations. Contacts, projects, files, knowledge, and follow-ups persist as queryable structure — so a teammate remembers who Sarah is, what the Henderson project is about, and what they committed to on your behalf last Wednesday, regardless of which channel you raised it on.
+
+> **Start here:** [console.unify.ai](https://console.unify.ai) — try a teammate in 60 seconds • [Overview](https://docs.unify.ai/basics/overview) • [Quickstart](https://docs.unify.ai/basics/quickstart) • [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ---
 
@@ -68,9 +70,25 @@ Unity        ▸  Three tasks running at once.
 
 ---
 
-## Quick Install
+## Try one
 
-By default, Unity's open-core quickstart is fully local: the runtime, the LLM client, and the persistence backend ([Orchestra](https://github.com/unifyai/orchestra), via Docker) all run on your machine. Hosted backend at [unify.ai](https://unify.ai) is optional.
+There are two paths, depending on whether you want to *meet a teammate* or *run the whole stack yourself*.
+
+### 🌐 Hosted — fastest
+
+The lowest-friction path is the hosted product at **[console.unify.ai](https://console.unify.ai)**. Sign in with Google, get matched with a teammate, and start chatting in about a minute. No install, no Docker, no API keys to manage. Voice, video, telephony, and integrations are all turn-key.
+
+### 💻 Self-host — fully open
+
+Run the whole stack on your own machine. Runtime, persistence backend, LLM client, and Python SDK are all open-source — see [Self-host](#self-host) below.
+
+**No signup required.** The local installer auto-generates a synthetic API key for the bundled Orchestra and wires everything together. The only key you bring is one LLM provider key (OpenAI or Anthropic).
+
+---
+
+## Self-host
+
+By default, Unity's open-core install is fully local: the runtime, the LLM client, and the persistence backend ([Orchestra](https://github.com/unifyai/orchestra), via Docker) all run on your machine. The hosted product at [console.unify.ai](https://console.unify.ai) is optional — Unity does not depend on it for any local feature.
 
 **Prerequisites:**
 
@@ -87,7 +105,7 @@ By default, Unity's open-core quickstart is fully local: the runtime, the LLM cl
 curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash
 ```
 
-The installer clones `unity`, `unify`, `unillm`, and `orchestra` as siblings under `~/.unity/`, installs dependencies, creates a `unity` CLI shim in `~/.local/bin/`, boots a local Orchestra in Docker, and writes the local `UNIFY_KEY` / `ORCHESTRA_URL` into `~/.unity/unity/.env`.
+The installer clones `unity`, `unify`, `unillm`, and `orchestra` as siblings under `~/.unity/`, installs dependencies, creates a `unity` CLI shim in `~/.local/bin/`, boots a local Orchestra in Docker, **generates a local API key for the bundled Orchestra**, and wires `ORCHESTRA_URL` and that auto-generated key into `~/.unity/unity/.env`. No Unify account or external signup is required.
 
 Add one model provider key to `~/.unity/unity/.env`:
 
@@ -122,13 +140,13 @@ If you're evaluating Unity as a runtime, start with **option 2**.
 Other `unity` subcommands: `unity setup`, `unity status`, `unity stop`, `unity restart`, `unity help`.
 
 <details>
-<summary>Skip the local Orchestra (point at your own backend)</summary>
+<summary>Skip the local Orchestra (point at your own deployment)</summary>
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash -s -- --skip-setup
 ```
 
-That leaves the code installed but expects you to point Unity at either your own Orchestra deployment via `ORCHESTRA_URL`, or Unify's hosted backend via `UNIFY_KEY` + `ORCHESTRA_URL`.
+That leaves the code installed but doesn't spin up Orchestra. You'll need to point Unity at your own Orchestra deployment (or another team's shared one) via `ORCHESTRA_URL` and a matching API key in `~/.unity/unity/.env`.
 
 </details>
 
@@ -524,7 +542,9 @@ Unity is the **open core** of the Unify platform. This repository contains the a
 
 The supporting infrastructure is open-source too: [Orchestra](https://github.com/unifyai/orchestra) (persistence, runs locally via Docker), [Unify](https://github.com/unifyai/unify) (Python SDK), and [UniLLM](https://github.com/unifyai/unillm) (provider-agnostic LLM client).
 
-**Not open-sourced** is the managed platform layer around the runtime: hosted communication routing, telephony and SIP infrastructure, Microsoft 365 tenant integration, assistant session control plane, billing, and identity. You can point Unity at Unify's hosted backend instead of a local Orchestra, but features that depend on the managed platform layer only work against the hosted service.
+**Not open-sourced** is the managed platform layer around the runtime: hosted communication routing, telephony and SIP infrastructure, Microsoft 365 tenant integration, the assistant session control plane, the web dashboard ([console.unify.ai](https://console.unify.ai)), and identity. Features that depend on the managed platform layer only work against the hosted service.
+
+A small note on the Orchestra source tree: it ships with Stripe and credits routines that exist for the hosted product. **They are dormant in local mode** — no external calls fire, no signups, no charges; the local install simply ignores them. They live in the same repo to keep one canonical persistence layer rather than fork it for self-hosting.
 
 | Repo | Role |
 |------|------|
