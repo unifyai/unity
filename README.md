@@ -12,56 +12,76 @@
 
 # Unity
 
-Unity is the runtime behind [Unify's](https://unify.ai) persistent AI colleagues. It is built for assistants you can interrupt mid-task, redirect without restarting, run in parallel, and grow over time through typed, long-lived state.
+**The open-source AI agent that takes voice and video calls — and lets you interrupt, redirect, or pause it mid-task without restarting from scratch.**
 
-Unity and [Hermes Agent](https://github.com/NousResearch/hermes-agent) overlap in ambition, but they optimize for different layers. Hermes is a broad personal-agent product with a large end-user surface. Unity is the cognitive runtime for a different bet: steerable nested execution, code-first plans over typed primitives, dual-brain voice, and distributed state managers that consolidate memory into queryable tables instead of keeping everything in one ever-growing loop.
+Most agents stop the moment you talk. They make you wait for a tool call to finish, then re-explain when you change your mind. Unity stays listening through everything — chat, voice, phone, video, screen-share — and treats your interjections, corrections, and questions as first-class inputs rather than interruptions to recover from. Whether the agent is researching flights, drafting an email, or sitting on a live call with a vendor, you can ask *"how's it going?"*, say *"actually do X instead"*, or pause it for ten minutes — without losing context.
+
+It's built around long-lived state, not one-shot conversations. Contacts, projects, files, knowledge, and follow-ups persist as queryable structure — so the assistant remembers who Sarah is, what the Henderson project is about, and what you committed to last Wednesday, regardless of which channel you raised it on.
 
 > **Start here:** [Overview](https://docs.unify.ai/basics/overview) • [Quickstart](https://docs.unify.ai/basics/quickstart) • [Demos](https://docs.unify.ai/basics/demos) • [ARCHITECTURE.md](ARCHITECTURE.md)
 
-## Why Unity
+---
+
+## What this feels like
+
+```text
+You          ▸  "Find me flights to Tokyo for next month."
+Unity        ▸  (starts searching)
+You          ▸  "Actually, also check trains to Osaka."
+Unity        ▸  (adjusts the in-flight search — doesn't restart)
+You          ▸  "Pause that, something urgent."
+Unity        ▸  (freezes exactly where it is)
+... five minutes later ...
+You          ▸  "OK, resume. How's it going?"
+Unity        ▸  (picks up where it left off, gives you a status update)
+```
+
+```text
+Unity        ▸  (on a live phone call with a vendor)
+You          ▸  (in a side chat) "Don't agree to anything over $5k."
+Unity        ▸  (the constraint reaches the call mid-conversation)
+```
+
+```text
+Unity        ▸  Three tasks running at once.
+                  [0] research_flights   ██████████░░░  in progress
+                  [1] draft_summary      ████████████░  in progress
+                  [2] find_restaurants   ██░░░░░░░░░░  starting
+                Each one independently inspectable, steerable, and pausable.
+```
+
+---
+
+## Highlights
 
 <table>
-<tr><td><b>Steerable nested execution</b></td><td>Every operation returns a live handle. Pause, resume, interject, or ask questions at any depth without restarting the work.</td></tr>
-<tr><td><b>Code plans, not flat tool menus</b></td><td>The Actor writes Python programs over typed primitives with variables, loops, and control flow, so multi-step work becomes one coherent plan.</td></tr>
-<tr><td><b>Dual-brain voice</b></td><td>A real-time voice process handles sub-second conversation while a slower orchestration layer keeps planning and using tools in the background.</td></tr>
-<tr><td><b>Distributed state managers</b></td><td>Contacts, knowledge, tasks, transcripts, guidance, files, images, and more each live behind a dedicated manager with its own async LLM tool loop.</td></tr>
-<tr><td><b>Structured memory consolidation</b></td><td>Documents, calls, screenshares, tasks, and follow-up corrections get distilled into typed, queryable state instead of one opaque transcript summary.</td></tr>
-<tr><td><b>Concurrent steerable actions</b></td><td>Multiple actions can run at once, each with its own inspection and steering surface.</td></tr>
-<tr><td><b>Persistent identity across channels</b></td><td>Messages, SMS, email, phone calls, and meetings all feed the same long-term memory and task state.</td></tr>
+<tr><td><b>🎙️ Takes calls like a person</b></td><td>Live voice, phone, and video calls — with screen-share and webcam frames streamed to the assistant in real time. Not a tool that initiates a call; a participant in the conversation.</td></tr>
+<tr><td><b>✋ Interruptible mid-task</b></td><td>Every operation can be paused, resumed, redirected, or queried while it's running. Including operations <i>nested inside other operations</i>, all the way down.</td></tr>
+<tr><td><b>🧠 Plans in code, not tool-by-tool</b></td><td>Multi-step work becomes one coherent program with variables, loops, and control flow — instead of a noisy chain of one-tool-at-a-time decisions.</td></tr>
+<tr><td><b>📞 One identity across every channel</b></td><td>Chat, SMS, email, phone, voice, video — all feed the same persistent memory. The assistant remembers who Sarah is whether she texted, called, or mailed you.</td></tr>
+<tr><td><b>📚 Structured memory, not transcript soup</b></td><td>Contacts, knowledge, tasks, files, and procedures live in typed, queryable tables — distilled from your conversations every fifty messages.</td></tr>
+<tr><td><b>⚙️ Learns reusable functions, not just markdown</b></td><td>After a successful trajectory, the assistant can save executable Python (with metadata and a venv) — so the next session can compose it into a plan, not re-derive it.</td></tr>
+<tr><td><b>🔀 Concurrent work, independently steerable</b></td><td>Multiple actions can run at once. Pause one, redirect another, ask a third for a status update — without affecting the rest.</td></tr>
+<tr><td><b>⏰ Schedules and triggers in plain English</b></td><td><i>"Every Monday at 9, summarize my unread emails"</i> or <i>"Ping me whenever Alice emails about invoices."</i> Recurring jobs and event triggers are described in natural language, executed by the same agent loop — and can graduate into stored functions after enough successful runs.</td></tr>
+<tr><td><b>🔌 Local-first, fully open</b></td><td>Runtime, persistence backend, LLM client, and Python SDK are all open-source and run locally with one Docker command. Hosted backend optional.</td></tr>
 </table>
 
-## Unity vs Hermes Agent
+---
 
-If you're comparing the two directly, the clearest distinction is the layer each project emphasizes:
-
-| If you want... | Better fit |
-|------|------|
-| A polished personal-agent product with a wide messaging/gateway surface, remote deployment paths, and a large end-user docs surface out of the box | [Hermes Agent](https://github.com/NousResearch/hermes-agent) |
-| A runtime you can study, embed, or extend around interruptible execution, nested steering, code-first planning, and typed long-lived state | Unity |
-
-Unity's distinctive bets are:
-
-- **Every public operation returns a live handle.** Steering is a first-class protocol, not an afterthought.
-- **The Actor writes Python over `primitives.*`.** Multi-step composition happens inside one generated program, not one JSON tool call at a time.
-- **Memory is split across managers.** Contacts, knowledge, tasks, transcripts, guidance, files, and images remain queryable and inspectable as separate domains.
-- **Voice runs as two coordinated brains.** A fast real-time process keeps up with speech while a slower brain continues reasoning and tool use.
-
-## Quick Start
+## Quick Install
 
 By default, Unity's open-core quickstart is fully local: the runtime, the LLM client, and the persistence backend ([Orchestra](https://github.com/unifyai/orchestra), via Docker) all run on your machine. Hosted backend at [unify.ai](https://unify.ai) is optional.
 
-### Fastest path
-
-Prerequisites:
+**Prerequisites:**
 
 - **Python 3.12+** (the installer will fetch it with `uv` if needed)
 - **Docker** (runs the local Orchestra backend)
 - **PortAudio** for audio support
   - macOS: `brew install portaudio`
   - Ubuntu/Debian: `sudo apt-get install portaudio19-dev python3-dev`
-- **One LLM provider key** — [OpenAI](https://platform.openai.com/api-keys) or [Anthropic](https://console.anthropic.com/) are the simplest paths from this README
+- **One LLM provider key** — [OpenAI](https://platform.openai.com/api-keys) or [Anthropic](https://console.anthropic.com/) are the simplest paths
 
-Install:
+**Install:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash
@@ -69,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.
 
 The installer clones `unity`, `unify`, `unillm`, and `orchestra` as siblings under `~/.unity/`, installs dependencies, creates a `unity` CLI shim in `~/.local/bin/`, boots a local Orchestra in Docker, and writes the local `UNIFY_KEY` / `ORCHESTRA_URL` into `~/.unity/unity/.env`.
 
-Then add one model provider key to `~/.unity/unity/.env`:
+Add one model provider key to `~/.unity/unity/.env`:
 
 ```bash
 OPENAI_API_KEY=sk-...
@@ -77,7 +97,7 @@ OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=...
 ```
 
-Run the sandbox:
+**Run the sandbox:**
 
 ```bash
 unity --project_name Sandbox --overwrite
@@ -87,13 +107,11 @@ At the configuration prompt:
 
 | Option | What it gives you |
 |------|------|
-| `1` | ConversationManager orchestration without CodeAct — useful if you want to isolate the top-level brain |
-| `2` | The full runtime: ConversationManager + CodeAct + simulated managers |
+| `1` | Top-level orchestration only — useful for isolating the conversation layer |
+| `2` | The full runtime: orchestration + planning + simulated managers |
 | `3` | Option 2 plus desktop/browser control through `agent-service` |
 
 If you're evaluating Unity as a runtime, start with **option 2**.
-
-Example session:
 
 ```text
 > msg Hey, can you help me organize my upcoming week?
@@ -101,31 +119,21 @@ Example session:
 > email Project Update | Here are the Q3 numbers you asked for...
 ```
 
-Other `unity` subcommands:
+Other `unity` subcommands: `unity setup`, `unity status`, `unity stop`, `unity restart`, `unity help`.
 
-- `unity setup` — re-bootstrap local Orchestra
-- `unity status` — show local Orchestra status
-- `unity stop` — stop local Orchestra
-- `unity restart` — stop + start (wipes the local DB)
-- `unity help`
-
-### Full local open-core path
-
-The local open-core path is the default. You do **not** need a Unify account to run Unity locally with Orchestra in Docker.
-
-If you want to install the code without starting a local Orchestra, use:
+<details>
+<summary>Skip the local Orchestra (point at your own backend)</summary>
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unifyai/unity/main/scripts/install.sh | bash -s -- --skip-setup
 ```
 
-That leaves the code installed but expects you to point Unity at either:
+That leaves the code installed but expects you to point Unity at either your own Orchestra deployment via `ORCHESTRA_URL`, or Unify's hosted backend via `UNIFY_KEY` + `ORCHESTRA_URL`.
 
-- your own Orchestra deployment via `ORCHESTRA_URL`, or
-- Unify's hosted backend via `UNIFY_KEY` + `ORCHESTRA_URL`
+</details>
 
 <details>
-<summary>Manual install</summary>
+<summary>Manual install (no installer script)</summary>
 
 ```bash
 git clone https://github.com/unifyai/unity.git      ~/.unity/unity
@@ -145,38 +153,231 @@ ORCHESTRA_INACTIVITY_TIMEOUT_SECONDS=0 scripts/local.sh start
 
 </details>
 
-### Configuration files
-
-The installer copies `.env.example` to `.env`. That file is intentionally minimal for the public quickstart.
-
-- Use `.env.example` if you want the smallest working sandbox config.
-- Use `.env.advanced.example` if you want local comms, hosted comms, LiveKit, Tavily, voice integrations, visual caching, or test-infra settings.
-
-For the full sandbox matrix — voice mode, live voice calls, local comms, hosted comms, and GUI mode — see [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md).
-
-## What's open and what isn't
-
-Unity is the **open core** of the Unify platform. This repository contains the agent runtime: the managers, async tool loops, CodeAct actor, dual-brain voice coordination, event backbone, and memory consolidation.
-
-The persistence backend is open-source too: [Orchestra](https://github.com/unifyai/orchestra) runs locally by default in the quickstart. The supporting client libraries [Unify](https://github.com/unifyai/unify) and [UniLLM](https://github.com/unifyai/unillm) are open-source as well.
-
-**Not open-sourced** is the managed platform layer around the runtime: hosted communication routing, telephony and SIP infrastructure, Microsoft 365 tenant integration, assistant session control plane, billing, and identity. You can point Unity at Unify's hosted backend instead of a local Orchestra, but features that depend on the managed platform layer only work against the hosted service.
+The installer copies `.env.example` to `.env` (intentionally minimal). For voice mode, live calls, hosted comms, LiveKit, Tavily, or visual caching, see `.env.advanced.example` and [`sandboxes/conversation_manager/README.md`](sandboxes/conversation_manager/README.md).
 
 ---
 
 ## How it works
 
-Every operation in Unity returns a **live handle** you can steer. These handles nest: the user steers the ConversationManager, the ConversationManager steers the Actor, the Actor steers the managers. Corrections, pauses, and queries propagate through the full depth.
+Unity follows the **interaction-model / background-model** split [recently articulated by Thinking Machines](https://thinkingmachines.ai/blog/interaction-models/) — implemented at the harness level, against any LLM you already use.
 
-In practice:
-- "Also include Q2 numbers" mid-way through a report → the agent adjusts without restarting
-- "Pause that, something urgent" → work freezes and resumes exactly where it left off
-- "How's the flight search going?" → you get a status update without disrupting the work
-- Three tasks running at once, each independently steerable
+A persistent **interaction loop** (the `ConversationManager`) stays present with the user across every medium. When work needs deeper reasoning than the conversation can produce instantly, it dispatches a **background reasoner** (the `Actor`), which writes Python plans over a back office of typed state managers. Crucially, **every operation in the system returns a live, steerable handle** — and those handles nest. A correction the user makes in chat propagates *down* through the dispatched action, into whatever manager call is currently running.
 
-### Steerable handles
+```mermaid
+flowchart TB
+    classDef userNode fill:#fbbf24,stroke:#92400e,stroke-width:2px,color:#1f2937
+    classDef mediumNode fill:#60a5fa,stroke:#1e40af,stroke-width:1px,color:#fff
+    classDef brokerNode fill:#111827,stroke:#000,stroke-width:2px,color:#fbbf24
+    classDef interactionNode fill:#f9a8d4,stroke:#9d174d,stroke-width:2px,color:#1f2937
+    classDef actorNode fill:#86efac,stroke:#14532d,stroke-width:2px,color:#1f2937
+    classDef managerNode fill:#e5e7eb,stroke:#6b7280,stroke-width:1px,color:#1f2937
+    classDef libraryNode fill:#c4b5fd,stroke:#5b21b6,stroke-width:2px,color:#1f2937
 
-The universal return type. Every manager's `ask`, `update`, and `execute` methods return one.
+    User(["👤 User"]):::userNode
+
+    subgraph Mediums["Mediums &nbsp;·&nbsp; the assistant's senses"]
+        direction LR
+        Text["💬 Text"]:::mediumNode
+        Voice["📞 Voice / Phone<br/>(LiveKit)"]:::mediumNode
+        Video["🎥 Video / Screen-share<br/>(Unify Meet)"]:::mediumNode
+        Email["✉️ Email · SMS"]:::mediumNode
+    end
+
+    Broker[("⚡ Event Broker · single in-process pub/sub")]:::brokerNode
+
+    subgraph CM["ConversationManager &nbsp;·&nbsp; interaction loop (always present)"]
+        direction TB
+        SlowBrain["slow-brain turn<br/>renders in_flight_actions into its own context"]:::interactionNode
+        SteerTools["per-handle steering tools<br/>(generated dynamically for each live handle)<br/>pause · resume · interject · stop · ask"]:::interactionNode
+    end
+
+    subgraph Actor["Actor &nbsp;·&nbsp; background reasoner"]
+        CodeAct["CodeAct loop<br/>writes Python that composes primitives.*"]:::actorNode
+    end
+
+    subgraph BackOffice["The Back Office &nbsp;·&nbsp; typed state managers, English-language APIs"]
+        direction LR
+        Contacts["Contacts"]:::managerNode
+        Knowledge["Knowledge"]:::managerNode
+        Transcripts["Transcripts"]:::managerNode
+        Tasks["Tasks"]:::managerNode
+        Files["Files"]:::managerNode
+        Images["Images"]:::managerNode
+        Secrets["Secrets"]:::managerNode
+        Web["Web"]:::managerNode
+        Functions["⚙️ Functions<br/><i>executable code</i>"]:::libraryNode
+        Guidance["📖 Guidance<br/><i>procedural prose</i>"]:::libraryNode
+    end
+
+    User ==>|"any modality"| Mediums
+    Mediums ==>|"events"| Broker
+    Broker ==>|"wakes turn"| CM
+    CM ==>|"act(prompt)"| Actor
+    Actor ==>|"primitives.*"| BackOffice
+
+    BackOffice -.->|"SteerableToolHandle"| Actor
+    Actor -.->|"SteerableToolHandle<br/>+ notifications"| CM
+    CM -.->|"streamed responses"| Mediums
+    Mediums -.->|"back to user"| User
+```
+
+**Solid arrows** are dispatch flow. **Dotted arrows** are the *steering bus* — every level returns the same `SteerableToolHandle` type, so steering signals propagate down through the call stack while results and notifications propagate up.
+
+### Why this matters: nested steering in action
+
+This is the demo no other framework can run. The user's mid-flight redirect doesn't abort the run, doesn't append a second prompt, and doesn't wait for the next tool boundary — it propagates through the live nested call stack as a typed signal.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant CM as ConversationManager
+    participant Actor
+    participant TM as TranscriptManager
+
+    User->>CM: "find when Sarah last mentioned Berlin"
+    CM->>Actor: act(prompt)
+    activate Actor
+    Actor-->>CM: handle_A (SteerableToolHandle)
+    Note over CM: handle_A stored in<br/>in_flight_actions
+    Actor->>TM: transcripts.ask(...)
+    activate TM
+    TM-->>Actor: handle_B (nested SteerableToolHandle)
+
+    User->>CM: "actually include emails too"
+    Note over CM: slow brain wakes,<br/>picks the steering tool<br/>for handle_A
+    CM->>Actor: handle_A.interject("...also emails")
+    Actor->>TM: handle_B.interject("...also emails")
+    TM-->>Actor: refined results
+    deactivate TM
+    Actor-->>CM: notification (intermediate progress)
+    CM-->>User: "scanning emails too..."
+    Actor-->>CM: handle_A.result
+    deactivate Actor
+    CM-->>User: final answer
+```
+
+---
+
+## How does this compare to other open-source agents?
+
+The clearest way to see what's distinctive about Unity is to draw the same diagram for adjacent projects, using the same visual language. **Pink** means *persistent supervising loop*. **Black** means *unified event broker*. Click to expand.
+
+<details>
+<summary><b>OpenClaw</b> — channel-first dispatcher + single Pi agent loop</summary>
+
+```mermaid
+flowchart TB
+    classDef userNode fill:#fbbf24,stroke:#92400e,stroke-width:2px,color:#1f2937
+    classDef mediumNode fill:#60a5fa,stroke:#1e40af,stroke-width:1px,color:#fff
+    classDef agentNode fill:#86efac,stroke:#14532d,stroke-width:2px,color:#1f2937
+    classDef pluginNode fill:#c4b5fd,stroke:#5b21b6,stroke-width:2px,color:#1f2937
+    classDef stateNode fill:#e5e7eb,stroke:#6b7280,stroke-width:1px,color:#1f2937
+    classDef dispatchNode fill:#fed7aa,stroke:#c2410c,stroke-width:2px,color:#1f2937
+
+    User(["👤 User"]):::userNode
+
+    subgraph Channels["Channel adapters &nbsp;·&nbsp; one per platform"]
+        direction LR
+        TG["Telegram"]:::mediumNode
+        Disc["Discord"]:::mediumNode
+        Slack["Slack"]:::mediumNode
+        SMS["SMS"]:::mediumNode
+        Nodes["Nodes (devices)"]:::mediumNode
+    end
+
+    Gateway["Gateway daemon &nbsp;·&nbsp; dispatcher<br/>per-session lane: 1 active run<br/>steer = abort + redeliver"]:::dispatchNode
+
+    subgraph PiAgent["Pi embedded agent &nbsp;·&nbsp; single tool-calling loop"]
+        Loop["no supervising loop runs in parallel;<br/>execution gated by approval hooks"]:::agentNode
+    end
+
+    subgraph Tools["Tools (native + plugin + MCP bridge)"]
+        direction LR
+        Core["core tools<br/>(web · exec · sessions_spawn · ...)"]:::stateNode
+        VoicePlug["📞 voice-call plugin<br/><i>discrete tool actions:</i><br/>initiate · speak · end"]:::pluginNode
+        Subagents["🪄 sessions_spawn<br/>(flat subagent fork)"]:::pluginNode
+        MCP["mcporter → MCP servers"]:::stateNode
+    end
+
+    subgraph State["State &nbsp;·&nbsp; local-first artefacts"]
+        direction LR
+        JSONL["JSONL sessions<br/>~/.openclaw/agents/.../"]:::stateNode
+        Workspace["workspace files<br/>📖 SKILL.md · SOUL.md · AGENTS.md"]:::pluginNode
+        MemPlug["memory plugin<br/>(one slot at a time)"]:::stateNode
+    end
+
+    User ==>|"messages"| Channels
+    Channels ==>|"events"| Gateway
+    Gateway ==>|"start / abort run"| PiAgent
+    PiAgent ==>|"tool calls"| Tools
+    PiAgent <==>|"read / write"| State
+```
+
+OpenClaw is a local-first control plane with a wide channel matrix and a plugin marketplace. The Gateway *dispatches* runs but doesn't supervise them; voice is a plugin tool the agent invokes through discrete actions; steering is implemented as abort-and-redeliver. OpenClaw's `VISION.md` explicitly takes "no agent-hierarchy frameworks (manager-of-managers)" as a non-goal — a deliberate, principled bet in the opposite direction from Unity. If you want a personal-assistant **product** with broad channel coverage, OpenClaw is excellent. If you want a runtime built around mid-task steering and structured long-lived state, Unity is shaped differently.
+
+</details>
+
+<details>
+<summary><b>Hermes Agent</b> — many surfaces, one monolithic loop</summary>
+
+```mermaid
+flowchart TB
+    classDef userNode fill:#fbbf24,stroke:#92400e,stroke-width:2px,color:#1f2937
+    classDef mediumNode fill:#60a5fa,stroke:#1e40af,stroke-width:1px,color:#fff
+    classDef agentNode fill:#86efac,stroke:#14532d,stroke-width:2px,color:#1f2937
+    classDef pluginNode fill:#c4b5fd,stroke:#5b21b6,stroke-width:2px,color:#1f2937
+    classDef stateNode fill:#e5e7eb,stroke:#6b7280,stroke-width:1px,color:#1f2937
+    classDef triggerNode fill:#fed7aa,stroke:#c2410c,stroke-width:2px,color:#1f2937
+
+    User(["👤 User"]):::userNode
+    Cron["⏰ cron + webhooks<br/>automation triggers"]:::triggerNode
+
+    subgraph Surfaces["Surfaces &nbsp;·&nbsp; each composes its own toolset bundle"]
+        direction LR
+        CLI["CLI"]:::mediumNode
+        TUI["TUI (Ink + JSON-RPC)"]:::mediumNode
+        Gw["Gateway<br/>(Telegram · Discord · Slack · SMS)"]:::mediumNode
+        ACP["ACP<br/>(IDE)"]:::mediumNode
+    end
+
+    AIAgent["AIAgent &nbsp;·&nbsp; single ~12k-LOC sync tool-calling loop<br/><i>steer() = inject text into next tool result</i><br/><i>interrupt() = thread-scoped abort flag</i>"]:::agentNode
+
+    subgraph Tools["Tools"]
+        direction LR
+        Native["native tools<br/>(auto-discovered tools/*.py)"]:::stateNode
+        ExecCode["execute_code<br/><i>ephemeral Python<br/>against fixed RPC stubs</i>"]:::pluginNode
+        Voice["TTS · voice_mode (PTT)<br/>SMS adapter<br/><i>(no live phone call)</i>"]:::pluginNode
+        Delegate["delegate_tool<br/>(bounded subagents)"]:::pluginNode
+        MCPH["MCP servers<br/>(optional)"]:::stateNode
+    end
+
+    subgraph State["State"]
+        direction LR
+        SQLite["SQLite sessions<br/>+ FTS5 search"]:::stateNode
+        Files["MEMORY.md · USER.md<br/>workspace files"]:::stateNode
+        SkillsLib["📖 SKILL.md library<br/>(hundreds of markdown files)"]:::pluginNode
+        MemProv["memory provider plugin<br/>(mem0 · honcho · ...)"]:::stateNode
+    end
+
+    User ==> Surfaces
+    Cron ==> Surfaces
+    Surfaces ==> AIAgent
+    AIAgent ==> Tools
+    AIAgent <==> State
+```
+
+Hermes pairs a single ~12k-LOC `AIAgent` loop with four surfaces (CLI, TUI, gateway, ACP), a deep markdown skills library, SQLite+FTS5 transcripts, and best-in-class cron / webhook automation. Steering is implemented as text injection into the next tool result; interrupt is a thread-scoped flag. Live telephony isn't in the repo — SMS is, voice is local-only. If you want a polished personal-agent product with a wide messaging surface, broad model support, and mature automation triggers, Hermes is excellent. Unity is making a different bet on what the orchestration layer should look like.
+
+</details>
+
+---
+
+## Under the hood
+
+### Steerable handles — the universal protocol
+
+Every public manager method returns one. The same `ask`, `interject`, `pause`, `resume`, `stop` surface, regardless of whether you're talking to the top-level orchestrator or a deeply nested knowledge query.
 
 ```python
 handle = await actor.act("Research flights to Tokyo and draft an itinerary")
@@ -190,9 +391,11 @@ await handle.pause()
 await handle.resume()
 ```
 
-When the Actor calls `primitives.contacts.ask(...)`, the ContactManager starts its own tool loop and returns its own handle — nested inside the Actor's handle, which is nested inside the ConversationManager's. Steering at any level propagates.
+When the Actor calls `primitives.contacts.ask(...)`, the `ContactManager` starts its own tool loop and returns its own handle — nested inside the Actor's handle, which is nested inside the `ConversationManager`'s. Steering at any level propagates.
 
-### CodeAct — the Actor writes programs
+### CodeAct — the Actor writes Python programs
+
+Most agents emit one JSON tool call at a time and let the LLM stitch results together across turns. Unity's Actor writes a single Python program per turn over typed `primitives.*`:
 
 ```python
 contacts = await primitives.contacts.ask(
@@ -207,36 +410,53 @@ for contact in contacts:
     )
 ```
 
-This runs in a sandboxed execution session with the full `primitives.*` API available — the same typed interfaces the rest of the system uses. One program per turn, with variables, loops, and real control flow. Contact lookup → knowledge retrieval → outbound communication becomes one plan, not three separate tool-selection turns.
+This runs in a sandboxed execution session. Variables, loops, real control flow. A contact lookup → knowledge retrieval → outbound communication becomes one coherent plan rather than three separate tool-selection turns — and the LLM can express intermediate computation directly instead of round-tripping through tool messages.
 
-### Dual-brain voice
+### Dual-brain voice and video
 
-**Slow brain** — the ConversationManager. Sees the full picture: all conversations, notifications, in-flight actions. Makes deliberate decisions. Runs in the main process.
+Live calls run as two coordinated brains:
 
-**Fast brain** — a real-time voice agent on LiveKit, running as a separate subprocess. Sub-second latency. Handles the conversation autonomously.
+- **Slow brain** — the `ConversationManager`. Sees the full picture: all conversations, in-flight actions, structured memory. Makes deliberate decisions. Runs in the main process.
+- **Fast brain** — a real-time voice agent on LiveKit, running as a separate subprocess. Sub-second latency. Handles turn-taking and direct conversation autonomously.
 
-They talk over IPC. When the slow brain wants to guide the conversation, it sends:
-- **SPEAK** — "say exactly this" (bypasses the fast brain's LLM entirely)
+They communicate over IPC. When the slow brain wants to guide the conversation, it sends one of:
+
+- **SPEAK** — "say exactly this" (bypasses the fast brain's LLM)
 - **NOTIFY** — "here's some context, decide what to do with it"
 - **BLOCK** — nothing; the fast brain keeps going on its own
 
-A speech urgency evaluator can preempt the slow brain when the user says something that needs immediate attention.
+Screen-share frames and webcam frames stream to both brains simultaneously, so the fast brain can answer *"can you see my screen?"* without round-tripping, while the slow brain incorporates visual context into longer-running plans.
+
+### Functions and Guidance — a dual library
+
+Unity maintains two persistent libraries that the Actor draws from on every session:
+
+- **`FunctionManager`** — executable Python (with metadata and a venv) that the Actor composes into plans.
+- **`GuidanceManager`** — procedural how-to prose: SOPs, software walkthroughs, multi-step strategies.
+
+After a successful trajectory, a proactive reviewer loop (`store_skills`) can extract *both* — code worth keeping, and the procedural narrative for using it. The next session consults both before reaching for raw tools, by design.
+
+### Schedules and triggers, described in plain English
+
+Recurring and triggered work isn't configured with cron expressions or webhook YAML — it's described to the agent in natural language and stored as a `Task` with `schedule` and `repeat` (for cadences) or `trigger` (for event matches). When the time arrives or the trigger fires, a contained `Actor` run wakes up, reads the task's description, and figures out how to do it.
+
+That same task can graduate over time. After enough successful description-driven runs, the storage-review loop can persist the trajectory as a stored function — at which point the recurring task runs in a hidden, headless lane against that function rather than re-planning from scratch each time. So *"summarize my unread emails every Monday at 9"* starts out as a paragraph the agent interprets, and gradually becomes an entrypoint it just calls.
 
 ### Memory consolidation
 
-Every 50 messages, the MemoryManager runs a background extraction pass. It pulls out:
+Every fifty messages, the `MemoryManager` runs a background extraction pass over the new transcript window. It distills:
 
-- Contact profiles — who people are, their roles, relationships
-- Per-contact summaries — what you've been discussing, sentiment, themes
-- Response policies — how each person prefers to communicate
-- Domain knowledge — project details, preferences, long-term facts
-- Tasks — things you committed to, deadlines, follow-ups
+- **Contact profiles** — who people are, their roles, relationships
+- **Per-contact summaries** — what you've been discussing, sentiment, themes
+- **Response policies** — how each person prefers to be communicated with
+- **Domain knowledge** — project details, preferences, long-term facts
+- **Tasks** — things you committed to, deadlines, follow-ups
 
-Structured, queryable state in typed tables rather than freeform transcript summaries.
+These end up in typed, queryable tables — not freeform transcript summaries.
 
-### Concurrent actions
+### Concurrent steerable actions
 
-```
+```text
 ┌─ In-Flight Actions ────────────────────────────────┐
 │                                                     │
 │  [0] research_flights  ██████████░░░  In progress   │
@@ -251,16 +471,18 @@ Structured, queryable state in typed tables rather than freeform transcript summ
 └─────────────────────────────────────────────────────┘
 ```
 
-Each action gets its own dynamically-generated steering tools. You can inspect, interject into, pause, resume, or stop one action without affecting the others.
+Each action gets its own dynamically-generated steering tools attached to the slow brain's tool surface. You can inspect, interject into, pause, resume, or stop one action without affecting the others.
 
 ---
 
 ## Architecture
 
-```
-ConversationManager (dual-brain orchestration, event-driven scheduling)
+For the full architectural breakdown — async tool loop internals, event bus, primitive registry, hosted deployment SPI — see [`ARCHITECTURE.md`](ARCHITECTURE.md). At a glance:
+
+```text
+ConversationManager (interaction loop, event-driven scheduling)
     │
-    │   Slow Brain ◄── IPC ──► Fast Brain (real-time voice, LiveKit)
+    │   Slow Brain ◄── IPC ──► Fast Brain (real-time voice + video, LiveKit)
     │
     ▼
 CodeActActor (generates Python plans, calls primitives.* APIs)
@@ -270,7 +492,7 @@ State Managers (each runs its own async LLM tool loop)
     │
     ├── ContactManager        — people and relationships
     ├── KnowledgeManager      — domain facts, structured knowledge
-    ├── TaskScheduler         — durable tasks, execution with live handles
+    ├── TaskScheduler         — durable tasks, schedules, triggers, execution with live handles
     ├── TranscriptManager     — conversation history and search
     ├── GuidanceManager       — procedures, SOPs, how-to knowledge
     ├── FileManager           — file parsing and registry
@@ -287,14 +509,22 @@ State Managers (each runs its own async LLM tool loop)
 
 ### How a request flows
 
-1. User message arrives. The slow brain renders a full state snapshot and makes a single-shot tool decision.
+1. A user message arrives on any medium. The slow brain renders a full state snapshot and makes a single-shot tool decision.
 2. It starts an action via `actor.act(...)` → gets back a `SteerableToolHandle`, registered in `in_flight_actions`.
 3. The Actor generates a Python plan calling typed primitives. Each primitive dispatches to a manager running its own LLM tool loop, returning its own steerable handle.
-4. Meanwhile, the slow brain can start more work, steer existing work, or guide the fast brain during voice calls.
+4. Meanwhile, the slow brain can start more work, steer existing work, or guide the fast brain during voice/video calls.
 5. The MemoryManager observes message events and periodically distills conversations into structured knowledge.
 6. The EventBus carries typed events with hierarchy labels aligned to tool-loop lineage, making everything observable.
 
-## Open-sourced alongside Unity
+---
+
+## What's open and what isn't
+
+Unity is the **open core** of the Unify platform. This repository contains the agent runtime: the managers, async tool loops, CodeAct actor, dual-brain voice coordination, event backbone, and memory consolidation.
+
+The supporting infrastructure is open-source too: [Orchestra](https://github.com/unifyai/orchestra) (persistence, runs locally via Docker), [Unify](https://github.com/unifyai/unify) (Python SDK), and [UniLLM](https://github.com/unifyai/unillm) (provider-agnostic LLM client).
+
+**Not open-sourced** is the managed platform layer around the runtime: hosted communication routing, telephony and SIP infrastructure, Microsoft 365 tenant integration, assistant session control plane, billing, and identity. You can point Unity at Unify's hosted backend instead of a local Orchestra, but features that depend on the managed platform layer only work against the hosted service.
 
 | Repo | Role |
 |------|------|
@@ -303,7 +533,9 @@ State Managers (each runs its own async LLM tool loop)
 | **[unify](https://github.com/unifyai/unify)** | Python SDK — the client Unity uses to talk to Orchestra |
 | **[unillm](https://github.com/unifyai/unillm)** | LLM access layer — OpenAI, Anthropic, or any compatible endpoint |
 
-All MIT-licensed. The managed product layer — communication routing, telephony, the assistant session control plane, the web dashboard, billing, identity — runs on [Unify's platform](https://unify.ai) and is not part of this open core. You can point Unity at Unify's hosted Orchestra instead of a local one, but managed-service features only work against the hosted backend.
+All MIT-licensed.
+
+---
 
 ## Running the tests
 
@@ -318,7 +550,9 @@ tests/parallel_run.sh tests/actor/              # one module
 tests/parallel_run.sh tests/contact_manager/    # another
 ```
 
-See [tests/README.md](tests/README.md) for the full philosophy — responses are cached, not mocked.
+See [tests/README.md](tests/README.md) for the full philosophy — responses are cached, not mocked. Delete the cache and you're re-evaluating against live models.
+
+---
 
 ## Where to start reading
 
@@ -329,13 +563,16 @@ See [tests/README.md](tests/README.md) for the full philosophy — responses are
 | `unity/actor/code_act_actor.py` | CodeAct — plan generation, sandbox, primitives |
 | `unity/conversation_manager/conversation_manager.py` | Dual-brain orchestration, debouncing, in-flight actions |
 | `unity/conversation_manager/domains/brain_action_tools.py` | How the brain starts, steers, and tracks concurrent work |
+| `unity/conversation_manager/domains/call_manager.py` | LiveKit subprocess + voice/video event wiring |
 | `unity/function_manager/primitives/registry.py` | How primitives are assembled into the typed API surface |
 | `unity/events/event_bus.py` | Typed event backbone |
 | `unity/memory_manager/memory_manager.py` | Offline consolidation pipeline |
 
+---
+
 ## Project structure
 
-```
+```text
 unity/
 ├── unity/
 │   ├── actor/                    # CodeActActor
@@ -364,9 +601,11 @@ unity/
 └── deploy/                       # Dockerfile, Cloud Build, virtual desktop
 ```
 
+---
+
 ## Design principles
 
-**No regex or substring matching for routing user intent.** Everything goes through LLM reasoning, guided by prompts and tool docstrings. If the system handles something wrong, we fix the prompt, not add a hardcoded rule.
+**No regex or substring matching for routing user intent.** Everything goes through LLM reasoning, guided by prompts and tool docstrings. If the system handles something wrong, we fix the prompt — not add a hardcoded rule.
 
 **No mocked LLMs in tests.** Every test uses real inference, cached for speed. Delete the cache and you're re-evaluating against live models.
 
