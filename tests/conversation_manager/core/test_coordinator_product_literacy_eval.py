@@ -287,7 +287,15 @@ class _RecordingTools:
         nationality: str | None = None,
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Create a confirmed colleague after exact setup scope is agreed."""
+        """Create a new colleague assistant after explicit confirmation.
+
+        Use this when the user has confirmed the colleague profile and asked the
+        Coordinator to provision the assistant now. The call expects enough
+        concrete profile details to produce a useful colleague.
+
+        Prefer ``commission_colleague_into_workspace`` when workspace +
+        membership must also be guaranteed in the same step.
+        """
 
         merged_config = dict(config or {})
         merged_config["about"] = about
@@ -305,7 +313,7 @@ class _RecordingTools:
         }
 
     def delete_assistant(self, *, agent_id: int) -> dict[str, Any]:
-        """Delete a reachable colleague by assistant id."""
+        """Delete an existing colleague assistant by id after confirmation."""
 
         return {"status": "deleted", "agent_id": agent_id}
 
@@ -315,7 +323,7 @@ class _RecordingTools:
         agent_id: int,
         config: dict[str, Any],
     ) -> dict[str, Any]:
-        """Update configuration for a reachable colleague."""
+        """Update profile/config fields for an existing reachable colleague."""
 
         return {"status": "updated", "agent_id": agent_id, "config": config}
 
@@ -326,17 +334,37 @@ class _RecordingTools:
         email: str | None = None,
         agent_id: int | None = None,
     ) -> list[dict[str, Any]]:
-        """List assistants visible to the Coordinator owner."""
+        """List assistants visible to the Coordinator for lookup/disambiguation."""
 
-        del phone, email, agent_id
-        return [
+        assistants = [
             {"agent_id": 7001, "first_name": "Coordinator", "surname": "Avery"},
             {"agent_id": 7002, "first_name": "Revenue", "surname": "Ops"},
             {"agent_id": 7003, "first_name": "Cold", "surname": "Chain Ops"},
         ]
+        if agent_id is not None:
+            return [
+                assistant
+                for assistant in assistants
+                if int(assistant.get("agent_id", -1)) == int(agent_id)
+            ]
+        if phone is not None:
+            phone_lookup = phone.strip()
+            return [
+                assistant
+                for assistant in assistants
+                if str(assistant.get("phone") or "").strip() == phone_lookup
+            ]
+        if email is not None:
+            email_lookup = email.strip().lower()
+            return [
+                assistant
+                for assistant in assistants
+                if str(assistant.get("email") or "").strip().lower() == email_lookup
+            ]
+        return assistants
 
     def list_org_members(self) -> list[dict[str, Any]]:
-        """List authorized humans in the Coordinator's organization."""
+        """List human organization members reachable from Coordinator scope."""
 
         return list(_AUTHORIZED_HUMANS)
 
@@ -346,7 +374,10 @@ class _RecordingTools:
         target_assistant_id: int,
         writes: list[CoordinatorPreseedWrite],
     ) -> dict[str, Any]:
-        """Seed confirmed rows into a reachable colleague's own contexts.
+        """Seed confirmed rows into one colleague's own memory roots.
+
+        Use this for colleague-owned setup (for example ``Tasks`` or
+        ``Guidance``). Do not use it for shared workspace sources of truth.
 
         Args:
             target_assistant_id: The colleague assistant that should own the rows.
@@ -369,7 +400,11 @@ class _RecordingTools:
         organization_id: int | None = None,
         owner_user_id: str | None = None,
     ) -> dict[str, Any]:
-        """Create a confirmed team space after exact setup scope is agreed."""
+        """Create a shared workspace after explicit setup confirmation.
+
+        Use this for confirmed workspace creation. Membership is separate unless
+        using ``commission_colleague_into_workspace``.
+        """
 
         return {
             "space_id": 8101,
@@ -380,12 +415,12 @@ class _RecordingTools:
         }
 
     def delete_space(self, *, space_id: int) -> dict[str, Any]:
-        """Delete a reachable team space."""
+        """Delete a reachable shared workspace after explicit confirmation."""
 
         return {"status": "deleted", "space_id": space_id}
 
     def update_space(self, *, space_id: int, patch: dict[str, Any]) -> dict[str, Any]:
-        """Update a reachable team space after the intended change is agreed."""
+        """Update metadata for a reachable shared workspace."""
 
         return {"status": "updated", "space_id": space_id, "patch": patch}
 
@@ -396,7 +431,7 @@ class _RecordingTools:
         assistant_id: int | None = None,
         member_user_id: str | None = None,
     ) -> dict[str, Any]:
-        """Add a reachable assistant or member-targeted coordinator to a space."""
+        """Add exactly one assistant or org member to a reachable workspace."""
 
         return {
             "status": "added",
@@ -411,7 +446,7 @@ class _RecordingTools:
         space_id: int,
         assistant_id: int,
     ) -> dict[str, Any]:
-        """Remove a reachable assistant from a reachable space."""
+        """Remove a reachable assistant colleague from a reachable workspace."""
 
         return {"status": "removed", "space_id": space_id, "assistant_id": assistant_id}
 
@@ -421,7 +456,7 @@ class _RecordingTools:
         organization_id: int | None = None,
         owner_user_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List spaces visible to the Coordinator owner."""
+        """List shared workspaces visible to the current Coordinator."""
 
         del organization_id, owner_user_id
         return [
@@ -431,7 +466,7 @@ class _RecordingTools:
         ]
 
     def list_space_members(self, *, space_id: int) -> list[dict[str, Any]]:
-        """List live assistant members for a reachable space."""
+        """List assistant members for a reachable shared workspace."""
 
         return [
             {"space_id": space_id, "assistant_id": 7002, "name": "Revenue Ops"},
@@ -439,7 +474,7 @@ class _RecordingTools:
         ]
 
     def list_spaces_for_assistant(self, *, assistant_id: int) -> list[dict[str, Any]]:
-        """List spaces for a reachable assistant."""
+        """List shared workspaces currently attached to one assistant."""
 
         return [{"assistant_id": assistant_id, "space_id": 3101, "name": "CashOps"}]
 
@@ -458,7 +493,7 @@ class _RecordingTools:
         assistant_id: int | None = None,
         space_id: int | None = None,
     ) -> dict[str, Any]:
-        """Commission one colleague into one workspace in a single coordinator step."""
+        """Resolve/create colleague + workspace and ensure membership in one step."""
 
         resolved_assistant_id = assistant_id or 7005
         resolved_space_id = space_id or 3104
@@ -473,7 +508,7 @@ class _RecordingTools:
             merged_assistant_config["nationality"] = assistant_nationality
         return {
             "assistant": {
-                "status": "existing" if assistant_id else "created",
+                "status": "reused" if assistant_id else "created",
                 "assistant_id": resolved_assistant_id,
                 "assistant": {
                     "agent_id": resolved_assistant_id,
@@ -483,7 +518,7 @@ class _RecordingTools:
                 },
             },
             "space": {
-                "status": "existing" if space_id else "created",
+                "status": "reused" if space_id else "created",
                 "space_id": resolved_space_id,
                 "space": {
                     "space_id": resolved_space_id,
@@ -492,7 +527,7 @@ class _RecordingTools:
                 },
             },
             "membership": {
-                "status": "created",
+                "status": "added",
                 "space_id": resolved_space_id,
                 "assistant_id": resolved_assistant_id,
             },
@@ -506,7 +541,7 @@ class _RecordingTools:
         chat_prompt: str | None = None,
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any]:
-        """Update the Coordinator's setup mode after user-visible progress."""
+        """Update Coordinator onboarding state after confirmed setup progress."""
 
         return {"outcome": "coordinator state updated", "details": {"mode": mode}}
 
@@ -520,7 +555,7 @@ class _RecordingTools:
         chat_prompt: str | None = None,
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any]:
-        """Add one user-facing step to the Coordinator setup checklist."""
+        """Add a new user-visible step to the Coordinator setup checklist."""
 
         if status is not None and status not in {"pending", "done", "skipped"}:
             return {
@@ -551,7 +586,7 @@ class _RecordingTools:
         chat_prompt: str | None = None,
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any]:
-        """Update one user-facing step on the Coordinator setup checklist."""
+        """Update one existing user-visible Coordinator setup checklist step."""
 
         current = self._checklist.setdefault(item_id, {"item_id": item_id})
         for key, value in {
@@ -1831,6 +1866,90 @@ async def test_coordinator_product_literacy_workflows(eval_case):
         scenario=eval_case.scenario,
         llm_config=eval_case.llm_config,
     )
+
+
+@pytest.mark.asyncio
+async def test_coordinator_provisioning_sequence_includes_membership_step():
+    """Confirmed provisioning does not skip the membership step."""
+
+    scenario = CoordinatorScenario(
+        scenario_id="confirmed-membership-step",
+        title="Confirmed provisioning includes membership",
+        business_context=(
+            "A coordinator has explicit approval to create a colleague, create a "
+            "workspace, and ensure that colleague is a member."
+        ),
+        turns=(
+            DialogueTurn(
+                "user",
+                "Please draft the setup first.",
+            ),
+            DialogueTurn(
+                "assistant",
+                "[masked: the Coordinator proposed creating one colleague and one "
+                "workspace, then adding the colleague as a member.]",
+            ),
+            DialogueTurn(
+                "user",
+                "Yes, proceed now. Create colleague Renewal Ops with about "
+                "'Owns weekly renewal risk triage and escalations'. Create workspace "
+                "Renewal Desk with description 'Shared renewal operations hub'. Add "
+                "Renewal Ops to Renewal Desk.",
+                new=True,
+            ),
+        ),
+        masked_components=(
+            "No existing assistant_id or space_id is provided.",
+            "The user explicitly confirms colleague creation, workspace creation, "
+            "and membership.",
+        ),
+        rubric=(
+            "The response should execute confirmed provisioning and must not stop at "
+            "creating colleague/workspace without a membership step."
+        ),
+    )
+
+    result = await _run_target_decision(
+        scenario=scenario,
+        llm_config=dict(_PRIMARY_LLM_CONFIG),
+    )
+    called_tools = [tool.name for tool in result.tools]
+    called_tool_set = set(called_tools)
+    has_composite_commission = "commission_colleague_into_workspace" in called_tool_set
+    has_primitive_provisioning = {
+        "create_assistant",
+        "create_space",
+    }.issubset(called_tool_set)
+    assert has_composite_commission or has_primitive_provisioning, _format_failure(
+        scenario,
+        result,
+    )
+    if has_composite_commission:
+        commission_calls = [
+            tool
+            for tool in result.tools
+            if tool.name == "commission_colleague_into_workspace"
+        ]
+        assert commission_calls, _format_failure(scenario, result)
+        assert any(
+            isinstance(call.args.get("assistant_first_name"), str)
+            and call.args["assistant_first_name"].strip()
+            and isinstance(call.args.get("space_name"), str)
+            and call.args["space_name"].strip()
+            and isinstance(call.args.get("space_description"), str)
+            and call.args["space_description"].strip()
+            for call in commission_calls
+        ), _format_failure(scenario, result)
+    if has_primitive_provisioning:
+        membership_calls = [
+            tool for tool in result.tools if tool.name == "add_space_member"
+        ]
+        assert membership_calls, _format_failure(scenario, result)
+        assert any(
+            call.args.get("space_id") is not None
+            and call.args.get("assistant_id") is not None
+            for call in membership_calls
+        ), _format_failure(scenario, result)
 
 
 @pytest.mark.asyncio

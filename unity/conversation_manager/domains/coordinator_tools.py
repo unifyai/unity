@@ -166,7 +166,17 @@ class CoordinatorTools:
         nationality: str | None = None,
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Create a confirmed colleague after profile and setup scope are agreed."""
+        """Create a new colleague assistant after explicit user confirmation.
+
+        Use this when the user has confirmed the colleague profile and asked the
+        Coordinator to actually provision the assistant now. The tool merges the
+        provided profile fields with coordinator-derived defaults (timezone,
+        nationality, and inferred role metadata), then creates the assistant in
+        the current organization scope.
+
+        Prefer ``commission_colleague_into_workspace`` when the same turn should
+        also provision a workspace and guaranteed membership in one flow.
+        """
         suppression = self._suppress_duplicate_commissioning_tool(
             tool_name="create_assistant",
             tool_args={
@@ -241,7 +251,13 @@ class CoordinatorTools:
         *,
         agent_id: int,
     ) -> dict[str, Any] | str | ToolError:
-        """Delete a reachable colleague by assistant id."""
+        """Delete an existing colleague assistant by id.
+
+        Use this only for explicitly confirmed destructive actions. The tool
+        first verifies that the target assistant is reachable from the current
+        coordinator scope, then performs deletion and returns structured errors
+        when the target is missing or inaccessible.
+        """
 
         activity_id = self._publish_activity(
             phase="started",
@@ -301,7 +317,13 @@ class CoordinatorTools:
         agent_id: int,
         config: dict[str, Any],
     ) -> dict[str, Any] | ToolError:
-        """Update configuration for a reachable colleague."""
+        """Update profile/config fields for a reachable colleague assistant.
+
+        Use this after the user has confirmed concrete profile or behavior
+        edits (for example bio, role, timezone, or other config-backed fields).
+        This mutates an existing assistant only; use ``create_assistant`` when
+        the colleague does not yet exist.
+        """
 
         activity_id = self._publish_activity(
             phase="started",
@@ -361,7 +383,13 @@ class CoordinatorTools:
         email: str | None = None,
         agent_id: int | None = None,
     ) -> list[dict[str, Any]] | ToolError:
-        """List assistants visible to the Coordinator owner."""
+        """List assistants visible to the Coordinator for lookup and validation.
+
+        Use this before assistant/workspace mutations to resolve ids, confirm
+        whether a colleague already exists, and disambiguate by phone, email, or
+        ``agent_id``. Unfiltered calls also refresh the local reachability cache
+        used by other coordinator tools in the same turn.
+        """
 
         try:
             assistants = unify.list_assistants(
@@ -379,7 +407,13 @@ class CoordinatorTools:
         return assistants
 
     def list_org_members(self) -> list[dict[str, Any]] | ToolError:
-        """List authorized humans in the Coordinator's organization."""
+        """List human organization members reachable from this coordinator scope.
+
+        Use this when membership actions target ``member_user_id`` (human org
+        users) rather than assistant ids. This helps validate that a referenced
+        org member is authorized and reachable before attempting workspace
+        membership mutations.
+        """
 
         if SESSION_DETAILS.org_id is None:
             return []
@@ -397,7 +431,16 @@ class CoordinatorTools:
         target_assistant_id: int,
         writes: list[CoordinatorPreseedWrite],
     ) -> dict[str, Any] | ToolError:
-        """Seed confirmed rows into a reachable colleague's own contexts.
+        """Seed confirmed rows into one colleague's own memory roots.
+
+        Use this when setup should belong to a specific colleague's private
+        contexts (for example ``Tasks``, ``Knowledge``, ``Guidance``, or other
+        assistant-owned surfaces). This is the right tool for "this colleague
+        should own this workflow" decisions after confirmation.
+
+        Do not use this for shared team memory. For shared workspace setup, use
+        workspace-oriented writes (for example destination-aware shared actions)
+        rather than colleague-owned roots.
 
         Args:
             target_assistant_id: The colleague assistant that should own the rows.
@@ -475,7 +518,16 @@ class CoordinatorTools:
         organization_id: int | None = None,
         owner_user_id: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Create a confirmed team space after exact setup scope is agreed."""
+        """Create a new shared workspace after explicit user confirmation.
+
+        Use this when the user has agreed on a concrete workspace name/purpose
+        and wants the space created now. This tool creates the workspace object;
+        membership is a separate step via ``add_space_member`` unless a single
+        composite provisioning step is better.
+
+        Prefer ``commission_colleague_into_workspace`` when the same action
+        should also resolve/create a colleague and ensure membership.
+        """
         suppression = self._suppress_duplicate_commissioning_tool(
             tool_name="create_space",
             tool_args={
@@ -527,7 +579,12 @@ class CoordinatorTools:
         return result
 
     def delete_space(self, *, space_id: int) -> dict[str, Any] | ToolError:
-        """Delete a reachable team space."""
+        """Delete a reachable shared workspace by id.
+
+        Use only after explicit destructive confirmation for the exact target
+        workspace. The tool validates reachability first and returns structured
+        errors when the workspace is missing or outside coordinator scope.
+        """
 
         activity_id = self._publish_activity(
             phase="started",
@@ -587,7 +644,12 @@ class CoordinatorTools:
         space_id: int,
         patch: dict[str, Any],
     ) -> dict[str, Any] | ToolError:
-        """Update a reachable team space after the intended change is agreed."""
+        """Apply metadata updates to a reachable shared workspace.
+
+        Use this for confirmed workspace field edits (for example name or
+        description changes). This tool mutates workspace properties only; use
+        membership tools for adding/removing colleagues from the workspace.
+        """
 
         activity_id = self._publish_activity(
             phase="started",
@@ -647,7 +709,17 @@ class CoordinatorTools:
         assistant_id: int | None = None,
         member_user_id: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Add a member-targeted coordinator or reachable assistant to a space."""
+        """Add exactly one reachable assistant or org member to a workspace.
+
+        Use this when the user has confirmed a workspace membership change.
+        Provide exactly one selector:
+        - ``assistant_id`` to add an assistant colleague
+        - ``member_user_id`` to add an authorized human org member
+
+        The tool validates workspace reachability and target reachability before
+        mutating membership, and returns structured errors for ambiguous or
+        invalid targeting.
+        """
         has_assistant_id = assistant_id is not None
         normalized_member_user_id = (
             member_user_id.strip() if isinstance(member_user_id, str) else None
@@ -783,7 +855,18 @@ class CoordinatorTools:
         assistant_id: int | None = None,
         space_id: int | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Create/reuse a colleague and workspace, then ensure membership."""
+        """Provision colleague + workspace + membership in one coordinator step.
+
+        Use this when the user has confirmed "set up this colleague in this
+        workspace" and the slow-brain should avoid partial primitive sequencing.
+        This tool resolves or creates the colleague, resolves or creates the
+        workspace, then ensures the colleague is a member.
+
+        The response returns per-step status so follow-up messaging can be
+        precise (for example ``created`` vs ``reused`` vs ``already_member``).
+        Prefer this over manually chaining ``create_assistant``, ``create_space``,
+        and ``add_space_member`` when all three outcomes are required.
+        """
         suppression = self._suppress_duplicate_commissioning_tool(
             tool_name="commission_colleague_into_workspace",
             tool_args={
@@ -909,7 +992,12 @@ class CoordinatorTools:
         space_id: int,
         assistant_id: int,
     ) -> dict[str, Any] | ToolError:
-        """Remove a reachable assistant from a reachable space."""
+        """Remove a reachable assistant colleague from a reachable workspace.
+
+        Use this only after the user has explicitly confirmed membership removal.
+        The tool validates both workspace and assistant reachability before
+        mutation so failures return clear, actionable error envelopes.
+        """
 
         activity_id = self._publish_activity(
             phase="started",
@@ -963,7 +1051,12 @@ class CoordinatorTools:
         organization_id: int | None = None,
         owner_user_id: str | None = None,
     ) -> list[dict[str, Any]] | ToolError:
-        """List spaces visible to the Coordinator owner."""
+        """List shared workspaces visible to the current Coordinator.
+
+        Use this to resolve ``space_id`` values, verify workspace existence, and
+        avoid duplicate space creation before mutating workspace metadata or
+        membership.
+        """
 
         del organization_id, owner_user_id
         try:
@@ -982,7 +1075,12 @@ class CoordinatorTools:
         *,
         space_id: int,
     ) -> list[dict[str, Any]] | ToolError:
-        """List live assistant members for a reachable space."""
+        """List assistant members for a reachable shared workspace.
+
+        Use this before add/remove membership mutations to verify current
+        membership, prevent duplicate operations, and confirm who already has
+        workspace access.
+        """
 
         reachable = self._space_is_reachable(space_id)
         if isinstance(reachable, dict):
@@ -1002,7 +1100,11 @@ class CoordinatorTools:
         *,
         assistant_id: int,
     ) -> list[dict[str, Any]] | ToolError:
-        """List spaces for a reachable assistant."""
+        """List shared workspaces currently attached to one assistant.
+
+        Use this when auditing a colleague's workspace footprint before changing
+        access, performing cleanup, or explaining current ownership boundaries.
+        """
 
         reachable = self._assistant_is_reachable(assistant_id)
         if isinstance(reachable, dict):
@@ -1025,7 +1127,12 @@ class CoordinatorTools:
         chat_prompt: str | None = None,
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Update setup mode and optionally attach a handoff suggested reply."""
+        """Update the Coordinator setup lifecycle state.
+
+        Use this when onboarding progress changes between active setup work and
+        ready-to-go handoff. Optional chat prompt fields attach a suggested next
+        user action that can appear as a CTA in the setup experience.
+        """
         try:
             return CoordinatorOnboardingManager().set_state(
                 mode=mode,
@@ -1052,7 +1159,12 @@ class CoordinatorTools:
         chat_prompt: str | None = None,
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Add a user-facing setup step with optional initial status and CTA."""
+        """Create a new user-visible setup checklist step.
+
+        Use this when a newly discovered onboarding requirement should be tracked
+        explicitly in the Coordinator checklist. Optionally set initial status,
+        description, step kind, and a suggested chat CTA for the user.
+        """
         try:
             add_kwargs: dict[str, Any] = {
                 "title": title,
@@ -1086,7 +1198,12 @@ class CoordinatorTools:
         chat_prompt: str | None = None,
         chat_prompt_label: str | None = None,
     ) -> dict[str, Any] | ToolError:
-        """Update one user-facing setup step and optional suggested reply CTA."""
+        """Update one existing user-facing setup checklist step.
+
+        Use this when progress changes for a known checklist row (status changes,
+        title/description edits, or CTA updates). This keeps setup bookkeeping
+        aligned with completed validation and remaining onboarding work.
+        """
         try:
             return CoordinatorOnboardingManager().update_checklist_item(
                 item_id=item_id,

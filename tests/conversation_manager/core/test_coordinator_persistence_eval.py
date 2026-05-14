@@ -86,7 +86,7 @@ class _AssistantAwareRecordingTools(_RecordingTools):
         email: str | None = None,
         agent_id: int | None = None,
     ) -> list[dict[str, Any]]:
-        """List assistants visible to the Coordinator owner."""
+        """List assistants visible to the Coordinator for lookup/disambiguation."""
 
         del phone, email
         if agent_id is None:
@@ -118,13 +118,13 @@ class _WorkspaceAwareRecordingTools(_AssistantAwareRecordingTools):
         organization_id: int | None = None,
         owner_user_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List spaces visible to the Coordinator owner."""
+        """List shared workspaces visible to the current Coordinator."""
 
         del organization_id, owner_user_id
         return list(self._spaces)
 
     def list_space_members(self, *, space_id: int) -> list[dict[str, Any]]:
-        """List live assistant members for a reachable space."""
+        """List assistant members for a reachable shared workspace."""
 
         return list(self._memberships.get(int(space_id), []))
 
