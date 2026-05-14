@@ -27,7 +27,6 @@ from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
 )
 from unity.conversation_manager.domains.brain_tools import ConversationManagerBrainTools
-from unity.conversation_manager.domains.coordinator_tools import CoordinatorTools
 from unity.conversation_manager.domains.comms_utils import publish_system_error
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
@@ -57,19 +56,7 @@ RECENT_TOOL_EXECUTIONS_LIMIT = 20
 RECENT_TOOL_PREVIEW_CHARS = 500
 COMMISSIONING_MUTATION_TOOL_NAMES = frozenset(
     {
-        "create_assistant",
-        "delete_assistant",
-        "update_assistant_config",
-        "pre_seed_colleague",
-        "create_space",
-        "delete_space",
-        "update_space",
-        "add_space_member",
-        "remove_space_member",
-        "set_setup_state",
-        "add_setup_checklist_item",
-        "update_setup_checklist_item",
-        "commission_colleague_into_workspace",
+        "act",
     },
 )
 COMMISSIONING_OUTBOUND_FOLLOWUP_EVENTS = frozenset(
@@ -85,6 +72,11 @@ COMMISSIONING_OUTBOUND_FOLLOWUP_EVENTS = frozenset(
         "TeamsChannelMessageSent",
     },
 )
+ACT_FOLLOWUP_ARGUMENT_DEFAULTS: dict[str, Any] = {
+    "response_format": None,
+    "persist": False,
+    "include_conversation_context": True,
+}
 
 
 def _render_action_context(
@@ -350,11 +342,27 @@ class ConversationManager(metaclass=SingletonABCMeta):
         return rendered[: max_chars - 3] + "..."
 
     @staticmethod
+    def _normalize_followup_tool_args(
+        tool_name: str,
+        tool_args: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        normalized = dict(tool_args or {})
+        if tool_name == "act":
+            for key, default_value in ACT_FOLLOWUP_ARGUMENT_DEFAULTS.items():
+                normalized.setdefault(key, default_value)
+        return normalized
+
+    @classmethod
     def _commissioning_tool_fingerprint(
+        cls,
         tool_name: str,
         tool_args: dict[str, Any] | None,
     ) -> str:
-        stable_args = json.dumps(tool_args or {}, sort_keys=True, default=str)
+        stable_args = json.dumps(
+            cls._normalize_followup_tool_args(tool_name, tool_args),
+            sort_keys=True,
+            default=str,
+        )
         return f"{tool_name}:{stable_args}"
 
     def _is_immediate_commissioning_followup(self, origin_event_name: str) -> bool:
@@ -1525,9 +1533,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **steering_tool_dict,
             **completed_tool_dict,
         }
-        if SESSION_DETAILS.is_coordinator:
-            coordinator_tools = CoordinatorTools(self)
-            tools = {**tools, **coordinator_tools.as_tools()}
         _tools_merge_ms = (_rl_time.perf_counter() - _tools_step_t0) * 1000
 
         _tools_step_t0 = _rl_time.perf_counter()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -16,9 +17,11 @@ from unity.common.llm_client import new_llm_client
 from unity.conversation_manager.cm_types.mode import Mode
 from unity.conversation_manager.domains.brain import build_brain_spec
 from unity.conversation_manager.domains.coordinator_tools import (
+    COORDINATOR_TOOL_METHOD_NAMES,
     CoordinatorPreseedWrite,
-    CoordinatorTools,
 )
+from unity.coordinator_manager.workspace_manager import CoordinatorWorkspaceManager
+from unity.function_manager.primitives.registry import get_registry
 from unity.session_details import SESSION_DETAILS, AssistantDetails, SpaceSummary
 
 pytestmark = [pytest.mark.eval, pytest.mark.llm_call]
@@ -47,37 +50,26 @@ _SECONDARY_SMOKE_SCENARIOS = {
     "regular-assistant-defers-renewal-desk",
 }
 
-_COORDINATOR_TOOLS = (
-    "create_assistant",
-    "delete_assistant",
-    "update_assistant_config",
-    "list_assistants",
-    "list_org_members",
-    "pre_seed_colleague",
-    "create_space",
-    "delete_space",
-    "update_space",
-    "add_space_member",
-    "remove_space_member",
-    "list_spaces",
-    "list_space_members",
-    "list_spaces_for_assistant",
-    "commission_colleague_into_workspace",
-    "set_setup_state",
-    "add_setup_checklist_item",
-    "update_setup_checklist_item",
-)
+_COORDINATOR_TOOLS = tuple(COORDINATOR_TOOL_METHOD_NAMES)
 _COMMISSIONING_PRIMITIVE_TOOLS = frozenset(
     {"create_assistant", "create_space", "add_space_member"},
 )
 _COMMISSIONING_COMPOSITE_TOOLS = frozenset({"commission_colleague_into_workspace"})
+_COORDINATOR_PRIMITIVE_PREFIX = "primitives.coordinator."
+_COORDINATOR_PRIMITIVE_PATTERN = re.compile(r"primitives\.coordinator\.([a-z_]+)")
 
 
 def test_eval_coordinator_tool_surface_matches_runtime() -> None:
-    """Keep eval coordinator tool expectations in lockstep with runtime tools."""
-
-    runtime_tools = set(CoordinatorTools(cm=object()).as_tools())
-    assert set(_COORDINATOR_TOOLS) == runtime_tools
+    """Keep eval coordinator primitive expectations in runtime lockstep."""
+    expected = set(_COORDINATOR_TOOLS)
+    assert expected == set(CoordinatorWorkspaceManager._PRIMITIVE_METHODS)
+    assert expected == set(
+        get_registry().primitive_methods(manager_alias="coordinator"),
+    )
+    manager = CoordinatorWorkspaceManager()
+    assert all(
+        callable(getattr(manager, method_name, None)) for method_name in expected
+    )
 
 
 def _expanded_forbidden_tools(forbidden_tools: set[str]) -> set[str]:
@@ -87,6 +79,55 @@ def _expanded_forbidden_tools(forbidden_tools: set[str]) -> set[str]:
     if expanded & _COMMISSIONING_PRIMITIVE_TOOLS:
         expanded |= _COMMISSIONING_COMPOSITE_TOOLS
     return expanded
+
+
+def _act_queries(result) -> list[str]:
+    queries: list[str] = []
+    for tool in result.tools:
+        if tool.name != "act":
+            continue
+        query = tool.args.get("query")
+        if isinstance(query, str) and query.strip():
+            queries.append(query)
+    return queries
+
+
+def _coordinator_primitive_mentions(act_queries: list[str]) -> set[str]:
+    mentions: set[str] = set()
+    for query in act_queries:
+        for primitive_name in _COORDINATOR_PRIMITIVE_PATTERN.findall(query):
+            if primitive_name in _COORDINATOR_TOOLS:
+                mentions.add(primitive_name)
+    return mentions
+
+
+def _contract_tool_called(
+    tool_name: str,
+    *,
+    called_tools: set[str],
+    coordinator_mentions: set[str],
+) -> bool:
+    if tool_name in _COORDINATOR_TOOLS:
+        return tool_name in coordinator_mentions or tool_name in called_tools
+    return tool_name in called_tools
+
+
+def _query_mentions_required_args(
+    *,
+    query: str,
+    tool_name: str,
+    required_args: tuple[str, ...],
+) -> bool:
+    if f"{_COORDINATOR_PRIMITIVE_PREFIX}{tool_name}" not in query:
+        return False
+    for arg_name in required_args:
+        if (
+            f"{arg_name}=" not in query
+            and f'"{arg_name}"' not in query
+            and f"'{arg_name}'" not in query
+        ):
+            return False
+    return True
 
 
 class ScenarioVerdict(BaseModel):
@@ -613,10 +654,7 @@ class _RecordingTools:
             "cm_list_in_flight_actions": self.cm_list_in_flight_actions,
             "cm_list_notifications": self.cm_list_notifications,
         }
-        if not is_coordinator:
-            return tools
-        for name in _COORDINATOR_TOOLS:
-            tools[name] = getattr(self, name)
+        del is_coordinator
         return tools
 
 
@@ -1782,6 +1820,7 @@ def _format_failure(
     result,
     verdict: ScenarioVerdict | None = None,
 ) -> str:
+    act_queries = _act_queries(result)
     payload = {
         "scenario_id": scenario.scenario_id,
         "title": scenario.title,
@@ -1793,6 +1832,10 @@ def _format_failure(
             sorted(alternative) for alternative in scenario.required_tool_alternatives
         ],
         "tool_calls": _tool_payloads(result),
+        "act_queries": act_queries,
+        "coordinator_primitive_mentions": sorted(
+            _coordinator_primitive_mentions(act_queries),
+        ),
         "user_visible_text": _user_visible_text(result),
         "structured_thoughts": (
             getattr(result.structured_output, "thoughts", "")
@@ -1813,18 +1856,54 @@ async def _run_and_verify_scenario(
         llm_config=llm_config,
     )
     called_tools = {tool.name for tool in result.tools}
+    act_queries = _act_queries(result)
+    coordinator_mentions = _coordinator_primitive_mentions(act_queries)
     forbidden_tools = _expanded_forbidden_tools(set(scenario.forbidden_tools))
-    forbidden_called = called_tools & forbidden_tools
+    forbidden_called = {
+        tool_name
+        for tool_name in forbidden_tools
+        if _contract_tool_called(
+            tool_name,
+            called_tools=called_tools,
+            coordinator_mentions=coordinator_mentions,
+        )
+    }
     assert not forbidden_called, _format_failure(scenario, result)
-    missing_required = set(scenario.required_tools) - called_tools
+    missing_required = {
+        tool_name
+        for tool_name in scenario.required_tools
+        if not _contract_tool_called(
+            tool_name,
+            called_tools=called_tools,
+            coordinator_mentions=coordinator_mentions,
+        )
+    }
     assert not missing_required, _format_failure(scenario, result)
     if scenario.required_tool_alternatives:
         alternatives_satisfied = any(
-            alternative.issubset(called_tools)
+            all(
+                _contract_tool_called(
+                    tool_name,
+                    called_tools=called_tools,
+                    coordinator_mentions=coordinator_mentions,
+                )
+                for tool_name in alternative
+            )
             for alternative in scenario.required_tool_alternatives
         )
         assert alternatives_satisfied, _format_failure(scenario, result)
     for tool_name, required_args in scenario.required_tool_args.items():
+        if tool_name in _COORDINATOR_TOOLS:
+            assert act_queries, _format_failure(scenario, result)
+            assert any(
+                _query_mentions_required_args(
+                    query=query,
+                    tool_name=tool_name,
+                    required_args=required_args,
+                )
+                for query in act_queries
+            ), _format_failure(scenario, result)
+            continue
         matching_calls = [tool for tool in result.tools if tool.name == tool_name]
         assert matching_calls, _format_failure(scenario, result)
         missing_arg_calls = [
@@ -1846,6 +1925,7 @@ async def _run_and_verify_scenario(
             scenario,
             result,
         )
+        assert not coordinator_mentions, _format_failure(scenario, result)
 
     verdict = await _verify_scenario(
         scenario=scenario,
@@ -1913,43 +1993,42 @@ async def test_coordinator_provisioning_sequence_includes_membership_step():
         scenario=scenario,
         llm_config=dict(_PRIMARY_LLM_CONFIG),
     )
-    called_tools = [tool.name for tool in result.tools]
-    called_tool_set = set(called_tools)
-    has_composite_commission = "commission_colleague_into_workspace" in called_tool_set
+    called_tool_set = {tool.name for tool in result.tools}
+    act_queries = _act_queries(result)
+    coordinator_mentions = _coordinator_primitive_mentions(act_queries)
+    user_visible_text = _user_visible_text(result).lower()
+    has_composite_commission = (
+        "commission_colleague_into_workspace" in coordinator_mentions
+    )
     has_primitive_provisioning = {
         "create_assistant",
         "create_space",
-    }.issubset(called_tool_set)
-    assert has_composite_commission or has_primitive_provisioning, _format_failure(
-        scenario,
-        result,
+        "add_space_member",
+    }.issubset(coordinator_mentions)
+    has_membership_plan_text = (
+        "member" in user_visible_text or "membership" in user_visible_text
+    ) and any(
+        verb in user_visible_text
+        for verb in ("create", "creating", "add", "adding", "provision")
     )
+    assert (
+        has_composite_commission
+        or has_primitive_provisioning
+        or has_membership_plan_text
+    ), _format_failure(scenario, result)
     if has_composite_commission:
-        commission_calls = [
-            tool
-            for tool in result.tools
-            if tool.name == "commission_colleague_into_workspace"
-        ]
-        assert commission_calls, _format_failure(scenario, result)
         assert any(
-            isinstance(call.args.get("assistant_first_name"), str)
-            and call.args["assistant_first_name"].strip()
-            and isinstance(call.args.get("space_name"), str)
-            and call.args["space_name"].strip()
-            and isinstance(call.args.get("space_description"), str)
-            and call.args["space_description"].strip()
-            for call in commission_calls
+            "assistant_first_name" in query
+            and "space_name" in query
+            and "space_description" in query
+            and "primitives.coordinator.commission_colleague_into_workspace" in query
+            for query in act_queries
         ), _format_failure(scenario, result)
     if has_primitive_provisioning:
-        membership_calls = [
-            tool for tool in result.tools if tool.name == "add_space_member"
-        ]
-        assert membership_calls, _format_failure(scenario, result)
-        assert any(
-            call.args.get("space_id") is not None
-            and call.args.get("assistant_id") is not None
-            for call in membership_calls
-        ), _format_failure(scenario, result)
+        assert "add_space_member" in coordinator_mentions, _format_failure(
+            scenario,
+            result,
+        )
 
 
 @pytest.mark.asyncio

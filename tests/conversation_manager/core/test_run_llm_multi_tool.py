@@ -271,18 +271,24 @@ async def test_run_llm_carries_recent_tool_executions_into_next_turn_prompt(
     assert "tool=create_space" in second_turn_text
 
 
-def test_duplicate_commissioning_suppression_only_blocks_immediate_followups():
+def test_duplicate_act_suppression_only_blocks_immediate_followups():
     from unity.conversation_manager.conversation_manager import ConversationManager
 
     cm = ConversationManager.__new__(ConversationManager)
     cm._llm_gen = 7
-    tool_args = {"first_name": "Ops", "surname": "Bot", "config": None}
-    fingerprint = cm._commissioning_tool_fingerprint("create_assistant", tool_args)
+    tool_args = {
+        "query": "Repair workspace memberships for Region and Patch spaces",
+        "requesting_contact_id": 1,
+        "response_format": None,
+        "persist": False,
+        "include_conversation_context": True,
+    }
+    fingerprint = cm._commissioning_tool_fingerprint("act", tool_args)
     cm._recent_commissioning_successes = {fingerprint: 6}
     cm._active_llm_trace_meta = {"origin_event_name": "SMSSent"}
 
     suppressed = cm.suppress_duplicate_commissioning_tool(
-        tool_name="create_assistant",
+        tool_name="act",
         tool_args=tool_args,
     )
 
@@ -290,20 +296,32 @@ def test_duplicate_commissioning_suppression_only_blocks_immediate_followups():
     assert suppressed["error_kind"] == "duplicate_suppressed"
     assert suppressed["details"]["origin_event_name"] == "SMSSent"
 
-    cm._recent_commissioning_successes = {}
+    cm._active_llm_trace_meta = {"origin_event_name": "SMSReceived"}
     assert (
         cm.suppress_duplicate_commissioning_tool(
-            tool_name="create_assistant",
+            tool_name="act",
             tool_args=tool_args,
         )
         is None
     )
 
-    cm._active_llm_trace_meta = {"origin_event_name": "SMSReceived"}
-    assert (
-        cm.suppress_duplicate_commissioning_tool(
-            tool_name="create_assistant",
-            tool_args=tool_args,
-        )
-        is None
-    )
+
+def test_act_duplicate_fingerprint_normalizes_optional_defaults():
+    from unity.conversation_manager.conversation_manager import ConversationManager
+
+    cm = ConversationManager.__new__(ConversationManager)
+    minimal_args = {
+        "query": "Repair workspace memberships for Region and Patch spaces",
+        "requesting_contact_id": 1,
+    }
+    expanded_args = {
+        **minimal_args,
+        "response_format": None,
+        "persist": False,
+        "include_conversation_context": True,
+    }
+
+    assert cm._commissioning_tool_fingerprint(
+        "act",
+        minimal_args,
+    ) == cm._commissioning_tool_fingerprint("act", expanded_args)

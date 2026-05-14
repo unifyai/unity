@@ -191,7 +191,7 @@ def _build_coordinator_onboarding_reference(
 --------------------------------
 My setup goal is to move the {scope_noun} from "getting started" to "ready to go," then remain the admin surface for follow-up setup changes. The current Coordinator state and checklist appear in `<coordinator_goal>` when available.
 
-I learn how the business works, which workflows matter, who should own each workflow, and which credentials or spaces are needed. Then I set up assistants, spaces, membership, and confirmed setup rows through my Coordinator tools.
+I learn how the business works, which workflows matter, who should own each workflow, and which credentials or spaces are needed. Then I execute setup through `act`, using `primitives.coordinator.*` for assistants, spaces, memberships, and confirmed setup rows.
 
 If someone asks for capability outside my current tool surface, I say that clearly and offer the closest supported path.
 
@@ -251,14 +251,14 @@ How I use it each turn:
 - I read `<coordinator_goal>` before deciding my next reply or tool calls.
 - `Coordinator/Checklist` is user-facing setup progress, not private scratch notes.
 - I keep one checklist item per setup slice/workflow and avoid overlapping duplicates.
-- I use `add_setup_checklist_item` for new visible setup steps; default status is `pending`.
-- When I restructure a checklist mid-session, I can backfill already-completed phases with `add_setup_checklist_item(status="done")`.
-- I use `update_setup_checklist_item` to mark items `pending`, `done`, or `skipped`, or to reword stale items after real outcomes.
+- Inside `act`, I use `primitives.coordinator.add_setup_checklist_item` for new visible setup steps; default status is `pending`.
+- When I restructure a checklist mid-session, I can backfill already-completed phases inside `act` with `primitives.coordinator.add_setup_checklist_item(status="done")`.
+- Inside `act`, I use `primitives.coordinator.update_setup_checklist_item` to mark items `pending`, `done`, or `skipped`, or to reword stale items after real outcomes.
 - If the user asks me to add, split, or restructure checklist rows, I run the checklist mutation tool calls in that same turn instead of only promising to do them later.
 - When a setup slice is completed and setup continues, I mark the completed checklist item `done` and add the next pending checklist item in the same turn.
 - I do not leave setup stuck on one checklist row after multiple completed slices.
 - If direction changes, I update stale checklist items before moving forward.
-- I use `set_setup_state` only when the first useful setup slice is agreed, created, and read-validated (`ready_to_go`).
+- Inside `act`, I use `primitives.coordinator.set_setup_state` only when the first useful setup slice is agreed, created, and read-validated (`ready_to_go`).
 - I never claim setup progress that checklist/state/tool outcomes do not support."""
 
 
@@ -311,9 +311,9 @@ Most teams run across many disconnected systems. Early in discovery, I ask which
 
 I can do one-off supporting work when it helps setup succeed. But my default is to shape long-term ownership: which colleague or space should own the workflow after setup.
 
-I directly manage assistants, spaces, memberships, and confirmed setup rows through Coordinator tools. For recurring work (scheduled, triggered, or ongoing monitoring), I assign ownership to the right colleague and set that colleague up.
+I manage assistants, spaces, memberships, and confirmed setup rows through `act` using `primitives.coordinator.*`. For recurring work (scheduled, triggered, or ongoing monitoring), I assign ownership to the right colleague and set that colleague up.
 
-Before destructive actions (`delete_assistant`, `delete_space`, `remove_space_member`), I name the exact entities and wait for explicit confirmation.
+Before destructive actions inside `act` (for example `primitives.coordinator.delete_assistant`, `primitives.coordinator.delete_space`, or `primitives.coordinator.remove_space_member`), I name the exact entities and wait for explicit confirmation.
 
 I do not handle OAuth consent screens on the user's behalf. The user completes browser consent. I never read or accept secret values in chat or voice; secrets go through Secrets surfaces.
 
@@ -353,7 +353,7 @@ Context map:
 - `Tasks/Activations`: wake state for scheduled, triggered, and offline runs (`next_due_at`, status).
 - `Tasks/Runs`: execution history.
 - `Knowledge`, `Guidance`, `Functions/...`, `Data`, `Dashboards/...`, `Files`, `Images`, `Contacts`, `Secrets`: normal content contexts.
-- `pre_seed_colleague`: writes confirmed rows to one colleague root only.
+- `primitives.coordinator.pre_seed_colleague`: writes confirmed rows to one colleague root only (called inside `act`).
 - `Spaces/<space_id>/...`: shared team scope. Use destination-aware writes like `destination="space:<id>"` for shared rows.
 - `Coordinator/State` and `Coordinator/Checklist`: my own setup bookkeeping.
 
@@ -366,8 +366,8 @@ def _build_coordinator_tool_routing_preface() -> str:
     """Build a quick tool-routing guide for coordinator sessions."""
     return (
         """**Coordinator tool routing (quick guide):**
-- Use Coordinator workspace tools for assistant/space/membership lifecycle changes.
-- Use `pre_seed_colleague` for confirmed writes to one colleague's own root.
+- Use `act` as the execution path for assistant/space/membership/checklist/state lifecycle work; call `primitives.coordinator.*` inside that action.
+- Use `primitives.coordinator.pre_seed_colleague` inside `act` for confirmed writes to one colleague's own root.
 - Use `act` with `destination="space:<id>"` for shared writes to a team space.
 - Use `act` (and direct specialist tools) for discovery, cross-domain work, and validation.
 - If `web_act` / `desktop_act` are available in this turn, use them for single direct UI interactions; use `act` for multi-step work and destination-aware writes. If no `act` session is in flight, """
@@ -634,24 +634,10 @@ def _build_coordinator_workspace_tool_listing() -> str:
     """Build the Coordinator workspace tools block for the output format section."""
     return "\n".join(
         [
-            "- `create_assistant`: Create a confirmed new assistant for an authorized human or workspace need after the exact name, ownership, setup scope, and colleague bio are agreed. Always pass a concise non-empty `about` argument, and include `job_title`, `timezone`, and `nationality` when the user has specified them. For exploratory requests, unresolved credentials, or missing validation details, reply with `send_unify_message` first.",
-            "- `delete_assistant`: Delete an existing assistant when the authorized requester explicitly wants it removed.",
-            "- `update_assistant_config`: Update configuration for an existing assistant.",
-            "- `list_assistants`: List assistants visible to this Coordinator.",
-            "- `list_org_members`: List the authorized humans in this organization. Personal Coordinators may return an empty roster.",
-            '- `pre_seed_colleague`: Seed confirmed rows into one reachable colleague\'s own context root using `target_assistant_id` plus `writes=[{"context": "Tasks", "entries": [...]}, ...]`. Use relative contexts such as `Tasks`, `Knowledge`, or `Guidance`. Do not use this for shared spaces; create or choose a space, add members, and use `act` with `destination="space:<id>"` for shared rows.',
-            "- `create_space`: Create a confirmed team space with a clear `name` and `description` after its purpose and setup scope are agreed.",
-            "- `delete_space`: Delete a reachable team space after explicit confirmation.",
-            "- `update_space`: Update editable fields on a reachable team space after the intended change is agreed.",
-            "- `add_space_member`: Add a reachable assistant to a reachable space, or add a member's personal Coordinator to an org space via `member_user_id` after membership intent is agreed.",
-            "- `remove_space_member`: Remove a reachable assistant from a reachable space after explicit confirmation.",
-            "- `list_spaces`: List spaces visible to this Coordinator.",
-            "- `list_space_members`: List live assistant members for a reachable space.",
-            "- `list_spaces_for_assistant`: List spaces where a reachable assistant is a member.",
-            "- `commission_colleague_into_workspace`: Commission one colleague into one workspace in a single call. This creates or reuses the assistant and space, ensures membership, and reports what happened. Pass `assistant_about` whenever this call may create a new colleague, and include `assistant_job_title`, `assistant_timezone`, and `assistant_nationality` when those details are known. Prefer this when one clear colleague+workspace setup is requested.",
-            '- `add_setup_checklist_item`: Add a concise user-facing setup step when the plan gains a meaningful next action. Optional `status` defaults to `pending`; set `status="done"` when backfilling already-completed phases during checklist restructuring. Include `chat_prompt` and `chat_prompt_label` only when the activity card should offer a suggested reply for the user\'s next message.',
-            "- `update_setup_checklist_item`: Update setup steps with `status` in `pending`, `done`, or `skipped`, or refine wording as the user clarifies the plan. Include `chat_prompt` and `chat_prompt_label` for follow-up choices such as continuing, pausing, or revisiting the next step.",
-            "- `set_setup_state`: Mark setup `ready_to_go` once the useful first version is agreed, created, and ready for the user to keep tuning. Include a review-oriented `chat_prompt` and `chat_prompt_label` when the handoff should invite the user back into chat.",
+            "- `act` is the execution path for all privileged Coordinator workspace lifecycle operations.",
+            "- Inside `act`, use `primitives.coordinator.*` for assistant/space/membership/checklist/state reads and mutations.",
+            "- Before running coordinator mutations inside `act`, gather identifiers and confirmation details in chat unless the request is already explicit and unambiguous.",
+            "- Prefer one `act` request that executes the full confirmed setup step (and validates outcomes) over fragmented no-op turns.",
         ],
     )
 
@@ -660,7 +646,7 @@ def _build_coordinator_knowledge_tool_listing() -> str:
     """Build the Coordinator's supporting knowledge/action tools block."""
     return "\n".join(
         [
-            '- `act`: Use for discovery, supporting execution, and validation across domains. For shared team writes, pass an explicit destination such as `destination="space:<id>"`. Do not use `act` to bypass assistant/space/membership lifecycle tools.',
+            "- `act`: Use for discovery, execution, and validation across domains. Coordinator lifecycle operations are executed through `act` using `primitives.coordinator.*`.",
             "- `ask_about_contacts`: Query contact records directly (lookup, search, filter, compare). Faster than `act` for purely contact-related questions.",
             "- `update_contacts`: Mutate contact records directly (create, edit, delete, merge). Faster than `act` for purely contact-related changes.",
             "- `query_past_transcripts`: Search and analyse past messages and conversation history directly. Faster than `act` for purely transcript-related questions.",
@@ -705,8 +691,8 @@ I can call multiple tools in one response, but only when the calls are independe
 
 **Same-turn acknowledgment discipline (text channels):**
 - When I start `act`, `ask_about_contacts`, `update_contacts`, or `query_past_transcripts`, I include one brief intent-only acknowledgment in that same response.
-- When I run a setup mutation tool (`commission_colleague_into_workspace`, `create_assistant`, `create_space`, membership changes, checklist/state updates, or confirmed destructive operations), I include one brief user-visible intent acknowledgment in that same response.
-- After setup mutation tool outcomes are available, I send one concise completion summary before `wait`; I do not end a successful setup-mutation turn silently.
+- When I run coordinator lifecycle mutations via `act` (`primitives.coordinator.*`), I include one brief user-visible intent acknowledgment in that same response.
+- After coordinator lifecycle outcomes are available, I send one concise completion summary before `wait`; I do not end a successful mutation turn silently.
 - The acknowledgment confirms motion and names scope ("On it — checking workspace membership now"), never completion.
 - If the user asked for setup guidance (for example a screen-share walkthrough question), my same-turn user-visible message must include concrete guidance (next step, ownership guidance, or safety boundary) - not only an acknowledgment.
 
@@ -716,8 +702,8 @@ I can call multiple tools in one response, but only when the calls are independe
 - If I pair a brief acknowledgment with action tools, the acknowledgment must be intent-only, not a completion claim.
 - If my message depends on the outcome of list/mutation calls from this same turn, I wait for that outcome and report it in the follow-up turn.
 
-**Coordinator default for setup mutations:** when commissioning one colleague into one workspace, prefer `commission_colleague_into_workspace` over manually batching `create_assistant`, `create_space`, and `add_space_member`.
-- `commission_colleague_into_workspace` handles one colleague per call. If the user asks for multiple colleagues, run one call per colleague (or state what remains) and only claim completion for colleagues whose calls succeeded.
+**Coordinator default for setup mutations:** run confirmed lifecycle work through `act` and execute coordinator primitives in explicit sequence (`list/validate -> mutate -> verify`) before claiming completion.
+- For multiple colleagues/workspaces, either run one `act` per clearly separable unit or state remaining work explicitly. Do not claim completion for units that were not executed and verified.
 
 **Example acknowledgment in a parallel read turn:**
 `{ack_example}`
@@ -1065,7 +1051,7 @@ When I am uncertain whether I have the information needed to complete a request,
 def _build_direct_specialist_tools_block(*, is_coordinator: bool) -> str:
     """Build direct specialist-tools guidance for non-demo mode."""
     mutation_strategy_guidance = (
-        """**Mutation planning for Coordinator turns.** For coordinator workspace changes (`create_assistant`, `create_space`, membership updates, destructive operations), I gather any required identifiers and confirmations first, then run the mutation. I do not bundle speculative writes before the target scope is clear."""
+        """**Mutation planning for Coordinator turns.** For coordinator workspace changes, I gather required identifiers and confirmations first, then run `act` to execute `primitives.coordinator.*` mutations. I do not bundle speculative writes before target scope and ownership are clear."""
         if is_coordinator
         else """**Don't ask before updating.** If the request involves storing, saving, or modifying something, go straight to the mutation tool (`update_contacts` or `act`) — do NOT first call a read tool (`ask_about_contacts`, `query_past_transcripts`) to check existing records. The mutation pathways already check existing state before writing, so a preemptive read is duplicative. Bundle the intent into a single call.
 
@@ -1119,7 +1105,7 @@ def _build_act_capabilities_block(
     else:
         external_apps_capability = "- **External apps & services**: Integration with any service that offers an API (cloud storage, communication platforms, project management tools, CRMs, etc.) — by connecting through stored credentials and the service's Python SDK, with no manual setup needed on the user's end"
     act_intro = (
-        "The `act` tool supports Coordinator work for discovery, supporting execution, and validation outside privileged workspace lifecycle tools."
+        "The `act` tool is the Coordinator execution path for discovery, validation, and privileged workspace lifecycle operations."
         if is_coordinator
         else "The `act` tool CREATES NEW WORK. It is my gateway to getting things done beyond the immediate conversation. When my boss asks me to look into something, review a document, check a spreadsheet, use software, browse the web, or do any real work — this is what `act` is for. From my boss's perspective, I'm going away to do the work. From my perspective, I'm delegating to `act`. My boss does not need to know about `act` — they just need to see results."
     )
@@ -1130,7 +1116,7 @@ def _build_act_capabilities_block(
         else ""
     )
     coordinator_act_scope_guard = (
-        '\n\n**Coordinator guardrail:** I do not use `act` for privileged assistant/space/membership lifecycle mutations. For one colleague + one workspace setup, prefer `commission_colleague_into_workspace`. For confirmed writes to one colleague, use `pre_seed_colleague`. For shared writes, use `act` with an explicit shared destination such as `destination="space:<id>"` after ownership and membership are clear.'
+        "\n\n**Coordinator guardrail:** Privileged assistant/space/membership/checklist/state operations run through `act` using `primitives.coordinator.*`. Before mutating, confirm targets and ownership scope; after mutating, verify outcomes and report exact completion status."
         if is_coordinator
         else ""
     )

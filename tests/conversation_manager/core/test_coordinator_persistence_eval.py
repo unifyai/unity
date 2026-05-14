@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -20,6 +21,8 @@ from tests.conversation_manager.core.test_coordinator_product_literacy_eval impo
     _BOSS_CONTACT,
     _PRIMARY_LLM_CONFIG,
     _RecordingTools,
+    _act_queries,
+    _coordinator_primitive_mentions,
     CoordinatorScenario,
     DialogueTurn,
     _format_failure,
@@ -30,12 +33,12 @@ from tests.destination_routing_helpers import (
     assert_tool_destination,
     run_direct_routing_loop,
 )
+from unity.actor.code_act_actor import CodeActActor
+from unity.actor.environments import StateManagerEnvironment
 from unity.common.context_registry import ContextRegistry
 from unity.common.llm_helpers import methods_to_tool_dict
-from unity.conversation_manager.domains.coordinator_tools import (
-    CoordinatorPreseedWrite,
-    CoordinatorTools,
-)
+from unity.function_manager.function_manager import FunctionManager
+from unity.function_manager.primitives import PrimitiveScope, Primitives
 from unity.guidance_manager.guidance_manager import GuidanceManager
 from unity.session_details import SESSION_DETAILS, AssistantDetails, SpaceSummary
 
@@ -312,16 +315,6 @@ def _activate_assistant_context(
     unify.set_context(f"{assistant['user_id']}/{assistant['agent_id']}", relative=False)
 
 
-def _normalize_selected_writes(writes: list[Any]) -> list[dict[str, Any]]:
-    normalized: list[dict[str, Any]] = []
-    for write in writes:
-        if isinstance(write, CoordinatorPreseedWrite):
-            normalized.append(write.model_dump())
-        else:
-            normalized.append(dict(write))
-    return normalized
-
-
 def _row_entries_text(rows: list[Any]) -> str:
     return json.dumps([row.entries for row in rows], sort_keys=True).lower()
 
@@ -330,6 +323,23 @@ def _single_tool_call(result, tool_name: str):
     calls = [tool for tool in result.tools if tool.name == tool_name]
     assert len(calls) == 1, json.dumps(_tool_payloads(result), indent=2)
     return calls[0]
+
+
+async def _run_coordinator_code_act_query(query: str) -> Any:
+    scope = PrimitiveScope.single("coordinator")
+    primitives = Primitives(primitive_scope=scope)
+    environment = StateManagerEnvironment(primitives)
+    function_manager = FunctionManager(primitive_scope=scope, include_primitives=True)
+    actor = CodeActActor(environments=[environment], function_manager=function_manager)
+    try:
+        handle = await actor.act(
+            query,
+            clarification_enabled=False,
+            can_store=False,
+        )
+        return await asyncio.wait_for(handle.result(), timeout=240)
+    finally:
+        await actor.close()
 
 
 def _logs(context: str, organization: LiveOrganization) -> list[Any]:
@@ -376,13 +386,14 @@ async def test_coordinator_persists_confirmed_colleague_setup_rows():
                 "No shared team space has been requested.",
             ),
             rubric=(
-                "The response should use `pre_seed_colleague` for the supplied "
+                "The response should use `act` and route implementation through "
+                "`primitives.coordinator.pre_seed_colleague` for the supplied "
                 "Revenue Ops assistant, with a `Tasks` entry for the weekday "
                 "renewal-risk summary and a `Guidance` or `Knowledge` entry for "
                 "blocked enterprise account checks."
             ),
-            required_tools=frozenset({"pre_seed_colleague"}),
-            forbidden_tools=frozenset({"act", "create_space", "add_space_member"}),
+            required_tools=frozenset({"act", "pre_seed_colleague"}),
+            forbidden_tools=frozenset({"create_space", "add_space_member"}),
         )
 
         selection = await _run_target_decision(
@@ -399,57 +410,60 @@ async def test_coordinator_persists_confirmed_colleague_setup_rows():
             ),
         )
         called_tools = {tool.name for tool in selection.tools}
-        assert "pre_seed_colleague" in called_tools, _format_failure(
-            scenario,
-            selection,
-        )
+        assert "act" in called_tools, _format_failure(scenario, selection)
         assert not (called_tools & scenario.forbidden_tools), _format_failure(
             scenario,
             selection,
         )
-
-        selected_call = _single_tool_call(selection, "pre_seed_colleague")
-        assert int(selected_call.args["target_assistant_id"]) == assistant_id
-        selected_writes = _normalize_selected_writes(selected_call.args["writes"])
-        selected_contexts = {write["context"] for write in selected_writes}
-        assert "Tasks" in selected_contexts, json.dumps(selected_writes, indent=2)
-        assert selected_contexts & _MEMORY_CONTEXTS, json.dumps(
-            selected_writes,
-            indent=2,
+        act_call = _single_tool_call(selection, "act")
+        act_query = str(act_call.args.get("query") or "")
+        primitive_mentions = _coordinator_primitive_mentions(_act_queries(selection))
+        assert "pre_seed_colleague" in primitive_mentions, _format_failure(
+            scenario,
+            selection,
         )
+        assert not (primitive_mentions & scenario.forbidden_tools), _format_failure(
+            scenario,
+            selection,
+        )
+        assert str(assistant_id) in act_query, _format_failure(scenario, selection)
+        assert "tasks" in act_query.lower(), _format_failure(scenario, selection)
+        assert any(
+            memory_context.lower() in act_query.lower()
+            for memory_context in _MEMORY_CONTEXTS
+        ), _format_failure(scenario, selection)
 
         _configure_session(organization=organization, coordinator=coordinator)
-        persisted = CoordinatorTools(cm=object()).pre_seed_colleague(
-            target_assistant_id=assistant_id,
-            writes=selected_writes,
-        )
-        assert "error_kind" not in persisted, persisted
-        coordinator_id = int(persisted["coordinator_id"])
+        with _organization_api_key(organization.api_key):
+            _activate_assistant_context(
+                organization=organization,
+                assistant=coordinator,
+            )
+            actor_result = await _run_coordinator_code_act_query(act_query)
+        assert not (
+            isinstance(actor_result, dict) and "error_kind" in actor_result
+        ), actor_result
 
-        persisted_contexts = [write["context"] for write in persisted["writes"]]
-        assert all(
-            context.startswith(f"{assistant_user_id}/{assistant_id}/")
-            for context in persisted_contexts
-        )
+        task_context = f"{assistant_user_id}/{assistant_id}/Tasks"
+        guidance_context = f"{assistant_user_id}/{assistant_id}/Guidance"
+        knowledge_context = f"{assistant_user_id}/{assistant_id}/Knowledge"
 
-        rows_by_context = {
-            context: _logs(context, organization) for context in persisted_contexts
-        }
-        assert all(rows for rows in rows_by_context.values())
-
-        task_rows = rows_by_context[f"{assistant_user_id}/{assistant_id}/Tasks"]
+        task_rows = _logs(task_context, organization)
+        guidance_rows = _logs(guidance_context, organization)
+        knowledge_rows = _logs(knowledge_context, organization)
+        memory_rows = guidance_rows + knowledge_rows
+        assert task_rows
+        assert memory_rows
         assert all(
             row.entries["_assistant_id"] == str(assistant_id) for row in task_rows
         )
         assert all(
-            row.entries["authoring_assistant_id"] == coordinator_id
-            for rows in rows_by_context.values()
+            row.entries["authoring_assistant_id"] == int(coordinator["agent_id"])
+            for rows in (task_rows, memory_rows)
             for row in rows
         )
 
-        persisted_text = _row_entries_text(
-            [row for rows in rows_by_context.values() for row in rows],
-        )
+        persisted_text = _row_entries_text(task_rows + memory_rows)
         assert "renewal" in persisted_text
         assert "blocked" in persisted_text
         assert "enterprise" in persisted_text
@@ -576,6 +590,11 @@ async def test_coordinator_persists_confirmed_shared_space_guidance():
 
         act_call = _single_tool_call(selection, "act")
         act_query = act_call.args["query"]
+        primitive_mentions = _coordinator_primitive_mentions(_act_queries(selection))
+        assert not (primitive_mentions & scenario.forbidden_tools), _format_failure(
+            scenario,
+            selection,
+        )
         assert sentinel in act_query, _format_failure(scenario, selection)
         assert str(space_id) in act_query or f"space:{space_id}" in act_query
 

@@ -14,7 +14,6 @@ from unity.conversation_manager.prompt_builders import (
     build_system_prompt,
     build_voice_agent_prompt,
 )
-from unity.conversation_manager.domains.coordinator_tools import CoordinatorTools
 from unity.session_details import SpaceSummary
 
 pytestmark = pytest.mark.no_unify_context
@@ -132,10 +131,8 @@ class TestCoordinatorPrompt:
         assert "Coordinator mission" in prompt
         assert "I do not personally own recurring day-to-day execution" in prompt
         assert "Coordinator workspace ontology" in prompt
-        assert "`chat_prompt` and `chat_prompt_label`" in prompt
-        assert "offer a suggested reply" in prompt
-        for tool_name in CoordinatorTools(cm=object()).as_tools():
-            assert f"`{tool_name}`" in prompt
+        assert "`primitives.coordinator.*`" in prompt
+        assert "all privileged Coordinator workspace lifecycle operations" in prompt
 
     def test_coordinator_authorized_humans_fallback_uses_roster_shape(self):
         prompt = _build(is_coordinator=True)
@@ -172,8 +169,11 @@ class TestCoordinatorPrompt:
         assert "pre_seed_colleague" in prompt
         assert "one colleague root only" in prompt
         assert 'destination="space:<id>"' in prompt
-        assert "remove_space_member" in prompt
-        assert "add_space_member" in prompt
+        assert "primitives.coordinator.*" in prompt
+        assert (
+            "assistant/space/membership/checklist/state operations run through `act`"
+            in prompt
+        )
         assert "cannot upload local custom media for colleague profiles" in prompt
         assert "fine-grained per-user permissions" in prompt
 
@@ -282,13 +282,11 @@ class TestCoordinatorPrompt:
         assert "Coordinator parallel tool discipline" in coordinator_prompt
         assert "Concurrent action and acknowledgment" not in coordinator_prompt
         assert "Dependent calls must be staged" in coordinator_prompt
-        assert "`commission_colleague_into_workspace`" in coordinator_prompt
-        assert "setup mutation tool" in coordinator_prompt
+        assert "`primitives.coordinator.*`" in coordinator_prompt
+        assert "coordinator lifecycle mutations via `act`" in coordinator_prompt
         assert "not only an acknowledgment" in coordinator_prompt
-        assert (
-            "do not end a successful setup-mutation turn silently" in coordinator_prompt
-        )
-        assert "handles one colleague per call" in coordinator_prompt
+        assert "do not end a successful mutation turn silently" in coordinator_prompt
+        assert "run confirmed lifecycle work through `act`" in coordinator_prompt
         assert "pair the fast-path call with `act(persist=True)`" in coordinator_prompt
 
     def test_coordinator_ontology_defines_colleague_and_space_terms(self):

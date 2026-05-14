@@ -791,6 +791,20 @@ class ConversationManagerBrainActionTools:
 
         _bat_log = _bat_logging.getLogger("unity")
         _bat_log.debug(f"⏱️ [CM.act tool +{_bat_ms()}] entered")
+        cm = self._cm
+
+        suppression = cm.suppress_duplicate_commissioning_tool(
+            tool_name="act",
+            tool_args={
+                "query": query,
+                "requesting_contact_id": requesting_contact_id,
+                "response_format": response_format,
+                "persist": persist,
+                "include_conversation_context": include_conversation_context,
+            },
+        )
+        if suppression is not None:
+            return suppression
 
         # Override cost attribution for all nested LLM calls in this action.
         # Only meaningful in org context (personal accounts have a single user).
@@ -845,8 +859,6 @@ class ConversationManagerBrainActionTools:
         if response_format is not None:
             pydantic_response_format = schema_dict_to_pydantic(response_format)
 
-        cm = self._cm
-
         handle_id = _next_handle_id
         _next_handle_id += 1
 
@@ -880,7 +892,13 @@ class ConversationManagerBrainActionTools:
             "initial_snapshot_state": initial_snapshot_state,
             "context_opted_in": include_conversation_context,
         }
-        asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
+        asyncio.create_task(
+            managers_utils.actor_watch_result(
+                handle_id,
+                handle,
+                action_type="act",
+            ),
+        )
         asyncio.create_task(
             managers_utils.actor_watch_notifications(handle_id, handle),
         )
@@ -967,7 +985,11 @@ class ConversationManagerBrainActionTools:
             "context_opted_in": include_conversation_context,
         }
         asyncio.create_task(
-            managers_utils.actor_watch_result(handle_id, handle),
+            managers_utils.actor_watch_result(
+                handle_id,
+                handle,
+                action_type=action_type,
+            ),
         )
         asyncio.create_task(
             managers_utils.actor_watch_notifications(handle_id, handle),

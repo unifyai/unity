@@ -1,13 +1,39 @@
 from __future__ import annotations
 
+import os
 from unittest.mock import patch
 
 import pytest
 
 from tests.helpers import _handle_project
 from unity.common.single_shot import SingleShotResult
-from unity.conversation_manager.domains.coordinator_tools import CoordinatorTools
+from unity.common.context_registry import ContextRegistry
+from unity.coordinator_manager.workspace_manager import CoordinatorWorkspaceManager
+from unity.manager_registry import ManagerRegistry
 from unity.session_details import SESSION_DETAILS
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("SKIP_UNITY_TEST_INIT") == "1",
+    reason="Requires full runtime context initialization.",
+)
+
+
+@pytest.fixture(autouse=True)
+def _ensure_context_base():
+    previous_impl = os.environ.get("UNITY_FUNCTION_IMPL")
+    previous_base_context = getattr(ContextRegistry, "_base_context", None)
+    os.environ["UNITY_FUNCTION_IMPL"] = "simulated"
+    ManagerRegistry.clear()
+    ContextRegistry.set_base_context("UnityTests/Coordinator")
+    yield
+    if previous_impl is None:
+        os.environ.pop("UNITY_FUNCTION_IMPL", None)
+    else:
+        os.environ["UNITY_FUNCTION_IMPL"] = previous_impl
+    ContextRegistry.clear()
+    if previous_base_context:
+        ContextRegistry.set_base_context(previous_base_context)
+    ManagerRegistry.clear()
 
 
 @pytest.mark.asyncio
@@ -15,7 +41,7 @@ from unity.session_details import SESSION_DETAILS
 async def test_run_llm_registers_workspace_tools_only_for_coordinator(
     initialized_cm,
 ):
-    """Coordinator-only tools are registered through the real slow-brain assembly."""
+    """Coordinator lifecycle primitives are not registered as direct slow-brain tools."""
 
     cm = initialized_cm.cm
     cm.initialized = False
@@ -29,7 +55,7 @@ async def test_run_llm_registers_workspace_tools_only_for_coordinator(
             structured_output=None,
         )
 
-    coordinator_tool_names = set(CoordinatorTools(cm=cm).as_tools())
+    coordinator_tool_names = set(CoordinatorWorkspaceManager._PRIMITIVE_METHODS)
     with patch(
         "unity.conversation_manager.conversation_manager.single_shot_tool_decision",
         fake_single_shot_tool_decision,
@@ -42,5 +68,7 @@ async def test_run_llm_registers_workspace_tools_only_for_coordinator(
         finally:
             SESSION_DETAILS.is_coordinator = False
 
-    assert coordinator_tool_names <= captured_tool_names[0]
+    assert "act" in captured_tool_names[0]
+    assert "act" in captured_tool_names[1]
+    assert coordinator_tool_names.isdisjoint(captured_tool_names[0])
     assert coordinator_tool_names.isdisjoint(captured_tool_names[1])
