@@ -2145,19 +2145,25 @@ async def _(
 
 @EventHandler.register(ActorResult)
 async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
-    action_data = cm.in_flight_actions.get(event.handle_id, {})
-
-    # Log completion in handle_actions before moving to completed_actions.
     from unity.common.prompt_helpers import now as prompt_now
 
+    action_data = cm.in_flight_actions.get(event.handle_id, {})
+    action_type = event.action_type or action_data.get("action_type") or "act"
+    completion_entry = {
+        "action_name": "act_completed" if event.success else "act_failed",
+        "query": event.result if event.success else (event.error or event.result),
+        "timestamp": prompt_now(),
+        "success": bool(event.success),
+        "action_type": action_type,
+    }
+    if event.result is not None:
+        completion_entry["result"] = event.result
+    if event.error:
+        completion_entry["error"] = event.error
+
+    # Log completion in handle_actions before moving to completed_actions.
     if action_data and "handle_actions" in action_data:
-        action_data["handle_actions"].append(
-            {
-                "action_name": "act_completed",
-                "query": event.result,
-                "timestamp": prompt_now(),
-            },
-        )
+        action_data["handle_actions"].append(completion_entry)
 
     # Move to completed_actions (preserves handle for post-completion ask queries)
     completed = cm.in_flight_actions.pop(event.handle_id, None)

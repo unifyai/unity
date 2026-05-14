@@ -1176,6 +1176,29 @@ class TestRenderCompletedActions:
         assert "Search for engineering contacts" in result
         assert "Create a task for follow-up" in result
 
+    def test_failed_completed_action_renders_error_state(self, renderer):
+        """Failed actions render explicit failed status and error text."""
+        completed_actions = {
+            0: {
+                "handle": MagicMock(),
+                "query": "Run coordinator membership repair",
+                "action_type": "act",
+                "handle_actions": [
+                    {
+                        "action_name": "act_failed",
+                        "query": "Coordinator role required",
+                        "success": False,
+                        "error": "Coordinator role required",
+                    },
+                ],
+            },
+        }
+
+        result = renderer.render_completed_actions(completed_actions)
+
+        assert "status='failed'" in result
+        assert "<error>Coordinator role required</error>" in result
+
     def test_render_state_includes_completed_actions(
         self,
         renderer,

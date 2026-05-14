@@ -1747,19 +1747,37 @@ class Renderer:
                 short_name = derive_short_name(query)
                 handle_actions = handle_data.get("handle_actions", [])
 
-                # Extract result from the act_completed event
-                result = None
+                # Extract terminal status from the most recent completion marker.
+                terminal_event = None
                 for a in reversed(handle_actions):
-                    if a.get("action_name") == "act_completed":
-                        result = a.get("query", "")
+                    if a.get("action_name") in {"act_completed", "act_failed"}:
+                        terminal_event = a
                         break
 
                 action_type = handle_data.get("action_type", "act")
-                out += f"<action id='{handle_id}' short_name='{short_name}' status='completed' type='{action_type}'>\n"
+                action_status = (
+                    "failed"
+                    if terminal_event is not None
+                    and terminal_event.get("success") is False
+                    else "completed"
+                )
+                out += f"<action id='{handle_id}' short_name='{short_name}' status='{action_status}' type='{action_type}'>\n"
                 out += f"<original_request>{query}</original_request>\n"
 
-                if result is not None:
-                    out += f"<result>{result}</result>\n"
+                if terminal_event is not None:
+                    if terminal_event.get("success") is False:
+                        error_text = terminal_event.get("error") or terminal_event.get(
+                            "query",
+                            "",
+                        )
+                        if error_text:
+                            out += f"<error>{error_text}</error>\n"
+                    else:
+                        result = terminal_event.get(
+                            "result",
+                            terminal_event.get("query", ""),
+                        )
+                        out += f"<result>{result}</result>\n"
 
                 out += self._render_action_history(
                     handle_actions,

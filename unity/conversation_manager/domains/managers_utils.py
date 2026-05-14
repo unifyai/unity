@@ -24,6 +24,7 @@ from unity.conversation_manager.events import *
 from unity.common.prompt_helpers import now as prompt_now
 from unity.events.event_bus import EVENT_BUS
 from unity.manager_registry import ManagerRegistry
+from unity.function_manager.primitives import default_runtime_scope
 from unity.conversation_manager.cm_types import Medium, Mode
 
 if TYPE_CHECKING:
@@ -734,19 +735,43 @@ async def actor_watch_result(
     action_type: str = "",
 ) -> None:
     """Await final result and publish completion (or failure), then cleanup."""
-    # await result
+    resolved_action_type = action_type or "act"
     try:
         result = await handle.result()
-    except Exception as e:
-        result = f"Error getting actor result: {e}"
-        LOGGER.error(f"{ICONS['managers_worker']} [ManagersWorker] {result}")
+    except Exception as exc:
+        error_text = f"Error getting actor result: {exc}"
+        LOGGER.error(f"{ICONS['managers_worker']} [ManagersWorker] {error_text}")
+        await event_broker.publish(
+            "app:actor:result",
+            ActorResult(
+                handle_id=handle_id,
+                success=False,
+                result=None,
+                error=error_text,
+                action_type=resolved_action_type,
+            ).to_json(),
+        )
+        return
+
+    success = True
+    error_text: str | None = None
+    if isinstance(result, dict) and "error_kind" in result:
+        success = False
+        error_text = str(result.get("message") or result.get("error_kind"))
+    elif isinstance(result, str):
+        stripped_result = result.lstrip()
+        if stripped_result[:5].lower() == "error":
+            success = False
+            error_text = result
+
     await event_broker.publish(
         "app:actor:result",
         ActorResult(
             handle_id=handle_id,
-            success=False if "Error" in result else True,
+            success=success,
             result=result,
-            action_type=action_type,
+            error=error_text,
+            action_type=resolved_action_type,
         ).to_json(),
     )
 
@@ -1743,7 +1768,7 @@ def _init_managers(
                 ComputerEnvironment,
                 ActorEnvironment,
             )
-            from unity.function_manager.primitives import ComputerPrimitives
+            from unity.function_manager.primitives import ComputerPrimitives, Primitives
 
             cp = ComputerPrimitives()
             if _startup_config and _startup_config.get("url_mappings"):
@@ -1755,7 +1780,9 @@ def _init_managers(
             cm.actor = ManagerRegistry.get_actor(
                 description="production deployment",
                 environments=[
-                    StateManagerEnvironment(),
+                    StateManagerEnvironment(
+                        Primitives(primitive_scope=default_runtime_scope()),
+                    ),
                     ComputerEnvironment(cp),
                     ActorEnvironment(),
                 ]

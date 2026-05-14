@@ -986,12 +986,13 @@ class TestActorEventHandlers:
     async def test_actor_result_moves_action_to_completed(self, mock_cm):
         """ActorResult moves action from in_flight_actions to completed_actions."""
         mock_cm.in_flight_actions = {
-            1: {"query": "Test action", "handle_actions": []},
+            1: {"query": "Test action", "action_type": "act", "handle_actions": []},
         }
         event = ActorResult(
             handle_id=1,
             success=True,
             result="Action completed successfully",
+            action_type="act",
         )
 
         await EventHandler.handle_event(event, mock_cm)
@@ -1001,9 +1002,44 @@ class TestActorEventHandlers:
         assert mock_cm.completed_actions[1]["query"] == "Test action"
         # Result is recorded in handle_actions as act_completed event
         handle_actions = mock_cm.completed_actions[1]["handle_actions"]
-        assert any(a["action_name"] == "act_completed" for a in handle_actions)
+        completion = next(
+            a for a in handle_actions if a["action_name"] == "act_completed"
+        )
+        assert completion["success"] is True
+        assert completion["action_type"] == "act"
+        assert completion["result"] == "Action completed successfully"
         # No notification pushed (result is shown in completed_actions section)
         assert len(mock_cm.notifications_bar.notifications) == 0
+
+    @pytest.mark.asyncio
+    async def test_actor_result_failure_records_error_context(self, mock_cm):
+        """ActorResult failure stores error context before completion handoff."""
+        mock_cm.in_flight_actions = {
+            7: {
+                "query": "Fix coordinator memberships",
+                "action_type": "act",
+                "handle_actions": [],
+            },
+        }
+        event = ActorResult(
+            handle_id=7,
+            success=False,
+            result={"error_kind": "permission_denied"},
+            error="Coordinator role required",
+            action_type="act",
+        )
+
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert 7 not in mock_cm.in_flight_actions
+        completed = mock_cm.completed_actions[7]
+        completion = next(
+            a for a in completed["handle_actions"] if a["action_name"] == "act_failed"
+        )
+        assert completion["success"] is False
+        assert completion["action_type"] == "act"
+        assert completion["error"] == "Coordinator role required"
+        assert completion["result"] == {"error_kind": "permission_denied"}
 
     @pytest.mark.asyncio
     async def test_actor_handle_response_updates_matching_pending_action(
