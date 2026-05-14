@@ -25,6 +25,7 @@ from unity.actor.environments.base import (
     build_filtered_method_docs,
 )
 from unity.function_manager.primitives.registry import get_registry
+from unity.function_manager.primitives.scope import default_runtime_scope
 
 if TYPE_CHECKING:
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -88,7 +89,7 @@ def _build_scoped_fm(
 ) -> "FunctionManager":
     """Build a fresh FunctionManager with an optional discovery filter.
 
-    Constructs a default FunctionManager with all managers in scope.
+    Constructs a FunctionManager with the canonical role-gated primitive scope.
     If *discovery_scope* is provided it is applied as the ``filter_scope``
     so the inner actor's search/list/filter results are restricted
     accordingly.
@@ -96,6 +97,7 @@ def _build_scoped_fm(
     from unity.function_manager.function_manager import FunctionManager as _FM
 
     return _FM(
+        primitive_scope=default_runtime_scope(),
         filter_scope=discovery_scope,
         include_primitives=True,
     )
@@ -249,18 +251,24 @@ def _build_environments_from_db(
     envs: list[BaseEnvironment] = []
 
     if state_manager_methods:
+        allowed_managers = default_runtime_scope().scoped_managers
         needed_managers: set[str] = set()
+        allowed_state_manager_methods: set[str] = set()
         for fq in state_manager_methods:
             parts = fq.split(".")
             if len(parts) >= 2:
-                needed_managers.add(parts[1])
-        scope = PrimitiveScope(scoped_managers=frozenset(needed_managers))
-        envs.append(
-            StateManagerEnvironment(
-                Primitives(primitive_scope=scope),
-                allowed_methods=state_manager_methods,
-            ),
-        )
+                alias = parts[1]
+                if alias in allowed_managers:
+                    needed_managers.add(alias)
+                    allowed_state_manager_methods.add(fq)
+        if needed_managers:
+            scope = PrimitiveScope(scoped_managers=frozenset(needed_managers))
+            envs.append(
+                StateManagerEnvironment(
+                    Primitives(primitive_scope=scope),
+                    allowed_methods=allowed_state_manager_methods,
+                ),
+            )
 
     if computer_methods:
         envs.append(

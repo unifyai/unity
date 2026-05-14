@@ -65,10 +65,37 @@ def _preseed_write_payload(
     return payload
 
 
-class CoordinatorTools:
-    """Per-turn tool collaborator for Coordinator-owned workspace actions."""
+COORDINATOR_TOOL_METHOD_NAMES: tuple[str, ...] = (
+    "create_assistant",
+    "delete_assistant",
+    "update_assistant_config",
+    "list_assistants",
+    "list_org_members",
+    "pre_seed_colleague",
+    "create_space",
+    "delete_space",
+    "update_space",
+    "add_space_member",
+    "remove_space_member",
+    "list_spaces",
+    "list_space_members",
+    "list_spaces_for_assistant",
+    "commission_colleague_into_workspace",
+    "set_setup_state",
+    "add_setup_checklist_item",
+    "update_setup_checklist_item",
+)
 
-    def __init__(self, cm: "ConversationManager"):
+
+class CoordinatorTools:
+    """Coordinator workspace action delegate.
+
+    Supports two call sites:
+    - Direct slow-brain tool execution paths (with a `ConversationManager` instance).
+    - Actor-routed primitive delegation (`CoordinatorWorkspaceManager`) with `cm=None`.
+    """
+
+    def __init__(self, cm: "ConversationManager | None"):
         self._cm = cm
         self._assistant_cache: list[dict[str, Any]] | None = None
         self._known_assistant_ids: set[str] = set()
@@ -1426,29 +1453,7 @@ class CoordinatorTools:
 
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the Coordinator-only tools for the slow-brain loop."""
-
-        return {
-            "create_assistant": self.create_assistant,
-            "delete_assistant": self.delete_assistant,
-            "update_assistant_config": self.update_assistant_config,
-            "list_assistants": self.list_assistants,
-            "list_org_members": self.list_org_members,
-            "pre_seed_colleague": self.pre_seed_colleague,
-            "create_space": self.create_space,
-            "delete_space": self.delete_space,
-            "update_space": self.update_space,
-            "add_space_member": self.add_space_member,
-            "remove_space_member": self.remove_space_member,
-            "list_spaces": self.list_spaces,
-            "list_space_members": self.list_space_members,
-            "list_spaces_for_assistant": self.list_spaces_for_assistant,
-            "commission_colleague_into_workspace": (
-                self.commission_colleague_into_workspace
-            ),
-            "set_setup_state": self.set_setup_state,
-            "add_setup_checklist_item": self.add_setup_checklist_item,
-            "update_setup_checklist_item": self.update_setup_checklist_item,
-        }
+        return {name: getattr(self, name) for name in COORDINATOR_TOOL_METHOD_NAMES}
 
     def _org_member_is_reachable(self, member_user_id: str) -> bool | ToolError:
         """Return whether a user id belongs to this Coordinator's org roster."""

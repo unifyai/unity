@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 from unity.function_manager.primitives.scope import (
     PrimitiveScope,
     VALID_MANAGER_ALIASES,
+    default_runtime_scope,
 )
 from unity.function_manager.primitives.registry import (
     get_registry,
@@ -895,10 +896,13 @@ _ALIAS_TO_GETTER: dict[str, str] = {
     "files": "get_file_manager",
     "computer": "",
     "actor": "",
+    "coordinator": "",
 }
 
 # Managers that need async wrapping (sync implementations)
-_SYNC_MANAGERS: frozenset[str] = frozenset({"dashboards", "data", "files"})
+_SYNC_MANAGERS: frozenset[str] = frozenset(
+    {"dashboards", "data", "files", "coordinator"},
+)
 
 
 # =============================================================================
@@ -938,9 +942,9 @@ class Primitives:
 
         Args:
             primitive_scope: Defines which managers are accessible.
-                           If None, all managers are accessible.
+                           If None, uses role-gated default runtime scope.
         """
-        self._primitive_scope = primitive_scope or PrimitiveScope.all_managers()
+        self._primitive_scope = primitive_scope or default_runtime_scope()
         # Lazy-initialized manager instances
         self._managers: dict[str, Any] = {}
 
@@ -1065,6 +1069,11 @@ class Primitives:
     def actor(self) -> Any:
         """Actor delegation primitives (run)."""
         return self._get_manager("actor")
+
+    @property
+    def coordinator(self) -> "_AsyncPrimitiveWrapper":
+        """Coordinator workspace primitives (assistant/space lifecycle)."""
+        return self._get_manager("coordinator")
 
 
 # =============================================================================

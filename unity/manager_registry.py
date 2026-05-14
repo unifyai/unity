@@ -484,12 +484,12 @@ class ManagerRegistry:
         ----------
         primitive_scope : PrimitiveScope | None
             Defines which managers' primitives are indexed and searchable.
-            If None, defaults to all_managers().
+            If None, defaults to role-gated runtime scope.
         """
-        from unity.function_manager.primitives import PrimitiveScope
+        from unity.function_manager.primitives import default_runtime_scope
 
         if primitive_scope is None:
-            primitive_scope = PrimitiveScope.all_managers()
+            primitive_scope = default_runtime_scope()
 
         # FunctionManager is always created fresh per scope (not singleton)
         return cls.get(

@@ -5,7 +5,10 @@ import pytest
 from unity.function_manager.primitives.scope import (
     PrimitiveScope,
     VALID_MANAGER_ALIASES,
+    default_runtime_scope,
+    scoped_managers_for_role,
 )
+from unity.session_details import SESSION_DETAILS
 
 # ────────────────────────────────────────────────────────────────────────────
 # PrimitiveScope validation tests
@@ -148,6 +151,7 @@ def test_valid_manager_aliases_contains_expected():
         "files",
         "computer",
         "actor",
+        "coordinator",
     }
     assert expected == VALID_MANAGER_ALIASES
 
@@ -173,3 +177,26 @@ def test_includes_returns_false_for_nonexistent():
     # Check all other aliases are not included
     for alias in VALID_MANAGER_ALIASES - {"files"}:
         assert not scope.includes(alias)
+
+
+def test_scoped_managers_for_role_excludes_coordinator_for_regular_role():
+    scoped = scoped_managers_for_role(is_coordinator=False)
+    assert "coordinator" not in scoped
+    assert scoped == (VALID_MANAGER_ALIASES - {"coordinator"})
+
+
+def test_scoped_managers_for_role_includes_coordinator_for_coordinator_role():
+    scoped = scoped_managers_for_role(is_coordinator=True)
+    assert scoped == VALID_MANAGER_ALIASES
+
+
+def test_default_runtime_scope_respects_session_role_flag():
+    SESSION_DETAILS.reset()
+    try:
+        SESSION_DETAILS.is_coordinator = False
+        assert "coordinator" not in default_runtime_scope().scoped_managers
+
+        SESSION_DETAILS.is_coordinator = True
+        assert "coordinator" in default_runtime_scope().scoped_managers
+    finally:
+        SESSION_DETAILS.reset()

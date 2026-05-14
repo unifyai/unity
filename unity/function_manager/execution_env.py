@@ -245,10 +245,10 @@ def create_execution_globals() -> Dict[str, Any]:
     globals_dict = create_base_globals()
 
     # Import Primitives here to avoid circular imports at module load time
-    from unity.function_manager.primitives import Primitives
+    from unity.function_manager.primitives import Primitives, default_runtime_scope
 
     # Inject the primitives instance - all access is lazy
-    globals_dict["primitives"] = Primitives()
+    globals_dict["primitives"] = Primitives(primitive_scope=default_runtime_scope())
 
     # Steerable handle infrastructure - allows compositional functions to
     # create and return steerable handles that the execution layer can detect

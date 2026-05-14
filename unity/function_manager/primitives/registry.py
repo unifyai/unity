@@ -258,6 +258,27 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         ),
     ),
     ManagerSpec(
+        manager_alias="coordinator",
+        manager_registry_key="",  # No ManagerRegistry getter - singleton via metaclass
+        primitive_class_path="unity.coordinator_manager.workspace_manager.CoordinatorWorkspaceManager",
+        excluded_methods=frozenset(),
+        priority=6,
+        domain="Coordinator Workspace Administration",
+        description=(
+            "Coordinator-only workspace lifecycle operations for assistants, spaces, "
+            "membership, and setup checklist state"
+        ),
+        use_when=(
+            "The session is running as a Coordinator and needs privileged setup "
+            "or lifecycle mutations on colleagues and shared workspaces"
+        ),
+        examples=(
+            "'Create the Regional Ops Manager colleague', "
+            "'Add the supervisor to Patch 4 workspace', "
+            "'Mark setup checklist item 3 as done'"
+        ),
+    ),
+    ManagerSpec(
         manager_alias="computer",
         manager_registry_key="",  # No ManagerRegistry getter - singleton via metaclass
         primitive_class_path="unity.function_manager.primitives.runtime.ComputerPrimitives",

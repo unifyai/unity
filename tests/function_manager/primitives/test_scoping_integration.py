@@ -11,6 +11,8 @@ These tests verify that the scoping mechanism works consistently at ALL levels:
 This ensures the single source of truth (PrimitiveScope) controls what the model sees.
 """
 
+import os
+
 import pytest
 
 from unity.function_manager.primitives import (
@@ -34,8 +36,13 @@ from tests.helpers import _handle_project
 def scoped_function_manager_factory():
     """Factory that creates FunctionManager with specific scope."""
     managers = []
+    previous_impl = os.environ.get("UNITY_FUNCTION_IMPL")
+    previous_base_context = getattr(ContextRegistry, "_base_context", None)
+    os.environ["UNITY_FUNCTION_IMPL"] = "simulated"
+    ContextRegistry.set_base_context("UnityTests/PrimitiveScope")
 
     def _create(scope: PrimitiveScope):
+        ContextRegistry.set_base_context("UnityTests/PrimitiveScope")
         ContextRegistry.forget(FunctionManager, "Functions/VirtualEnvs")
         ContextRegistry.forget(FunctionManager, "Functions/Compositional")
         ContextRegistry.forget(FunctionManager, "Functions/Primitives")
@@ -51,6 +58,13 @@ def scoped_function_manager_factory():
             fm.clear()
         except Exception:
             pass
+    if previous_impl is None:
+        os.environ.pop("UNITY_FUNCTION_IMPL", None)
+    else:
+        os.environ["UNITY_FUNCTION_IMPL"] = previous_impl
+    ContextRegistry.clear()
+    if previous_base_context:
+        ContextRegistry.set_base_context(previous_base_context)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -272,12 +286,10 @@ def test_primitives_instance_respects_scope():
     scope = PrimitiveScope.single("files")
     primitives = Primitives(primitive_scope=scope)
 
-    # files should be accessible
-    assert hasattr(primitives, "files")
+    assert primitives.primitive_scope.scoped_managers == frozenset({"files"})
 
-    # Other managers should still be accessible (Primitives doesn't block access)
-    # but the scoping is enforced at the environment/FunctionManager level
-    # The runtime Primitives instance gives full access for flexibility
+    with pytest.raises(AttributeError):
+        _ = primitives.contacts
 
 
 def test_state_manager_env_get_prompt_context_respects_scope():

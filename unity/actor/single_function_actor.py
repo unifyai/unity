@@ -482,10 +482,12 @@ class SingleFunctionActor(BaseActor):
 
     def _create_execution_globals(self) -> Dict[str, Any]:
         """Create the globals dict for function execution."""
-        from unity.function_manager.primitives import Primitives
+        from unity.function_manager.primitives import Primitives, default_runtime_scope
 
         globals_dict = create_execution_globals()
-        globals_dict["primitives"] = Primitives()
+        globals_dict["primitives"] = Primitives(
+            primitive_scope=default_runtime_scope(),
+        )
         return globals_dict
 
     async def _execute_primitive(
@@ -496,9 +498,12 @@ class SingleFunctionActor(BaseActor):
         """Execute a primitive (state manager method) with stdout capture."""
         name = primitive_data.get("name")
 
-        from unity.function_manager.primitives import Primitives
+        from unity.function_manager.primitives import Primitives, default_runtime_scope
 
-        fn = get_primitive_callable(primitive_data, primitives=Primitives())
+        fn = get_primitive_callable(
+            primitive_data,
+            primitives=Primitives(primitive_scope=default_runtime_scope()),
+        )
         if fn is None:
             raise ValueError(f"Could not resolve primitive '{name}' to a callable")
 
@@ -570,9 +575,9 @@ class SingleFunctionActor(BaseActor):
 
         is_async = "async def" in implementation
 
-        from unity.function_manager.primitives import Primitives
+        from unity.function_manager.primitives import Primitives, default_runtime_scope
 
-        primitives = Primitives()
+        primitives = Primitives(primitive_scope=default_runtime_scope())
 
         out = await self._function_manager.execute_in_venv(
             venv_id=venv_id,

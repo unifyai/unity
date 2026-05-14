@@ -56,7 +56,10 @@ from ..image_manager.image_manager import ImageHandle
 from ..manager_registry import ManagerRegistry
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import ContextRegistry, TableContext
-from unity.function_manager.primitives.scope import PrimitiveScope
+from unity.function_manager.primitives.scope import (
+    PrimitiveScope,
+    default_runtime_scope,
+)
 from unity.function_manager.primitives.registry import get_registry
 from unity.common.startup_timing import log_startup_timing
 from .custom_functions import (
@@ -1682,8 +1685,8 @@ class FunctionManager(BaseFunctionManager):
         file_manager: Optional[LocalFileManager] = None,
     ) -> None:
         # Store the scope - this FunctionManager instance is permanently scoped
-        # Default to all managers if not specified
-        self._primitive_scope = primitive_scope or PrimitiveScope.all_managers()
+        # Default to the canonical role-scoped manager set when not specified.
+        self._primitive_scope = primitive_scope or default_runtime_scope()
         self._filter_scope = filter_scope
         self._exclude_primitive_ids = (
             frozenset(exclude_primitive_ids) if exclude_primitive_ids else None

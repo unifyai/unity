@@ -14,6 +14,9 @@ This subpackage provides:
 from unity.function_manager.primitives.scope import (
     PrimitiveScope,
     VALID_MANAGER_ALIASES,
+    COORDINATOR_MANAGER_ALIAS,
+    scoped_managers_for_role,
+    default_runtime_scope,
 )
 from unity.function_manager.primitives.registry import (
     ManagerSpec,
@@ -40,6 +43,9 @@ __all__ = [
     # Scope
     "PrimitiveScope",
     "VALID_MANAGER_ALIASES",
+    "COORDINATOR_MANAGER_ALIAS",
+    "scoped_managers_for_role",
+    "default_runtime_scope",
     # Registry
     "ManagerSpec",
     "ToolSurfaceRegistry",
