@@ -1675,9 +1675,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def check_inactivity(self):
         """Monitor for inactivity and shut down gracefully after timeout.
 
-        Activity is detected from two sources:
+        Activity is detected from three sources:
         - External pubsub messages (updated by wait_for_events via last_activity_time)
         - Internal EventBus publishes (LLM calls, tool-loop turns, manager methods)
+        - Active work records for long-running local execution
 
         Ghost-publish detection: if pubsub is idle past the timeout but
         eventbus_idle stays suspiciously low for many consecutive checks,
@@ -1687,6 +1688,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """
         import time as _time
 
+        from unity.events.active_work import ACTIVE_WORK
         from unity.events.event_bus import EventBus
 
         _GHOST_PUBLISH_CHECKS = 20  # 20 * 30s = 10 minutes
@@ -1696,11 +1698,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(self.inactivity_check_interval)
             current_time = self.loop.time()
             pubsub_idle = current_time - self.last_activity_time
-            eventbus_idle = _time.monotonic() - EventBus.last_publish_monotonic
+            monotonic_now = _time.monotonic()
+            eventbus_idle = monotonic_now - EventBus.last_publish_monotonic
             idle_seconds = min(pubsub_idle, eventbus_idle)
+            active_work = ACTIVE_WORK.snapshot()
+            has_active_work = active_work.active_count > 0
+            effective_idle_seconds = 0.0 if has_active_work else idle_seconds
 
             if (
-                pubsub_idle > self.inactivity_timeout
+                not has_active_work
+                and pubsub_idle > self.inactivity_timeout
                 and eventbus_idle < self.inactivity_timeout
             ):
                 ghost_counter += 1
@@ -1713,15 +1720,27 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 extra = ""
                 if ghost_counter > 0:
                     extra = f" ghost_count={ghost_counter}/{_GHOST_PUBLISH_CHECKS}"
+                if has_active_work:
+                    active_heartbeat_age = (
+                        monotonic_now - active_work.newest_heartbeat_at
+                        if active_work.newest_heartbeat_at is not None
+                        else 0.0
+                    )
+                    extra += (
+                        f" active_work_count={active_work.active_count}"
+                        f" active_elapsed={active_work.oldest_elapsed_s:.1f}s"
+                        f" active_heartbeat_age={active_heartbeat_age:.1f}s"
+                    )
                 self._session_logger.info(
                     "inactivity_check",
                     f"Idle check: pubsub_idle={pubsub_idle:.1f}s, "
                     f"eventbus_idle={eventbus_idle:.1f}s, "
                     f"min_idle={idle_seconds:.1f}s, "
+                    f"effective_idle={effective_idle_seconds:.1f}s, "
                     f"timeout={self.inactivity_timeout}s{extra}",
                 )
 
-            if idle_seconds > self.inactivity_timeout or ghost_publish:
+            if effective_idle_seconds > self.inactivity_timeout or ghost_publish:
                 if ghost_publish:
                     log_str = (
                         f"Ghost-publish shutdown: pubsub_idle={pubsub_idle:.0f}s "
