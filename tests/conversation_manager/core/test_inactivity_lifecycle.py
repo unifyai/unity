@@ -5,7 +5,7 @@ tests/conversation_manager/core/test_inactivity_lifecycle.py
 Tests for container inactivity detection and lifecycle management.
 
 These tests verify the critical production behavior documented in INFRA.md:
-- Containers shut down after 6 minutes (360s) of inactivity
+- Containers shut down after 7 minutes (420s) of inactivity
 - Idle containers ping every 30 seconds to stay alive
 - Cleanup is called properly on shutdown
 - Jobs are marked as done in AssistantJobs
@@ -23,8 +23,8 @@ What This File Tests:
 
 Production Context (from INFRA.md):
 -----------------------------------
-- Inactivity timeout: 6 minutes (360 seconds)
-- Ping interval: 30 seconds (half the timeout)
+- Inactivity timeout: 7 minutes (420 seconds)
+- Ping interval: 30 seconds
 - Idle containers use assistant_id=None
 - Live containers have a real assistant_id
 - On shutdown: cleanup() → mark_job_done() → stop.set()
@@ -364,6 +364,67 @@ class TestEventBusKeepAlive:
                 await check_task
 
         assert stop_event.is_set()
+
+
+class TestActiveWorkKeepAlive:
+    """Tests that active work prevents quiet long-running execution from idling out."""
+
+    @pytest.mark.asyncio
+    async def test_active_work_prevents_shutdown_until_work_completes(
+        self,
+        event_broker,
+    ):
+        import time as _time
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+        from unity.events.active_work import ACTIVE_WORK
+        from unity.events.event_bus import EventBus
+
+        ACTIVE_WORK.clear()
+
+        stop_event = asyncio.Event()
+        cm = ConversationManager(
+            event_broker=event_broker,
+            job_name="test-job",
+            user_id="user_1",
+            assistant_id="assistant_1",
+            user_first_name="Test",
+            user_surname="User",
+            assistant_first_name="Test",
+            assistant_surname="Assistant",
+            assistant_age="25",
+            assistant_nationality="American",
+            assistant_about="Test bio",
+            assistant_number="+15555550000",
+            assistant_email="assistant@test.com",
+            user_number="+15555551111",
+            user_email="user@test.com",
+            stop=stop_event,
+        )
+
+        cm.inactivity_timeout = 0.08
+        cm.inactivity_check_interval = 0.02
+        cm.last_activity_time = cm.loop.time() - 10.0
+        EventBus.last_publish_monotonic = _time.monotonic() - 10.0
+
+        active_work = ACTIVE_WORK.begin(label="test_work")
+        check_task = asyncio.create_task(cm.check_inactivity())
+
+        try:
+            await asyncio.sleep(0.15)
+            assert not stop_event.is_set()
+
+            active_work.end()
+            await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+        finally:
+            active_work.end()
+            ACTIVE_WORK.clear()
+            check_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await check_task
+
+        assert stop_event.is_set()
+        assert cm.shutdown_reason == "idle_timeout"
 
 
 # =============================================================================
