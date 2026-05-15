@@ -375,7 +375,7 @@ def test_filter_contacts_by_email():
 def test_filter_contacts_offset_limit():
     """filter_contacts respects offset and limit."""
     cm = SimulatedContactManager()
-    # Create 5 contacts (IDs 2-6) with valid names (no digits in first_name)
+    # Create 5 contacts (IDs 2-6) with valid names.
     names = ["Alice", "Bob", "Carol", "Dave", "Eve"]
     for name in names:
         cm._create_contact(first_name=name)

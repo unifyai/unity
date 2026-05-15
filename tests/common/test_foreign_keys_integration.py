@@ -676,8 +676,7 @@ def test_bulk_delete_preserves_fk_integrity():
     cm = ContactManager()
     tm = TranscriptManager()
 
-    # Create 10 contacts (excluding system contacts 0 and 1)
-    # Use letters instead of digits in names to match Contact.first_name pattern
+    # Create 10 contacts (excluding system contacts 0 and 1).
     for i in range(10):
         cm._create_contact(
             first_name=f"TestUser{chr(65 + i)}",  # TestUserA, TestUserB, ..., TestUserJ

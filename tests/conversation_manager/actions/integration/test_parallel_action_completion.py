@@ -40,10 +40,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 def _random_name_suffix() -> str:
     """Generate a random alphabetic suffix for unique contact names.
 
-    Returns names like 'Xyzab' that comply with the contact name pattern
-    (no underscores, no digits).
+    Returns names like 'Xyzab' that comply with the contact name pattern.
     """
-    # Use only letters to comply with contact name validation
+    # Use letters only to keep generated names deterministic and readable.
     letters = string.ascii_lowercase
     suffix = "".join(random.choice(letters) for _ in range(5))
     return suffix.capitalize()
@@ -107,8 +106,7 @@ async def test_parallel_action_completion_preserves_first_result(
     """
     cm = initialized_cm_codeact
 
-    # Use a unique name to avoid interference from other tests
-    # Name must comply with contact schema (no underscores or digits)
+    # Use a unique name to avoid interference from other tests.
     unique_name = f"Testbob{_random_name_suffix()}"
 
     # Verify contact doesn't exist yet
