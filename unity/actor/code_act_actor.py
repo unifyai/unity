@@ -60,6 +60,7 @@ from unity.events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
 )
+from unity.events.active_work import ACTIVE_WORK, ActiveWorkHandle
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
@@ -84,6 +85,27 @@ _USE_DEFAULT: object = object()
 
 _UNSET: object = object()
 """Sentinel indicating 'parameter was not explicitly provided'."""
+
+
+class _ActiveWorkNotificationQueue:
+    def __init__(
+        self,
+        target: asyncio.Queue[dict],
+        active_work: ActiveWorkHandle,
+    ) -> None:
+        self._target = target
+        self._active_work = active_work
+
+    async def put(self, item: dict) -> None:
+        self._active_work.record_user_notification()
+        await self._target.put(item)
+
+    def put_nowait(self, item: dict) -> None:
+        self._active_work.record_user_notification()
+        self._target.put_nowait(item)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._target, name)
 
 
 def _resolve_param(explicit: object, code_value: object, default: object) -> object:
@@ -1815,6 +1837,9 @@ class CodeActActor(BaseCodeActActor):
         self._act_semaphore = asyncio.Semaphore(20)
         # Timeout used when acquiring the semaphore (prevents unbounded waits).
         self._act_semaphore_timeout_s: float = 30.0
+        self._active_work_heartbeat_interval_s: float = 60.0
+        self._active_work_fallback_initial_delay_s: float = 120.0
+        self._active_work_fallback_repeat_interval_s: float = 300.0
 
     # ───────────────────────── Session name registry ─────────────────────── #
 
@@ -2053,6 +2078,35 @@ class CodeActActor(BaseCodeActActor):
 
         return {"ask_computer_progress": ask_computer_progress}
 
+    async def _run_active_work_heartbeat(
+        self,
+        active_work: ActiveWorkHandle,
+        notification_q: asyncio.Queue[dict] | None,
+    ) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self._active_work_heartbeat_interval_s)
+                active_work.heartbeat()
+                if (
+                    notification_q is not None
+                    and active_work.fallback_notification_due(
+                        initial_delay_s=self._active_work_fallback_initial_delay_s,
+                        repeat_interval_s=self._active_work_fallback_repeat_interval_s,
+                    )
+                ):
+                    await notification_q.put(
+                        {
+                            "type": "notification",
+                            "message": "Still working on the code step...",
+                            "source": "active_work",
+                            "completed": False,
+                            "active_work_id": active_work.work_id,
+                        },
+                    )
+                    active_work.record_fallback_notification()
+        except asyncio.CancelledError:
+            pass
+
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         """Builds the dictionary of tools available to the LLM."""
 
@@ -2194,9 +2248,28 @@ class CodeActActor(BaseCodeActActor):
             tb_str: str | None = None
             exec_exc: Exception | None = None
 
-            notification_q = _notification_up_q
-            sandbox_id = None
+            active_work = ACTIVE_WORK.begin(
+                label="execute_code",
+                metadata={
+                    "language": language,
+                    "state_mode": state_mode,
+                    "session_id": session_id,
+                    "session_name": session_name,
+                    "venv_id": venv_id,
+                    "thought": thought[:500],
+                },
+            )
+            heartbeat_task: asyncio.Task[None] | None = None
             try:
+                heartbeat_task = asyncio.create_task(
+                    self._run_active_work_heartbeat(active_work, _notification_up_q),
+                )
+                notification_q = (
+                    _ActiveWorkNotificationQueue(_notification_up_q, active_work)
+                    if _notification_up_q is not None
+                    else None
+                )
+                sandbox_id = None
                 try:
                     from unity.manager_registry import ManagerRegistry
 
@@ -2304,6 +2377,13 @@ class CodeActActor(BaseCodeActActor):
 
                 return out
             finally:
+                active_work.end()
+                if heartbeat_task is not None and not heartbeat_task.done():
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
                 try:
                     _out_err = (
                         (
@@ -2851,9 +2931,31 @@ class CodeActActor(BaseCodeActActor):
                 tb_str: str | None = None
                 exec_exc: Exception | None = None
 
-                notification_q = _notification_up_q
-                sandbox_id = None
+                active_work = ACTIVE_WORK.begin(
+                    label="execute_function",
+                    metadata={
+                        "function_name": function_name,
+                        "language": language,
+                        "state_mode": state_mode,
+                        "session_id": session_id,
+                        "session_name": session_name,
+                        "venv_id": venv_id,
+                    },
+                )
+                heartbeat_task: asyncio.Task[None] | None = None
                 try:
+                    heartbeat_task = asyncio.create_task(
+                        self._run_active_work_heartbeat(
+                            active_work,
+                            _notification_up_q,
+                        ),
+                    )
+                    notification_q = (
+                        _ActiveWorkNotificationQueue(_notification_up_q, active_work)
+                        if _notification_up_q is not None
+                        else None
+                    )
+                    sandbox_id = None
                     _rs = self._resolve_session(
                         state_mode=state_mode,
                         language=str(language),
@@ -3004,6 +3106,13 @@ class CodeActActor(BaseCodeActActor):
                     )
                     return out
                 finally:
+                    active_work.end()
+                    if heartbeat_task is not None and not heartbeat_task.done():
+                        heartbeat_task.cancel()
+                        try:
+                            await heartbeat_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
                     _ef_log.debug(
                         f"⏱️ [execute_function +{_ef_ms()}] lineage boundary (outgoing) start",
                     )
