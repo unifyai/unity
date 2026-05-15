@@ -468,7 +468,7 @@ class PythonExecutionSession:
             except Exception:
                 pass
 
-    async def execute(self, code: str) -> dict:
+    async def execute(self, code: str, *, timeout: float | None = None) -> dict:
         """
         Executes a string of Python code within the sandbox's stateful environment.
 
@@ -651,11 +651,17 @@ class PythonExecutionSession:
 
                 try:
                     exec(async_code, self.global_state)
-                    result = await self.global_state["__exec_wrapper"]()
+                    execution = self.global_state["__exec_wrapper"]()
+                    if timeout is None:
+                        result = await execution
+                    else:
+                        result = await asyncio.wait_for(execution, timeout=timeout)
                 finally:
                     if _orig_prims is not None:
                         self.global_state["primitives"] = _orig_prims
 
+            except asyncio.TimeoutError:
+                error = f"Python execution timed out after {timeout}s"
             except Exception:
                 error = traceback.format_exc()
             finally:
@@ -830,7 +836,7 @@ class SessionExecutor:
             else:
                 sb.global_state.pop("__notification_up_q__", None)
             try:
-                return await sb.execute(code)
+                return await sb.execute(code, timeout=self._timeout)
             finally:
                 if previous_notification_q is notification_sentinel:
                     sb.global_state.pop("__notification_up_q__", None)
