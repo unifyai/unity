@@ -1,3 +1,5 @@
+import pytest
+
 from unity.contact_manager.contact_manager import ContactManager
 from tests.helpers import _handle_project
 
@@ -73,6 +75,31 @@ def test_update():
     assert contact.should_respond is True
 
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
+
+
+@_handle_project
+def test_update_accepts_digit_name_parts():
+    cm = ContactManager()
+    out = cm._create_contact(first_name="Dan")
+    cid = out["details"]["contact_id"]
+
+    cm.update_contact(
+        contact_id=cid,
+        first_name="Dan2",
+        surname="Patch 4 Lead",
+    )
+
+    updated = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
+    assert updated.first_name == "Dan2"
+    assert updated.surname == "Patch 4 Lead"
+
+
+@_handle_project
+def test_create_rejects_name_with_underscore():
+    cm = ContactManager()
+
+    with pytest.raises(ValueError):
+        cm._create_contact(first_name="Dan_2")
 
 
 @_handle_project

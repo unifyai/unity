@@ -992,8 +992,8 @@ class ContactManager(BaseContactManager):
         Parameters
         ----------
         first_name : str | None
-            Given name. Validation guidance: should start with a capital letter; allowed
-            characters are letters, spaces, periods, and hyphens. Optional.
+            Given name. Allowed characters are Unicode letters/digits plus spaces,
+            periods, apostrophes, and hyphens (underscores are not allowed). Optional.
         surname : str | None
             Family name (stored in the ``surname`` column). Same validation guidance as
             ``first_name``. Optional.

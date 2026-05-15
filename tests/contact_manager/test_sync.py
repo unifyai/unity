@@ -25,6 +25,40 @@ def _clear_cached_assistant(monkeypatch):
     monkeypatch.setattr(SESSION_DETAILS, "assistant", AssistantDetails())
 
 
+def _configure_real_assistant(
+    monkeypatch,
+    *,
+    agent_id: int,
+    first_name: str,
+    surname: str,
+    number: str,
+    email: str,
+    about: str,
+    timezone: str,
+) -> None:
+    """Configure SESSION_DETAILS with a populated assistant profile for sync tests."""
+    from unity.session_details import AssistantDetails
+
+    monkeypatch.setattr(SESSION_DETAILS, "_initialized", True)
+    monkeypatch.setattr(
+        SESSION_DETAILS,
+        "assistant",
+        AssistantDetails(
+            agent_id=agent_id,
+            first_name=first_name,
+            surname=surname,
+            number=number,
+            email=email,
+            about=about,
+            timezone=timezone,
+        ),
+    )
+    monkeypatch.setattr(
+        "unity.contact_manager.system_contacts._upsert_personal_contact_membership",
+        lambda **_: None,
+    )
+
+
 @_handle_project
 def test_dummy_assistant(monkeypatch):
     """When the account has no assistants, default system contacts are created."""
@@ -61,28 +95,15 @@ def test_dummy_assistant(monkeypatch):
 @_handle_project
 def test_real_assistant(monkeypatch):
     """If a real assistant is configured, its details should populate the self contact."""
-    from unity.session_details import SESSION_DETAILS
-
-    from unity.session_details import AssistantDetails
-
-    # Simulate a real session with populated assistant details.
-    monkeypatch.setattr(SESSION_DETAILS, "_initialized", True)
-    monkeypatch.setattr(
-        SESSION_DETAILS,
-        "assistant",
-        AssistantDetails(
-            agent_id=123,
-            first_name="Alice",
-            surname="Smith",
-            number="+15551234567",
-            email="alice.smith@example.com",
-            about="Helpful assistant",
-            timezone="America/New_York",
-        ),
-    )
-    monkeypatch.setattr(
-        "unity.contact_manager.system_contacts._upsert_personal_contact_membership",
-        lambda **_: None,
+    _configure_real_assistant(
+        monkeypatch,
+        agent_id=123,
+        first_name="Alice",
+        surname="Smith",
+        number="+15551234567",
+        email="alice.smith@example.com",
+        about="Helpful assistant",
+        timezone="America/New_York",
     )
 
     cm = ContactManager()
@@ -105,6 +126,31 @@ def test_real_assistant(monkeypatch):
         filter=f"contact_id == {SESSION_DETAILS.boss_contact_id}",
     )["contacts"]
     assert users, "Default user should exist"
+
+
+@_handle_project
+def test_real_assistant_accepts_digits_in_name_parts(monkeypatch):
+    """System contact sync accepts assistant names that contain digits."""
+    _configure_real_assistant(
+        monkeypatch,
+        agent_id=2016,
+        first_name="Central1",
+        surname="South Patch 1 Supervisor",
+        number="+15551234567",
+        email="central.patch1@example.com",
+        about="Patch-level operational support assistant",
+        timezone="Asia/Karachi",
+    )
+
+    cm = ContactManager()
+
+    assistants = cm.filter_contacts(
+        filter=f"contact_id == {SESSION_DETAILS.self_contact_id}",
+    )["contacts"]
+    assert len(assistants) == 1
+    assistant = assistants[0]
+    assert assistant.first_name == "Central1"
+    assert assistant.surname == "South Patch 1 Supervisor"
 
 
 @_handle_project

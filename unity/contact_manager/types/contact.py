@@ -15,7 +15,9 @@ from unity.common.authorship import AuthoredRow
 
 _log = logging.getLogger(__name__)
 
-UNICODE_NAME_RE = r"^[^\W\d_](?:[^\W\d_]|[ .'-])*$"  # ← one reusable constant
+# Allow Unicode letters/digits plus space, apostrophe, hyphen, and period.
+# Keep underscore excluded to avoid machine-like identifier names in contacts.
+UNICODE_NAME_RE = r"^[^\W_](?:[^\W_]|[ .'-])*$"
 
 UNASSIGNED = -1
 
@@ -106,12 +108,12 @@ class Contact(AuthoredRow):
     )
     first_name: Optional[str] = Field(
         default=None,
-        description="Contact's first name – letters (any script) plus . ' - and space",
+        description="Contact's first name – letters/digits (any script) plus . ' - and space",
         pattern=UNICODE_NAME_RE,
     )
     surname: Optional[str] = Field(
         default=None,
-        description="Contact's surname – letters (any script) plus . ' - and space",
+        description="Contact's surname – letters/digits (any script) plus . ' - and space",
         pattern=UNICODE_NAME_RE,
     )
     email_address: Optional[str] = Field(
