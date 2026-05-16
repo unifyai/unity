@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field
 from unify.utils.http import RequestError
 
 from unity.common.context_registry import ContextRegistry, TableContext
+from unity.common.colleague_cache import (
+    assistant_display_name as resolve_assistant_display_name,
+)
 from unity.common.log_utils import log as unity_log
 from unity.common.model_to_fields import model_to_fields
 from unity.common.state_managers import BaseStateManager
@@ -428,15 +431,7 @@ def _org_cache_key() -> tuple[int | None, str]:
 
 
 def _assistant_display_name(assistant: dict[str, Any]) -> str | None:
-    name = " ".join(
-        part
-        for part in [
-            str(assistant.get("first_name") or "").strip(),
-            str(assistant.get("surname") or "").strip(),
-        ]
-        if part
-    )
-    return name or None
+    return resolve_assistant_display_name(assistant)
 
 
 def _validate_checklist_status(status: str | None) -> ToolError | None:

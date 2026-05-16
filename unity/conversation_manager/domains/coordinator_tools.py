@@ -10,6 +10,10 @@ import unify
 from pydantic import BaseModel, ConfigDict, Field
 from unify.utils.http import RequestError
 
+from unity.common.colleague_cache import (
+    assistant_display_name as resolve_assistant_display_name,
+    display_name as resolve_display_name,
+)
 from unity.common.tool_outcome import ToolError
 from unity.coordinator_manager.activity import (
     activity_entity,
@@ -1657,18 +1661,15 @@ def _assistant_not_found(agent_id: int) -> ToolError:
 
 
 def _display_name(*, first_name: object, surname: object | None = None) -> str:
-    name = " ".join(str(part or "").strip() for part in (first_name, surname)).strip()
+    name = resolve_display_name(first_name=first_name, surname=surname)
     return safe_activity_text(name, fallback="New colleague")
 
 
 def _assistant_display_name(assistant: dict[str, Any]) -> str:
-    first_name = assistant.get("first_name") or assistant.get("firstName")
-    surname = (
-        assistant.get("surname")
-        or assistant.get("last_name")
-        or assistant.get("lastName")
+    return safe_activity_text(
+        resolve_assistant_display_name(assistant),
+        fallback="New colleague",
     )
-    return _display_name(first_name=first_name, surname=surname)
 
 
 def _assistant_entity(
