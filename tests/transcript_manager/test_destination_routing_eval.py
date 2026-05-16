@@ -130,3 +130,89 @@ async def test_ask_reads_the_relevant_accessible_space_transcript() -> None:
         _delete_context_tree(f"Spaces/{patch_space_id}")
         _delete_context_tree(f"Spaces/{research_space_id}")
         SESSION_DETAILS.reset()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_ask_attributes_colleague_shared_transcript_as_team_knowledge() -> None:
+    shared_space_id, _ = _space_ids()
+    own_token = "self-ledger-1102"
+    colleague_token = "teammate-ledger-9971"
+    colleague_assistant_id = 987654321
+
+    try:
+        SESSION_DETAILS.assistant.agent_id = 684
+        SESSION_DETAILS.assistant.first_name = "Avery"
+        SESSION_DETAILS.assistant.surname = "Ops"
+        SESSION_DETAILS.user.id = "boss-user"
+        SESSION_DETAILS.space_ids = [shared_space_id]
+        SESSION_DETAILS.space_summaries = [
+            {
+                "space_id": shared_space_id,
+                "name": "Operations Coordination",
+                "description": (
+                    "Shared workspace for dispatch handoffs, incident notes, "
+                    "and team-visible operating context."
+                ),
+            },
+        ]
+
+        manager = TranscriptManager()
+        manager.log_messages(
+            _message(
+                f"I personally discussed private token {own_token}.",
+                exchange_id=61001,
+            ),
+            synchronous=True,
+            destination=f"space:{shared_space_id}",
+        )
+
+        SESSION_DETAILS.assistant.agent_id = colleague_assistant_id
+        manager.log_messages(
+            _message(
+                (
+                    "Operations teammate note: use team lookup token "
+                    f"{colleague_token} for overnight handoff review."
+                ),
+                exchange_id=61002,
+            ),
+            synchronous=True,
+            destination=f"space:{shared_space_id}",
+        )
+        SESSION_DETAILS.assistant.agent_id = 684
+
+        handle = await manager.ask(
+            (
+                "From our shared team history, what is the overnight handoff "
+                "lookup token, and was that from your own prior chat or a "
+                "colleague's conversation?"
+            ),
+            _return_reasoning_steps=True,
+        )
+        answer, steps = await handle.result()
+        normalized = answer.lower()
+
+        assert colleague_token in normalized, assertion_failed(
+            colleague_token,
+            answer,
+            steps,
+            "Expected ask() to retrieve the colleague-authored token from shared history.",
+        )
+        assert any(
+            marker in normalized
+            for marker in (
+                "colleague",
+                "former colleague",
+                "another assistant",
+                "team member",
+            )
+        ), assertion_failed(
+            "colleague attribution language",
+            answer,
+            steps,
+            "Expected ask() to attribute teammate-authored history as non-self.",
+        )
+        assert own_token not in normalized
+    finally:
+        _delete_context_tree(f"Spaces/{shared_space_id}")
+        SESSION_DETAILS.reset()

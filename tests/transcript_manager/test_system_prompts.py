@@ -14,9 +14,21 @@ from tests.assertion_helpers import (
 )
 from tests.helpers import _handle_project
 
+from unity.contact_manager.types.contact import Contact
 from unity.transcript_manager.prompt_builders import build_ask_prompt
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.session_details import UNASSIGNED_USER_CONTEXT, UNASSIGNED_ASSISTANT_CONTEXT
+from unity.session_details import (
+    SESSION_DETAILS,
+    UNASSIGNED_USER_CONTEXT,
+    UNASSIGNED_ASSISTANT_CONTEXT,
+)
+
+
+def _contact_columns(tm: TranscriptManager):
+    manager = tm._contact_manager
+    if hasattr(manager, "_list_columns"):
+        return manager._list_columns()
+    return list(Contact.model_fields.keys())
 
 
 def _build_prompt_in_subprocess(test_context: str) -> str:
@@ -51,16 +63,22 @@ def _build_prompt_in_subprocess(test_context: str) -> str:
             return dt.strftime("%A, %B %d, %Y at %I:%M %p ") + label
         _ph.now = _static_now
 
+        from unity.contact_manager.types.contact import Contact
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.transcript_manager.prompt_builders import build_ask_prompt
 
         tm = TranscriptManager()
         tools = dict(tm.get_tools("ask"))
+        contact_columns = (
+            tm._contact_manager._list_columns()
+            if hasattr(tm._contact_manager, "_list_columns")
+            else list(Contact.model_fields.keys())
+        )
         prompt = build_ask_prompt(
             tools=tools,
             num_messages=tm._num_messages(),
             transcript_columns=tm._list_columns(),
-            contact_columns=tm._contact_manager._list_columns(),
+            contact_columns=contact_columns,
         ).flatten()
         sys.stdout.write(prompt)
         """,
@@ -87,7 +105,7 @@ def test_ask_system_prompt_formatting():
         tools=tools,
         num_messages=tm._num_messages(),
         transcript_columns=tm._list_columns(),
-        contact_columns=tm._contact_manager._list_columns(),
+        contact_columns=_contact_columns(tm),
     ).flatten()
 
     # Standardized blocks
@@ -166,6 +184,32 @@ def test_ask_system_prompt_formatting():
 
     assert_section_spacing(prompt)
     assert_time_footer(prompt, "Current UTC time is ")
+
+
+@_handle_project
+def test_ask_prompt_includes_shared_authorship_guidance_when_spaces_exist():
+    tm = TranscriptManager()
+    tools = dict(tm.get_tools("ask"))
+    original_space_ids = list(SESSION_DETAILS.space_ids)
+    original_agent_id = SESSION_DETAILS.assistant.agent_id
+
+    try:
+        SESSION_DETAILS.space_ids = [4242]
+        SESSION_DETAILS.assistant.agent_id = 684
+        prompt = build_ask_prompt(
+            tools=tools,
+            num_messages=tm._num_messages(),
+            transcript_columns=tm._list_columns(),
+            contact_columns=_contact_columns(tm),
+        ).flatten()
+    finally:
+        SESSION_DETAILS.space_ids = original_space_ids
+        SESSION_DETAILS.assistant.agent_id = original_agent_id
+
+    assert "Shared transcript attribution" in prompt
+    assert "`684`" in prompt
+    assert "`authoring_assistant_id`" in prompt
+    assert "message_authoring_attribution" in prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
