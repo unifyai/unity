@@ -4,6 +4,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import unify
 
+from ..common.colleague_cache import (
+    CURRENT_ASSISTANT_FALLBACK_LABEL,
+    UNKNOWN_COLLEAGUE_LABEL,
+)
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import (
     is_plain_identifier,
@@ -15,6 +19,7 @@ from ..common.semantic_search import extract_placeholders
 from .types.message import Message
 from ..contact_manager.types.contact import Contact
 from ..common.embed_utils import ensure_vector_column
+from ..session_details import SESSION_DETAILS
 
 # Module-level tuning knobs for ranking/backfill behaviour
 OVERSAMPLE_FACTOR = 5
@@ -120,8 +125,74 @@ def _contact_context_for_transcript_context(transcript_context: str) -> str:
     return f"{root_context}/Contacts"
 
 
+def _self_assistant_name() -> str:
+    """Return the active assistant's display name, if available."""
+
+    name = " ".join(
+        part
+        for part in [
+            str(SESSION_DETAILS.assistant.first_name or "").strip(),
+            str(SESSION_DETAILS.assistant.surname or "").strip(),
+        ]
+        if part
+    )
+    return name or CURRENT_ASSISTANT_FALLBACK_LABEL
+
+
+def _build_message_authoring_attribution(
+    self,
+    messages: list[Message],
+) -> list[dict[str, Any]]:
+    """Build message-level authorship labels for shared transcript reads."""
+
+    if not messages or not SESSION_DETAILS.space_ids:
+        return []
+
+    current_assistant_id = SESSION_DETAILS.assistant.agent_id
+    current_assistant_name = _self_assistant_name()
+    resolved_names_by_author: dict[int | None, str] = {}
+    source_label_by_author: dict[int | None, str] = {}
+    attribution: list[dict[str, Any]] = []
+    for message in messages:
+        authoring_assistant_id = message.authoring_assistant_id
+        is_current_assistant = authoring_assistant_id is None or (
+            current_assistant_id is not None
+            and int(authoring_assistant_id) == int(current_assistant_id)
+        )
+        if authoring_assistant_id not in resolved_names_by_author:
+            resolved_name = self._resolve_authoring_assistant_name(
+                authoring_assistant_id,
+            )
+            if is_current_assistant:
+                resolved_name = resolved_name or current_assistant_name
+            else:
+                resolved_name = resolved_name or UNKNOWN_COLLEAGUE_LABEL
+            resolved_names_by_author[authoring_assistant_id] = resolved_name
+            source_label_by_author[authoring_assistant_id] = (
+                "Your conversation"
+                if is_current_assistant
+                else f"From: {resolved_name}"
+            )
+
+        resolved_name = resolved_names_by_author[authoring_assistant_id]
+        source_label = source_label_by_author[authoring_assistant_id]
+
+        attribution.append(
+            {
+                "message_id": message.message_id,
+                "exchange_id": message.exchange_id,
+                "authoring_assistant_id": authoring_assistant_id,
+                "authoring_assistant_name": resolved_name,
+                "is_current_assistant": is_current_assistant,
+                "source_label": source_label,
+            },
+        )
+
+    return attribution
+
+
 def format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
-    """Return a combined payload for contacts and messages (stable shape)."""
+    """Return contacts/messages payload plus optional shared-authorship metadata."""
     if not messages:
         return {"messages": []}
 
@@ -155,12 +226,16 @@ def format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any
     message_keys_to_shorthand: dict[str, str] = Message.shorthand_map()
     shorthand_to_message_keys: dict[str, str] = Message.shorthand_inverse_map()
 
-    return {
+    payload = {
         **contacts_payload,
         "message_keys_to_shorthand": message_keys_to_shorthand,
         "messages": messages,
         "shorthand_to_message_keys": shorthand_to_message_keys,
     }
+    attribution = _build_message_authoring_attribution(self, messages)
+    if attribution:
+        payload["message_authoring_attribution"] = attribution
+    return payload
 
 
 def filter_messages(

@@ -10,6 +10,7 @@ from typing import List, Dict, Optional, Type, Union, Any, Callable, Literal
 import unify
 from pydantic import BaseModel
 from ..common.authorship import stamp_authoring_assistant_id
+from ..common.colleague_cache import ColleagueNameCache
 from ..common.embed_utils import ensure_vector_column
 from ..common.log_utils import log as unity_log, _inject_private_fields, _add_to_all
 from ..contact_manager.base import BaseContactManager
@@ -170,6 +171,7 @@ class TranscriptManager(BaseTranscriptManager):
 
         self._transcripts_ctx = ContextRegistry.get_context(self, TRANSCRIPTS_TABLE)
         self._exchanges_ctx = ContextRegistry.get_context(self, EXCHANGES_TABLE)
+        self._colleague_name_cache = ColleagueNameCache()
         self._image_destinations_by_id: dict[int, str] = {}
 
         # Image support: lazy-safe image manager and image-aware tools
@@ -397,6 +399,7 @@ class TranscriptManager(BaseTranscriptManager):
     def clear(self) -> None:
 
         _storage_clear(self)
+        self._colleague_name_cache.clear()
 
     # (Optional) Public programmatic helpers (non-LLM)
     def log_messages(
@@ -1805,6 +1808,14 @@ class TranscriptManager(BaseTranscriptManager):
     # Formatting helper: single contacts table + messages
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
         return _format_contacts_and_messages_impl(self, messages)
+
+    def _resolve_authoring_assistant_name(
+        self,
+        authoring_assistant_id: int | None,
+    ) -> str | None:
+        """Resolve authoring assistant ids into stable human-readable labels."""
+
+        return self._colleague_name_cache.resolve(authoring_assistant_id)
 
     # Misc small utilities (kept last)
     @classmethod
