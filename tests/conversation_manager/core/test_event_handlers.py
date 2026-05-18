@@ -14,6 +14,7 @@ Tests cover:
 
 from __future__ import annotations
 
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1789,8 +1790,8 @@ class TestTaskDueEventHandlers:
     """Tests for scheduled task due notifications and startup replay."""
 
     @pytest.mark.asyncio
-    async def test_task_due_pushes_notification_and_requests_llm(self, mock_cm):
-        """Current due activations should surface one execute-task directive."""
+    async def test_task_due_executes_scheduler_without_requesting_llm(self, mock_cm):
+        """Current due activations should start the scheduler execution path."""
 
         event = TaskDue(
             task_id=101,
@@ -1820,6 +1821,10 @@ class TestTaskDueEventHandlers:
             patch(
                 "unity.conversation_manager.domains.task_activation.remember_live_task_run_provenance",
             ) as mock_remember_provenance,
+            patch(
+                "unity.conversation_manager.domains.task_activation._start_live_task_due_execution",
+                new=AsyncMock(return_value=7),
+            ) as mock_start_execution,
         ):
             await EventHandler.handle_event(event, mock_cm)
 
@@ -1828,12 +1833,81 @@ class TestTaskDueEventHandlers:
         assert "Morning briefing" in notification
         assert "Prepare the morning update before the user checks in" in notification
         assert "work silently unless you genuinely need the user" in notification
-        assert "primitives.tasks.execute(task_id=101)" in notification
+        assert "started automatically" in notification
         remembered = mock_remember_provenance.call_args.args[0]
         assert remembered.assistant_id == "42"
         assert remembered.source_type == "scheduled"
         assert remembered.scheduled_for == "2026-04-10T09:00:00+00:00"
-        mock_cm.request_llm_run.assert_called_once_with(delay=0)
+        mock_start_execution.assert_awaited_once()
+        mock_cm.request_llm_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_task_due_start_executes_scheduler_with_scheduled_reason(
+        self,
+        mock_cm,
+    ):
+        """Direct due-task start should preserve scheduled activation provenance."""
+
+        from unity.common.task_execution_context import current_task_execution_delegate
+        from unity.conversation_manager.domains.task_activation import (
+            _start_live_task_due_execution,
+        )
+        from unity.task_scheduler.types.activated_by import ActivatedBy
+
+        event = TaskDue(
+            task_id=101,
+            source_task_log_id=555,
+            activation_revision="rev-1",
+            scheduled_for="2026-04-10T09:00:00+00:00",
+            task_label="Morning briefing",
+        )
+        activation = TaskActivationSnapshot(
+            assistant_id="42",
+            activation_key="42:101",
+            task_id=101,
+            source_task_log_id=555,
+            activation_revision="rev-1",
+            task_name="Morning briefing",
+        )
+        mock_cm.actor = MagicMock()
+        captured: dict[str, object] = {}
+        fake_handle = MagicMock()
+
+        async def _execute(**kwargs):
+            captured.update(kwargs)
+            captured["delegate"] = current_task_execution_delegate.get()
+            return fake_handle
+
+        fake_scheduler = MagicMock()
+        fake_scheduler.execute = AsyncMock(side_effect=_execute)
+
+        async def _noop(*args, **kwargs):
+            return None
+
+        with (
+            patch(
+                "unity.conversation_manager.domains.task_activation.ManagerRegistry.get_task_scheduler",
+                return_value=fake_scheduler,
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.managers_utils.actor_watch_result",
+                new=_noop,
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.managers_utils.actor_watch_notifications",
+                new=_noop,
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.managers_utils.actor_watch_clarifications",
+                new=_noop,
+            ),
+        ):
+            handle_id = await _start_live_task_due_execution(event, mock_cm, activation)
+
+        assert handle_id in mock_cm.in_flight_actions
+        assert captured["task_id"] == 101
+        assert captured["_activated_by"] == ActivatedBy.schedule
+        assert captured["delegate"] is not None
 
     @pytest.mark.asyncio
     async def test_task_due_queues_fast_brain_context_during_voice_call(self, mock_cm):
@@ -1854,17 +1928,23 @@ class TestTaskDueEventHandlers:
         mock_socket.queue_for_clients = AsyncMock()
         mock_cm.call_manager._socket_server = mock_socket
 
-        with patch(
-            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
-            return_value=(
-                TaskActivationSnapshot(
-                    assistant_id="42",
-                    activation_key="42:101",
-                    task_id=101,
-                    activation_revision="rev-1",
-                    task_name="Morning briefing",
+        with (
+            patch(
+                "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
+                return_value=(
+                    TaskActivationSnapshot(
+                        assistant_id="42",
+                        activation_key="42:101",
+                        task_id=101,
+                        activation_revision="rev-1",
+                        task_name="Morning briefing",
+                    ),
+                    None,
                 ),
-                None,
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation._start_live_task_due_execution",
+                new=AsyncMock(return_value=7),
             ),
         ):
             await EventHandler.handle_event(event, mock_cm)
@@ -1922,16 +2002,22 @@ class TestTaskDueEventHandlers:
             },
         ]
 
-        with patch(
-            "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
-            return_value=(MagicMock(activation_revision="rev-1"), None),
+        with (
+            patch(
+                "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
+                return_value=(MagicMock(activation_revision="rev-1"), None),
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation._start_live_task_due_execution",
+                new=AsyncMock(return_value=7),
+            ),
         ):
             await EventHandler.handle_event(InitializationComplete(), mock_cm)
 
         assert mock_cm._startup_wake_reasons == []
         assert len(mock_cm.notifications_bar.notifications) == 2
         assert any(
-            "primitives.tasks.execute(task_id=101)" in notif.content
+            "started automatically" in notif.content
             for notif in mock_cm.notifications_bar.notifications
         )
         assert any(
