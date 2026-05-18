@@ -471,6 +471,26 @@ class TestCoordinatorTools:
             {"context": "Guidance", "entries": [{"content": "Check billing holds"}]},
         ]
 
+    def test_pre_seed_colleague_rejects_invalid_context(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.pre_seed_colleague",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        result = CoordinatorTools(cm=object()).pre_seed_colleague(
+            target_assistant_id=42,
+            writes=[
+                {
+                    "context": "Spaces/Ops",
+                    "entries": [{"content": "should fail before SDK call"}],
+                },
+            ],
+        )
+
+        assert result["error_kind"] == "invalid_argument"
+        assert calls == []
+
     def test_personal_coordinator_returns_empty_org_members(self, monkeypatch):
         SESSION_DETAILS.org_id = None
         called = False
@@ -508,7 +528,7 @@ class TestCoordinatorTools:
 
         result = CoordinatorTools(cm=object()).invite_org_member(
             email="  SARAH@EXAMPLE.COM  ",
-            role_name="  Admin  ",
+            role_name="  aDmiN  ",
         )
 
         assert result == {
@@ -536,6 +556,22 @@ class TestCoordinatorTools:
         )
 
         assert result["error_kind"] == "invalid_argument"
+        assert calls == []
+
+    def test_invite_org_member_rejects_unknown_role_name(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.invite_org_member",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        result = CoordinatorTools(cm=object()).invite_org_member(
+            email="sarah@example.com",
+            role_name="Operator",
+        )
+
+        assert result["error_kind"] == "invalid_argument"
+        assert result["details"]["accepted_roles"] == ["Admin", "Member", "Viewer"]
         assert calls == []
 
     def test_invite_org_member_already_member(self, monkeypatch):

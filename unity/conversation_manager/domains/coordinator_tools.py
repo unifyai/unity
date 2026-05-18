@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
 
 import unify
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from unify.utils.http import RequestError
 
 from unity.common.colleague_cache import (
@@ -36,19 +36,25 @@ if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
 
 
+CoordinatorPreseedContext = Annotated[
+    str,
+    Field(
+        min_length=1,
+        description=(
+            "Allowed roots: Tasks, Knowledge, Guidance, Data, Functions/<name>, "
+            "Dashboards/<name>."
+        ),
+        pattern=r"^(Tasks|Knowledge|Guidance|Data|Functions/.+|Dashboards/.+)$",
+    ),
+]
+
+
 class CoordinatorPreseedWrite(BaseModel):
     """One colleague-owned context batch that the Coordinator can pre-seed."""
 
     model_config = ConfigDict(extra="forbid")
 
-    context: str = Field(
-        ...,
-        min_length=1,
-        description=(
-            "Relative colleague-owned context name, such as Tasks, Knowledge, "
-            "Guidance, Functions/..., Data, or Dashboards/...."
-        ),
-    )
+    context: CoordinatorPreseedContext
     entries: list[dict[str, Any]] = Field(
         ...,
         min_length=1,
@@ -56,17 +62,81 @@ class CoordinatorPreseedWrite(BaseModel):
     )
 
 
+class CoordinatorPreseedWriteInput(TypedDict):
+    """Mapping-shaped write entry accepted by the pre-seed helpers."""
+
+    context: CoordinatorPreseedContext
+    entries: list[dict[str, Any]]
+
+
+CoordinatorPreseedWriteValue = CoordinatorPreseedWrite | CoordinatorPreseedWriteInput
+
+
 def _preseed_write_payload(
-    writes: Sequence[CoordinatorPreseedWrite | dict[str, Any]],
+    writes: Sequence[CoordinatorPreseedWriteValue],
 ) -> list[dict[str, Any]]:
-    """Return SDK-ready preseed writes from model or mapping inputs."""
+    """Return SDK-ready preseed writes from model or mapping inputs.
+
+    Mapping-shaped writes are validated through ``CoordinatorPreseedWrite`` so
+    both call styles enforce the same context contract.
+    """
     payload: list[dict[str, Any]] = []
     for write in writes:
-        if isinstance(write, CoordinatorPreseedWrite):
-            payload.append(write.model_dump())
-        else:
-            payload.append(dict(write))
+        model_write = (
+            write
+            if isinstance(write, CoordinatorPreseedWrite)
+            else CoordinatorPreseedWrite.model_validate(write)
+        )
+        payload.append(model_write.model_dump())
     return payload
+
+
+InviteOrgRoleName = Literal["Admin", "Member", "Viewer"]
+_INVITE_ORG_ROLE_NAMES: tuple[InviteOrgRoleName, ...] = ("Admin", "Member", "Viewer")
+_INVITE_ORG_ROLE_BY_NORMALIZED_NAME: dict[str, InviteOrgRoleName] = {
+    role_name.lower(): role_name for role_name in _INVITE_ORG_ROLE_NAMES
+}
+
+ChecklistItemStatus = Literal["pending", "done", "skipped"]
+
+AssistantDesktopMode = Literal["ubuntu", "windows", "macos"]
+
+
+class AssistantConfigPatch(TypedDict, total=False):
+    """Editable assistant profile/config fields accepted by update calls."""
+
+    first_name: str
+    surname: str
+    about: str | None
+    job_title: str | None
+    age: int
+    nationality: str | None
+    weekly_limit: float | None
+    max_parallel: int | None
+    profile_photo: str | None
+    profile_video: str | None
+    desktop_mode: AssistantDesktopMode
+    user_desktop_id: int | None
+    user_desktop_filesys_sync: bool | None
+    voice_id: str | None
+    voice_provider: str | None
+    timezone: str | None
+    is_local: bool | None
+    monthly_spending_cap: float | None
+
+
+class AssistantCreateConfig(AssistantConfigPatch, total=False):
+    """Assistant creation config fields forwarded to the SDK create call."""
+
+    create_infra: bool
+    is_local: bool
+
+
+class SpacePatch(TypedDict, total=False):
+    """Editable workspace metadata fields."""
+
+    name: str
+    description: str
 
 
 COORDINATOR_TOOL_METHOD_NAMES: tuple[str, ...] = (
@@ -157,7 +227,7 @@ class CoordinatorTools:
         job_title: str | None = None,
         timezone: str | None = None,
         nationality: str | None = None,
-        config: dict[str, Any] | None,
+        config: AssistantCreateConfig | None,
     ) -> dict[str, Any] | None:
         """Build coordinator-inherited defaults for colleague creation."""
         merged = dict(config or {})
@@ -196,7 +266,7 @@ class CoordinatorTools:
         job_title: str | None = None,
         timezone: str | None = None,
         nationality: str | None = None,
-        config: dict[str, Any] | None = None,
+        config: AssistantCreateConfig | None = None,
     ) -> dict[str, Any] | ToolError:
         """Create a new colleague assistant after explicit user confirmation.
 
@@ -347,7 +417,7 @@ class CoordinatorTools:
         self,
         *,
         agent_id: int,
-        config: dict[str, Any],
+        config: AssistantConfigPatch,
     ) -> dict[str, Any] | ToolError:
         """Update profile/config fields for a reachable colleague assistant.
 
@@ -355,6 +425,11 @@ class CoordinatorTools:
         edits (for example bio, role, timezone, or other config-backed fields).
         This mutates an existing assistant only; use ``create_assistant`` when
         the colleague does not yet exist.
+
+        Supported profile keys include:
+        ``first_name``, ``surname``, ``about``, ``job_title``, ``timezone``,
+        ``nationality``, ``weekly_limit``, ``max_parallel``, ``desktop_mode``,
+        ``voice_id``/``voice_provider``, and related profile metadata fields.
         """
 
         activity_id = self._publish_activity(
@@ -385,7 +460,7 @@ class CoordinatorTools:
         try:
             result = unify.update_assistant_config(
                 agent_id,
-                config,
+                dict(config),
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
@@ -461,13 +536,15 @@ class CoordinatorTools:
         self,
         *,
         email: str,
-        role_name: str | None = None,
+        role_name: InviteOrgRoleName | None = None,
     ) -> dict[str, Any] | ToolError:
         """Invite a human member into the active organization by email.
 
         Use this when the user confirms inviting someone who is not already in
         the organization. The tool requires organization scope and sends the
         invite through Orchestra, which delivers the invite email.
+
+        Accepted role names are ``Admin``, ``Member``, and ``Viewer``.
         """
         normalized_email = email.strip().lower()
         activity_id = self._publish_activity(
@@ -506,11 +583,30 @@ class CoordinatorTools:
             )
             return error
         normalized_role_name = self._normalize_optional_text(role_name)
+        resolved_role_name: InviteOrgRoleName | None = None
+        if normalized_role_name is not None:
+            resolved_role_name = _INVITE_ORG_ROLE_BY_NORMALIZED_NAME.get(
+                normalized_role_name.lower(),
+            )
+            if resolved_role_name is None:
+                error = _invalid_argument(
+                    message="`role_name` must be one of: Admin, Member, Viewer.",
+                    details={
+                        "role_name": normalized_role_name,
+                        "accepted_roles": list(_INVITE_ORG_ROLE_NAMES),
+                    },
+                )
+                self._publish_failure(
+                    activity_id,
+                    title="Could not invite organization member",
+                    error=error,
+                )
+                return error
         try:
             result = unify.invite_org_member(
                 SESSION_DETAILS.org_id,
                 normalized_email,
-                role_name=normalized_role_name,
+                role_name=resolved_role_name,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
@@ -541,7 +637,7 @@ class CoordinatorTools:
         self,
         *,
         target_assistant_id: int,
-        writes: list[CoordinatorPreseedWrite],
+        writes: list[CoordinatorPreseedWriteValue],
     ) -> dict[str, Any] | ToolError:
         """Seed confirmed rows into one colleague's own memory roots.
 
@@ -557,12 +653,24 @@ class CoordinatorTools:
         Args:
             target_assistant_id: The colleague assistant that should own the rows.
             writes: Required context batches shaped as
-                ``{"context": "Tasks", "entries": [{...}]}``. Use relative context
-                names only, such as ``Tasks``, ``Knowledge``, or ``Guidance``. Do
-                not use ``Spaces/...`` paths or shared-space destinations here.
+                ``{"context": "...", "entries": [{...}]}``.
+                Allowed contexts are:
+                ``Tasks``, ``Knowledge``, ``Guidance``, ``Data``,
+                ``Functions/<name>``, and ``Dashboards/<name>``.
+                Do not use ``Spaces/...`` paths or shared-space destinations.
         """
-
-        surfaces = _surfaces_for_preseed(writes)
+        try:
+            normalized_writes = _preseed_write_payload(writes)
+        except ValidationError as exc:
+            return _invalid_argument(
+                message=(
+                    "Each pre-seed write context must be one of: "
+                    "Tasks, Knowledge, Guidance, Data, Functions/<name>, "
+                    "Dashboards/<name>."
+                ),
+                details={"validation_errors": exc.errors(include_url=False)},
+            )
+        surfaces = _surfaces_for_preseed(normalized_writes)
         activity_id = self._publish_activity(
             phase="started",
             stage="implementation",
@@ -595,7 +703,7 @@ class CoordinatorTools:
         try:
             result = unify.pre_seed_colleague(
                 target_assistant_id,
-                _preseed_write_payload(writes),
+                normalized_writes,
                 api_key=SESSION_DETAILS.unify_key,
             )
         except RequestError as exc:
@@ -754,7 +862,7 @@ class CoordinatorTools:
         self,
         *,
         space_id: int,
-        patch: dict[str, Any],
+        patch: SpacePatch,
     ) -> dict[str, Any] | ToolError:
         """Apply metadata updates to a reachable shared workspace.
 
@@ -963,7 +1071,7 @@ class CoordinatorTools:
         assistant_job_title: str | None = None,
         assistant_timezone: str | None = None,
         assistant_nationality: str | None = None,
-        assistant_config: dict[str, Any] | None = None,
+        assistant_config: AssistantCreateConfig | None = None,
         assistant_id: int | None = None,
         space_id: int | None = None,
     ) -> dict[str, Any] | ToolError:
@@ -1265,7 +1373,7 @@ class CoordinatorTools:
         self,
         *,
         title: str,
-        status: str | None = None,
+        status: ChecklistItemStatus | None = None,
         description: str | None = None,
         kind: str | None = None,
         chat_prompt: str | None = None,
@@ -1303,7 +1411,7 @@ class CoordinatorTools:
         self,
         *,
         item_id: int,
-        status: str | None = None,
+        status: ChecklistItemStatus | None = None,
         title: str | None = None,
         description: str | None = None,
         kind: str | None = None,
@@ -1358,7 +1466,7 @@ class CoordinatorTools:
         assistant_job_title: str | None,
         assistant_timezone: str | None,
         assistant_nationality: str | None,
-        assistant_config: dict[str, Any] | None,
+        assistant_config: AssistantCreateConfig | None,
         assistant_id: int | None,
     ) -> dict[str, Any] | ToolError:
         if assistant_id is not None:
@@ -1814,7 +1922,7 @@ def _extract_assistant_id(result: dict[str, Any]) -> int | None:
 
 
 def _surfaces_for_preseed(
-    writes: Sequence[CoordinatorPreseedWrite | dict[str, Any]],
+    writes: Sequence[CoordinatorPreseedWriteValue],
 ) -> list[CoordinatorActivitySurface]:
     surfaces: list[CoordinatorActivitySurface] = []
     for write in writes:

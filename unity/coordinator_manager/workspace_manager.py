@@ -12,9 +12,14 @@ from typing import Any, Literal
 
 from unity.common.tool_outcome import ToolError
 from unity.conversation_manager.domains.coordinator_tools import (
-    CoordinatorPreseedWrite,
+    AssistantCreateConfig,
+    AssistantConfigPatch,
+    ChecklistItemStatus,
+    CoordinatorPreseedWriteValue,
     COORDINATOR_TOOL_METHOD_NAMES,
     CoordinatorTools,
+    InviteOrgRoleName,
+    SpacePatch,
 )
 from unity.manager_registry import SingletonABCMeta
 from unity.session_details import SESSION_DETAILS
@@ -53,7 +58,7 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         job_title: str | None = None,
         timezone: str | None = None,
         nationality: str | None = None,
-        config: dict[str, Any] | None = None,
+        config: AssistantCreateConfig | None = None,
     ) -> dict[str, Any] | ToolError:
         """Create a colleague assistant in the active coordinator workspace.
 
@@ -77,8 +82,9 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
             Optional IANA timezone override for this colleague.
         nationality : str | None, optional
             Optional nationality metadata for profile defaults.
-        config : dict[str, Any] | None, optional
-            Additional assistant config fields merged with coordinator defaults.
+        config : AssistantCreateConfig | None, optional
+            Structured assistant-create overrides merged with coordinator
+            defaults (for example ``create_infra`` and ``is_local``).
         """
         permission_error = self._require_coordinator_role()
         if permission_error is not None:
@@ -119,7 +125,7 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         self,
         *,
         agent_id: int,
-        config: dict[str, Any],
+        config: AssistantConfigPatch,
     ) -> dict[str, Any] | ToolError:
         """Update config fields for a reachable colleague assistant.
 
@@ -132,8 +138,12 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         ----------
         agent_id : int
             Target colleague assistant identifier.
-        config : dict[str, Any]
-            Config patch payload to apply to the assistant profile.
+        config : AssistantConfigPatch
+            Structured profile patch payload. Preferred keys include
+            ``first_name``, ``surname``, ``about``, ``job_title``,
+            ``timezone``, ``nationality``, ``weekly_limit``,
+            ``max_parallel``, ``desktop_mode``, and voice fields
+            (``voice_id`` with ``voice_provider``).
         """
         permission_error = self._require_coordinator_role()
         if permission_error is not None:
@@ -189,7 +199,7 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         self,
         *,
         email: str,
-        role_name: str | None = None,
+        role_name: InviteOrgRoleName | None = None,
     ) -> dict[str, Any] | ToolError:
         """Invite a human member into the active organization by email.
 
@@ -200,8 +210,9 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         ----------
         email : str
             Email address to invite into the organization.
-        role_name : str | None, optional
-            Optional organization role name to assign on acceptance.
+        role_name : InviteOrgRoleName | None, optional
+            Optional role to assign on acceptance. Accepted values are
+            ``"Admin"``, ``"Member"``, and ``"Viewer"``.
         """
         permission_error = self._require_coordinator_role()
         if permission_error is not None:
@@ -215,7 +226,7 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         self,
         *,
         target_assistant_id: int,
-        writes: list[CoordinatorPreseedWrite],
+        writes: list[CoordinatorPreseedWriteValue],
     ) -> dict[str, Any] | ToolError:
         """Seed colleague-owned setup rows into assistant-private contexts.
 
@@ -228,8 +239,12 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         ----------
         target_assistant_id : int
             Assistant id that should own the seeded rows.
-        writes : list[CoordinatorPreseedWrite]
+        writes : list[CoordinatorPreseedWriteValue]
             Relative context + entries batches to persist for this colleague.
+            Each write follows ``{"context": "...", "entries": [...]}``.
+            Allowed contexts are:
+            ``Tasks``, ``Knowledge``, ``Guidance``, ``Data``,
+            ``Functions/<name>``, and ``Dashboards/<name>``.
         """
         permission_error = self._require_coordinator_role()
         if permission_error is not None:
@@ -296,7 +311,7 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         self,
         *,
         space_id: int,
-        patch: dict[str, Any],
+        patch: SpacePatch,
     ) -> dict[str, Any] | ToolError:
         """Apply metadata updates to a reachable shared workspace.
 
@@ -308,8 +323,9 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         ----------
         space_id : int
             Workspace identifier to update.
-        patch : dict[str, Any]
+        patch : SpacePatch
             Partial update payload for editable workspace fields.
+            Accepted keys are ``name`` and ``description``.
         """
         permission_error = self._require_coordinator_role()
         if permission_error is not None:
@@ -454,7 +470,7 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         assistant_job_title: str | None = None,
         assistant_timezone: str | None = None,
         assistant_nationality: str | None = None,
-        assistant_config: dict[str, Any] | None = None,
+        assistant_config: AssistantCreateConfig | None = None,
         assistant_id: int | None = None,
         space_id: int | None = None,
     ) -> dict[str, Any] | ToolError:
@@ -483,8 +499,9 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
             Optional explicit colleague timezone.
         assistant_nationality : str | None, optional
             Optional explicit colleague nationality.
-        assistant_config : dict[str, Any] | None, optional
-            Additional assistant config merged when creation is needed.
+        assistant_config : AssistantCreateConfig | None, optional
+            Additional structured assistant-create overrides merged when
+            creation is needed.
         assistant_id : int | None, optional
             Optional explicit assistant id to reuse instead of name lookup.
         space_id : int | None, optional
@@ -546,7 +563,7 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         self,
         *,
         title: str,
-        status: str | None = None,
+        status: ChecklistItemStatus | None = None,
         description: str | None = None,
         kind: str | None = None,
         chat_prompt: str | None = None,
@@ -562,8 +579,9 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         ----------
         title : str
             User-visible checklist item title.
-        status : str | None, optional
-            Optional initial checklist status override.
+        status : ChecklistItemStatus | None, optional
+            Optional initial checklist status (``pending``, ``done``,
+            or ``skipped``).
         description : str | None, optional
             Optional detail text for the checklist row.
         kind : str | None, optional
@@ -589,7 +607,7 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         self,
         *,
         item_id: int,
-        status: str | None = None,
+        status: ChecklistItemStatus | None = None,
         title: str | None = None,
         description: str | None = None,
         kind: str | None = None,
@@ -606,8 +624,8 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
         ----------
         item_id : int
             Checklist row identifier to update.
-        status : str | None, optional
-            Optional status update for the checklist row.
+        status : ChecklistItemStatus | None, optional
+            Optional status update (``pending``, ``done``, or ``skipped``).
         title : str | None, optional
             Optional replacement title text.
         description : str | None, optional
