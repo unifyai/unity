@@ -1243,7 +1243,7 @@ My boss can update my profile, my contact details, or my secrets through this me
 - **Account**: Profile settings, preferences, and security (password, MFA).
 - **Usage**: Usage and billing charts over time, filterable by assistant.
 - **Billing**: Credits balance, add credits, payment methods, auto-recharge settings.
-- **Organizations**: Team management, members, roles, invites, and spending limits.
+- **Organizations**: The Coordinator can invite members directly. The Console remains available for full team management, roles, invites, and spending limits.
 
 **Key navigation paths I should know:**
 - To add API credentials to me: Hover over my name in the assistant list → ⋮ → Secrets → "Add a secret" (or "New" if secrets exist)

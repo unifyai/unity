@@ -46,6 +46,7 @@ CoordinatorActivitySurface = Literal[
     "colleagues",
     "workspaces",
     "membership",
+    "invitation",
     "credentials",
     "tasks",
     "memory",

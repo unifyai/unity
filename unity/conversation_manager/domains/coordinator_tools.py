@@ -75,6 +75,7 @@ COORDINATOR_TOOL_METHOD_NAMES: tuple[str, ...] = (
     "update_assistant_config",
     "list_assistants",
     "list_org_members",
+    "invite_org_member",
     "pre_seed_colleague",
     "create_space",
     "delete_space",
@@ -455,6 +456,86 @@ class CoordinatorTools:
             )
         except RequestError as exc:
             return _request_error_to_tool_error(exc)
+
+    def invite_org_member(
+        self,
+        *,
+        email: str,
+        role_name: str | None = None,
+    ) -> dict[str, Any] | ToolError:
+        """Invite a human member into the active organization by email.
+
+        Use this when the user confirms inviting someone who is not already in
+        the organization. The tool requires organization scope and sends the
+        invite through Orchestra, which delivers the invite email.
+        """
+        normalized_email = email.strip().lower()
+        activity_id = self._publish_activity(
+            phase="started",
+            stage="implementation",
+            title="Inviting organization member",
+            surfaces=["invitation"],
+            related_entities=[
+                activity_entity(
+                    "human",
+                    name=normalized_email or "Invitee",
+                    entity_id=normalized_email or None,
+                ),
+            ],
+        )
+        if SESSION_DETAILS.org_id is None:
+            error = _invalid_argument(
+                message="Organization invites are only available in organization workspaces.",
+                details={"email": normalized_email},
+            )
+            self._publish_failure(
+                activity_id,
+                title="Could not invite organization member",
+                error=error,
+            )
+            return error
+        if not normalized_email:
+            error = _invalid_argument(
+                message="Provide a non-empty email address.",
+                details={"field": "email"},
+            )
+            self._publish_failure(
+                activity_id,
+                title="Could not invite organization member",
+                error=error,
+            )
+            return error
+        normalized_role_name = self._normalize_optional_text(role_name)
+        try:
+            result = unify.invite_org_member(
+                SESSION_DETAILS.org_id,
+                normalized_email,
+                role_name=normalized_role_name,
+                api_key=SESSION_DETAILS.unify_key,
+            )
+        except RequestError as exc:
+            error = _request_error_to_tool_error(exc)
+            self._publish_failure(
+                activity_id,
+                title="Could not invite organization member",
+                error=error,
+            )
+            return error
+        self._publish_activity(
+            phase="completed",
+            stage="implementation",
+            title="Invited organization member",
+            surfaces=["invitation"],
+            related_entities=[
+                activity_entity(
+                    "human",
+                    name=normalized_email,
+                    entity_id=normalized_email,
+                ),
+            ],
+            activity_id=activity_id,
+        )
+        return result
 
     def pre_seed_colleague(
         self,

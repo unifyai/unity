@@ -185,6 +185,32 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
             return permission_error
         return self._delegate.list_org_members()
 
+    def invite_org_member(
+        self,
+        *,
+        email: str,
+        role_name: str | None = None,
+    ) -> dict[str, Any] | ToolError:
+        """Invite a human member into the active organization by email.
+
+        Use this when onboarding or team setup requires inviting someone who is
+        not yet a member of the organization.
+
+        Parameters
+        ----------
+        email : str
+            Email address to invite into the organization.
+        role_name : str | None, optional
+            Optional organization role name to assign on acceptance.
+        """
+        permission_error = self._require_coordinator_role()
+        if permission_error is not None:
+            return permission_error
+        return self._delegate.invite_org_member(
+            email=email,
+            role_name=role_name,
+        )
+
     def pre_seed_colleague(
         self,
         *,

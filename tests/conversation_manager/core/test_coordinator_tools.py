@@ -38,6 +38,7 @@ class TestCoordinatorTools:
             "update_assistant_config",
             "list_assistants",
             "list_org_members",
+            "invite_org_member",
             "pre_seed_colleague",
             "create_space",
             "delete_space",
@@ -488,6 +489,75 @@ class TestCoordinatorTools:
 
         assert result == []
         assert called is False
+
+    def test_invite_org_member_happy_path(self, monkeypatch):
+        calls = []
+
+        def fake_invite_org_member(*args, **kwargs):
+            calls.append((args, kwargs))
+            return {
+                "invitee_email": "sarah@example.com",
+                "organization_name": "Acme",
+                "role_name": "Admin",
+            }
+
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.invite_org_member",
+            fake_invite_org_member,
+        )
+
+        result = CoordinatorTools(cm=object()).invite_org_member(
+            email="  SARAH@EXAMPLE.COM  ",
+            role_name="  Admin  ",
+        )
+
+        assert result == {
+            "invitee_email": "sarah@example.com",
+            "organization_name": "Acme",
+            "role_name": "Admin",
+        }
+        assert calls == [
+            (
+                (7, "sarah@example.com"),
+                {"role_name": "Admin", "api_key": "owner-key"},
+            ),
+        ]
+
+    def test_invite_org_member_no_org_context(self, monkeypatch):
+        SESSION_DETAILS.org_id = None
+        calls = []
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.invite_org_member",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        result = CoordinatorTools(cm=object()).invite_org_member(
+            email="sarah@example.com",
+        )
+
+        assert result["error_kind"] == "invalid_argument"
+        assert calls == []
+
+    def test_invite_org_member_already_member(self, monkeypatch):
+        def failing_invite_org_member(*_args, **_kwargs):
+            response = requests.Response()
+            response.status_code = 409
+            response._content = (
+                b'{"detail":"User is already a member of this organization"}'
+            )
+            raise RequestError("https://api.unify.ai", "POST", response)
+
+        monkeypatch.setattr(
+            "unity.conversation_manager.domains.coordinator_tools.unify.invite_org_member",
+            failing_invite_org_member,
+        )
+
+        result = CoordinatorTools(cm=object()).invite_org_member(
+            email="sarah@example.com",
+        )
+
+        assert result["error_kind"] == "conflict"
+        assert result["message"] == "User is already a member of this organization"
 
     def test_create_space_uses_owner_key_and_current_workspace_scope(
         self,
