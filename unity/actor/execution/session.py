@@ -872,7 +872,7 @@ class SessionExecutor:
                     # If no sandbox is bound, fall back to executor-managed session 0.
                     pass
             # Stateless: fresh in-process sandbox per call.
-            if state_mode == "stateless":
+            if state_mode == "stateless" and venv_id is None:
                 _se_log.debug(
                     f"⏱️ [SessionExecutor.execute +{_se_ms()}] creating stateless sandbox",
                 )
@@ -913,6 +913,33 @@ class SessionExecutor:
 
             # If a venv_id is provided, use persistent subprocess sessions.
             if venv_id is not None:
+                implementation = _wrap_code_as_async_function(code)
+                if state_mode == "stateless":
+                    if self._function_manager is None:
+                        raise RuntimeError(
+                            "function_manager is required for python venv execution",
+                        )
+                    out = await self._function_manager.execute_in_venv(
+                        venv_id=int(venv_id),
+                        implementation=implementation,
+                        call_kwargs={},
+                        is_async=True,
+                        primitives=primitives,
+                        computer_primitives=computer_primitives,
+                        env_overlay=_runtime_oauth_env_overlay(),
+                    )
+                    return {
+                        **out,
+                        "language": language,
+                        "state_mode": state_mode,
+                        "session_id": None,
+                        "venv_id": venv_id,
+                        "session_created": False,
+                        "duration_ms": int(
+                            (datetime.now(timezone.utc).timestamp() - t0) * 1000,
+                        ),
+                    }
+
                 if session_id is None:
                     raise ValueError(
                         "session_id is required for venv-backed python execution",
@@ -921,8 +948,6 @@ class SessionExecutor:
                 existed_before = (int(venv_id), int(session_id)) in set(
                     self._venv_pool.list_active_sessions(),
                 )
-                # Wrap arbitrary code in a function definition so venv_runner can execute it.
-                implementation = _wrap_code_as_async_function(code)
                 if state_mode == "stateful":
                     # Persistent venv workers keep their process environment
                     # across calls.  Pass the OAuth overlay so SDK/default-env
