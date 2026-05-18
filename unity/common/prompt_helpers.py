@@ -276,7 +276,7 @@ def now(time_only: bool = False, as_string: bool = True) -> "str | datetime":
     # Default to UTC if assistant row/field is unavailable
     lookup = _lookup_assistant_timezone()
     _mark_step()
-    tz_name = lookup.timezone or "UTC
+    tz_name = lookup.timezone or "UTC"
 
     # Convert UTC now to the target timezone
     utc_now = _utc_now()

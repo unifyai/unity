@@ -1,6 +1,7 @@
 """Tests for DashboardManager registration in ManagerRegistry and primitives."""
 
 from unity.dashboard_manager.base import BaseDashboardManager
+from unity.dashboard_manager.types.tile import DASHBOARD_BRIDGE_MAX_ROW_LIMIT
 from unity.function_manager.primitives.registry import (
     _EXAMPLE_GENERATORS,
     _MANAGER_SPECS,
@@ -123,6 +124,9 @@ class TestPrimitivesDiscovery:
             assert "data_scope" in doc
             assert "dashboard" in doc
             assert "space:<id>" in doc
+            assert "FilterBinding.limit" in doc
+            assert "JoinBinding.result_limit" in doc
+            assert str(DASHBOARD_BRIDGE_MAX_ROW_LIMIT) in doc
 
     def test_dashboard_prompt_context_generated(self):
         scope = PrimitiveScope.single("dashboards")

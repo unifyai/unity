@@ -4,7 +4,7 @@ import json
 from unittest.mock import patch
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from unity.dashboard_manager.ops.tile_ops import (
     _match_context,
@@ -14,6 +14,7 @@ from unity.dashboard_manager.ops.tile_ops import (
     validate_on_data,
 )
 from unity.dashboard_manager.types.tile import (
+    DASHBOARD_BRIDGE_MAX_ROW_LIMIT,
     DataBinding,
     FilterBinding,
     JoinBinding,
@@ -108,6 +109,23 @@ class TestFilterBinding:
         assert b.limit == 500
         assert b.group_by == ["region"]
 
+    def test_limit_accepts_bridge_boundary(self):
+        b = FilterBinding(
+            context="Data/Sales/Monthly",
+            limit=DASHBOARD_BRIDGE_MAX_ROW_LIMIT,
+        )
+        assert b.limit == DASHBOARD_BRIDGE_MAX_ROW_LIMIT
+
+    def test_limit_rejects_outside_bridge_boundary(self):
+        with pytest.raises(ValidationError):
+            FilterBinding(context="Data/Sales/Monthly", limit=0)
+
+        with pytest.raises(ValidationError):
+            FilterBinding(
+                context="Data/Sales/Monthly",
+                limit=DASHBOARD_BRIDGE_MAX_ROW_LIMIT + 1,
+            )
+
     def test_default_operation_field(self):
         b = FilterBinding(context="Data/X")
         assert b.operation == "filter"
@@ -162,6 +180,28 @@ class TestJoinBinding:
         assert b.left_where == "active == True"
         assert b.result_limit == 50
 
+    def test_result_limit_accepts_bridge_boundary(self):
+        b = JoinBinding(
+            tables=["Data/A", "Data/B"],
+            join_expr="Data/A.id == Data/B.fk",
+            select={"Data/A.val": "val"},
+            result_limit=DASHBOARD_BRIDGE_MAX_ROW_LIMIT,
+        )
+        assert b.result_limit == DASHBOARD_BRIDGE_MAX_ROW_LIMIT
+
+    def test_result_limit_rejects_outside_bridge_boundary(self):
+        base = {
+            "tables": ["Data/A", "Data/B"],
+            "join_expr": "Data/A.id == Data/B.fk",
+            "select": {"Data/A.val": "val"},
+        }
+
+        with pytest.raises(ValidationError):
+            JoinBinding(**base, result_limit=0)
+
+        with pytest.raises(ValidationError):
+            JoinBinding(**base, result_limit=DASHBOARD_BRIDGE_MAX_ROW_LIMIT + 1)
+
 
 class TestJoinReduceBinding:
     def test_minimal(self):
@@ -199,6 +239,16 @@ class TestDataBindingDiscriminator:
         )
         assert isinstance(b, FilterBinding)
 
+    def test_filter_limit_rejects_outside_bridge_boundary_from_dict(self):
+        with pytest.raises(ValidationError):
+            self.adapter.validate_python(
+                {
+                    "operation": "filter",
+                    "context": "Data/X",
+                    "limit": DASHBOARD_BRIDGE_MAX_ROW_LIMIT + 1,
+                },
+            )
+
     def test_filter_default_operation(self):
         b = self.adapter.validate_python(
             {"operation": "filter", "context": "Data/X"},
@@ -226,6 +276,18 @@ class TestDataBindingDiscriminator:
             },
         )
         assert isinstance(b, JoinBinding)
+
+    def test_join_result_limit_rejects_outside_bridge_boundary_from_dict(self):
+        with pytest.raises(ValidationError):
+            self.adapter.validate_python(
+                {
+                    "operation": "join",
+                    "tables": ["Data/A", "Data/B"],
+                    "join_expr": "Data/A.id == Data/B.fk",
+                    "select": {"Data/A.x": "x"},
+                    "result_limit": DASHBOARD_BRIDGE_MAX_ROW_LIMIT + 1,
+                },
+            )
 
     def test_join_reduce_from_dict(self):
         b = self.adapter.validate_python(

@@ -210,7 +210,8 @@ class BaseDashboardManager(BaseStateManager):
 
               Fields: ``context`` (required), ``alias``, ``filter``,
               ``columns``, ``exclude_columns``, ``order_by``, ``descending``,
-              ``limit``, ``offset``, ``group_by``.
+              ``limit``, ``offset``, ``group_by``. ``limit`` is optional;
+              when set it must be between 1 and 1000 rows.
 
             **ReduceBinding** (``operation="reduce"``):
               Single-context aggregation.
@@ -228,6 +229,8 @@ class BaseDashboardManager(BaseStateManager):
               ``join_expr`` (required), ``select`` (required),
               ``alias``, ``mode``, ``left_where``, ``right_where``,
               ``result_where``, ``result_limit``, ``result_offset``.
+              ``result_limit`` defaults to 100 and must be between 1 and
+              1000 rows.
 
             **JoinReduceBinding** (``operation="join_reduce"``):
               Cross-context join + aggregation.
@@ -253,6 +256,13 @@ class BaseDashboardManager(BaseStateManager):
               paths (including both tables for join bindings).
             - ``data_bindings_json`` stores the JSON-serialized bindings
               so Console can auto-execute them.
+
+            The live dashboard bridge enforces the same row cap as the
+            backend API: ``FilterBinding.limit`` and
+            ``JoinBinding.result_limit`` cannot exceed 1000. If the tile
+            needs more data, aggregate with ``ReduceBinding`` /
+            ``JoinReduceBinding`` or narrow the query instead of raising the
+            row limit.
 
             When ``None`` (the default), the tile operates in baked-in data
             mode and no bridge script is injected.
@@ -539,6 +549,9 @@ class BaseDashboardManager(BaseStateManager):
 
         If any binding fails, the tile is **not** stored and
         ``TileResult.error`` explains the problem.
+        Row-returning live bindings also obey the bridge cap:
+        ``FilterBinding.limit`` and ``JoinBinding.result_limit`` must be
+        between 1 and 1000 when provided.
 
         Data mode decision framework
         ----------------------------
@@ -749,6 +762,11 @@ class BaseDashboardManager(BaseStateManager):
             where the tile already has a stored ``on_data_script`` is
             valid -- the existing script remains, only the data sources
             change.
+
+            Fresh row-returning bindings obey the same bridge cap as
+            ``create_tile``: ``FilterBinding.limit`` and
+            ``JoinBinding.result_limit`` must be between 1 and 1000 when
+            provided.
 
         on_data : str | None, default ``None``
             New JS code block to replace the tile's ``on_data_script``.

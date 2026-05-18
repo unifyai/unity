@@ -13,16 +13,19 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from unity.common.authorship import AuthoredRow
 
+DASHBOARD_BRIDGE_MAX_ROW_LIMIT = 1000
+
 # ---------------------------------------------------------------------------
 # Data binding types (discriminated union via ``operation``)
 # ---------------------------------------------------------------------------
 
 
 class FilterBinding(BaseModel):
-    """Single-context row fetch, validated via ``DataManager.filter(limit=5)``.
+    """Single-context row fetch for the live dashboard bridge.
 
     Declares a live data source that fetches rows from a single Unify context
-    with optional filtering, column selection, sorting, and pagination.
+    with optional filtering, column selection, sorting, and pagination. The
+    bridge returns at most 1000 rows per binding.
     """
 
     operation: Literal["filter"] = "filter"
@@ -33,7 +36,11 @@ class FilterBinding(BaseModel):
     exclude_columns: Optional[List[str]] = None
     order_by: Optional[str] = None
     descending: bool = False
-    limit: Optional[int] = None
+    limit: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=DASHBOARD_BRIDGE_MAX_ROW_LIMIT,
+    )
     offset: Optional[int] = None
     group_by: Optional[List[str]] = None
 
@@ -56,10 +63,11 @@ class ReduceBinding(BaseModel):
 
 
 class JoinBinding(BaseModel):
-    """Cross-context join, validated via ``DataManager.filter_join(result_limit=5)``.
+    """Cross-context join for the live dashboard bridge.
 
     Declares a live data source that joins two Unify contexts and returns
-    the resulting rows with optional post-join filtering and pagination.
+    the resulting rows with optional post-join filtering and pagination. The
+    bridge returns at most 1000 rows per binding.
     """
 
     operation: Literal["join"] = "join"
@@ -71,7 +79,11 @@ class JoinBinding(BaseModel):
     left_where: Optional[str] = None
     right_where: Optional[str] = None
     result_where: Optional[str] = None
-    result_limit: int = 100
+    result_limit: int = Field(
+        default=100,
+        ge=1,
+        le=DASHBOARD_BRIDGE_MAX_ROW_LIMIT,
+    )
     result_offset: int = 0
 
 
