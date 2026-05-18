@@ -12,12 +12,16 @@ from __future__ import annotations
 import asyncio
 import functools
 from typing import Dict, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import pytest
 
 from unity.task_scheduler import task_scheduler as task_scheduler_module
-from unity.task_scheduler.machine_state import TaskRunProvenance, TaskRunReference
+from unity.task_scheduler.machine_state import (
+    TaskRunProvenance,
+    TaskRunReference,
+    remember_live_task_run_provenance,
+)
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
@@ -176,6 +180,77 @@ async def test_execute_materializes_live_run_after_actor_start(monkeypatch):
     assert provenance.assistant_id == "42"
     assert provenance.execution_mode == "live"
     assert events == ["act", "materialize"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.llm_call
+@_handle_project
+async def test_scheduled_execution_consumes_provenance_and_rearms(monkeypatch):
+    actor = SimulatedActor(steps=0)
+    scheduler = TaskScheduler(actor=actor)
+    task_id = scheduler._create_task(
+        name="Scheduled report",
+        description="Send the scheduled report.",
+        status=Status.scheduled,
+        schedule=Schedule(
+            start_at=(
+                datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=1)
+            ).isoformat(),
+        ),
+        repeat=[RepeatPattern(frequency=Frequency.DAILY)],
+    )["details"]["task_id"]
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(task_scheduler_module.SESSION_DETAILS.assistant, "agent_id", 42)
+    remember_live_task_run_provenance(
+        TaskRunProvenance(
+            assistant_id="42",
+            task_id=task_id,
+            source_type="scheduled",
+            execution_mode="live",
+            source_task_log_id=555,
+            activation_revision="rev-scheduled",
+            scheduled_for="2026-04-10T09:00:00+00:00",
+            task_name="Scheduled report",
+            task_description="Send the scheduled report.",
+        ),
+    )
+
+    def _fake_create_or_adopt(provenance: TaskRunProvenance) -> TaskRunReference:
+        captured["provenance"] = provenance
+        return TaskRunReference(
+            assistant_id=provenance.assistant_id,
+            run_key="live:scheduled:42:0:rev-scheduled:once",
+        )
+
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.create_or_adopt_live_task_run",
+        _fake_create_or_adopt,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.update_task_run_record",
+        lambda *args, **kwargs: None,
+    )
+
+    handle = await scheduler.execute(
+        task_id=task_id,
+        _activated_by=ActivatedBy.schedule,
+    )
+    await handle.result()
+
+    provenance = captured["provenance"]
+    assert isinstance(provenance, TaskRunProvenance)
+    assert provenance.source_type == "scheduled"
+    assert provenance.execution_mode == "live"
+    assert provenance.scheduled_for == "2026-04-10T09:00:00+00:00"
+
+    rows = sorted(
+        scheduler._filter_tasks(filter=f"task_id == {task_id}"),
+        key=lambda task: task.instance_id,
+    )
+    assert [row.instance_id for row in rows] == [0, 1]
+    assert rows[0].status == Status.completed
+    assert rows[1].status == Status.scheduled
 
 
 # --------------------------------------------------------------------------- #
