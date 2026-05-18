@@ -844,13 +844,15 @@ def _build_storage_tools(
             function_id: int,
             rationale: str,
         ) -> str:
-            """Attach a stored FunctionManager entrypoint to future runs of this task.
+            """Attach a stored FunctionManager entrypoint to future offline runs.
 
             Use this only after you have reviewed the completed trajectory and
             decided that the stored function captures a stable reusable workflow
-            for future scheduled or triggered instances. Leaving the task
-            description-driven is valid when future runs still need broad
-            planning or tool discovery.
+            that is safe to run headlessly for future scheduled or triggered
+            instances. Calling this tool means future non-terminal instances
+            will run through the offline function lane instead of the live
+            conversation runtime. Leaving the task description-driven is valid
+            when future runs still need broad planning or tool discovery.
             """
 
             if not callable(attach_entrypoint):
@@ -1021,10 +1023,12 @@ def _start_storage_check_loop(
             "such as summarization, classification, ranking, drafting, or "
             "source selection.\n\n"
             "If you store a FunctionManager function and decide it is stable "
-            "enough for future runs, call "
+            "and headless-safe enough for future runs, call "
             "`attach_entrypoint_to_recurring_task(function_id=..., "
-            "rationale=...)`. Do not call that tool unless the function has "
-            "already been persisted and you have the numeric function_id.\n\n"
+            "rationale=...)`. Calling that tool makes future non-terminal "
+            "instances run offline/headlessly through the stored function. Do "
+            "not call it unless the function has already been persisted and "
+            "you have the numeric function_id.\n\n"
             "Task metadata:\n"
             f"```json\n{metadata_json}\n```\n\n"
         )
@@ -2775,7 +2779,6 @@ class CodeActActor(BaseCodeActActor):
                 state_mode: str = "stateless",
                 session_id: int | None = None,
                 session_name: str | None = None,
-                venv_id: int | None = None,
                 _notification_up_q: asyncio.Queue[dict] | None = None,
                 _parent_chat_context: list[dict] | None = None,
             ) -> Any:
@@ -2840,10 +2843,26 @@ class CodeActActor(BaseCodeActActor):
                 -------
                 dict | ExecutionResult
                     Same shape as ``execute_code`` output (stdout, stderr, result,
-                    error, language, state_mode, session_id, session_name, venv_id,
+                    error, language, state_mode, session_id, session_name,
                     session_created, duration_ms).
                 """
                 call_kwargs = call_kwargs or {}
+                resolved_venv_id: int | None = None
+                get_function_data = getattr(
+                    self.function_manager,
+                    "_get_function_data_by_name",
+                    None,
+                )
+                if callable(get_function_data):
+                    function_data = get_function_data(name=function_name)
+                    stored_venv_id = (
+                        function_data.get("venv_id")
+                        if isinstance(function_data, dict)
+                        and not function_data.get("is_primitive")
+                        else None
+                    )
+                    if stored_venv_id is not None:
+                        resolved_venv_id = int(stored_venv_id)
 
                 import time as _ef_time
                 import logging as _ef_logging
@@ -2939,7 +2958,7 @@ class CodeActActor(BaseCodeActActor):
                         "state_mode": state_mode,
                         "session_id": session_id,
                         "session_name": session_name,
-                        "venv_id": venv_id,
+                        "venv_id": resolved_venv_id,
                     },
                 )
                 heartbeat_task: asyncio.Task[None] | None = None
@@ -2961,9 +2980,9 @@ class CodeActActor(BaseCodeActActor):
                         language=str(language),
                         session_id=session_id,
                         session_name=session_name,
-                        venv_id=venv_id,
+                        venv_id=resolved_venv_id,
                     )
-                    language, venv_id, session_id = (
+                    language, resolved_venv_id, session_id = (
                         _rs.language,
                         _rs.venv_id,
                         _rs.session_id,
@@ -3003,7 +3022,7 @@ class CodeActActor(BaseCodeActActor):
                                 language=str(language),  # type: ignore[arg-type]
                                 state_mode=state_mode,  # type: ignore[arg-type]
                                 session_id=session_id,
-                                venv_id=venv_id,
+                                venv_id=resolved_venv_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
                                 notification_q=notification_q,
@@ -3024,7 +3043,7 @@ class CodeActActor(BaseCodeActActor):
                                 "state_mode": state_mode,
                                 "session_id": session_id,
                                 "session_name": session_name,
-                                "venv_id": venv_id,
+                                "venv_id": resolved_venv_id,
                                 "session_created": False,
                                 "duration_ms": 0,
                             }

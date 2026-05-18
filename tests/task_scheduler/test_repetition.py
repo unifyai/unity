@@ -112,6 +112,7 @@ def test_entrypoint_review_patches_future_description_driven_instances():
     assert result["outcome"] == "attached"
     assert current_row.entrypoint is None
     assert future_row.entrypoint == 321
+    assert future_row.offline is True
 
 
 @pytest.mark.asyncio
@@ -154,6 +155,7 @@ async def test_recurring_execution_clones_before_entrypoint_review_patch():
         if row.instance_id == 1
     ][0]
     assert patched_next.entrypoint == 321
+    assert patched_next.offline is True
 
     scheduler._clone_task_instance(patched_next)
     cloned_from_patched = [
@@ -162,6 +164,7 @@ async def test_recurring_execution_clones_before_entrypoint_review_patch():
         if row.instance_id == 2
     ][0]
     assert cloned_from_patched.entrypoint == 321
+    assert cloned_from_patched.offline is True
 
 
 @_handle_project
