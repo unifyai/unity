@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class Frequency(str, Enum):
+    MINUTELY = "minutely"
+    HOURLY = "hourly"
     DAILY = "daily"
     WEEKLY = "weekly"
     MONTHLY = "monthly"
@@ -31,7 +33,7 @@ class Weekday(str, Enum):
 
 class RepeatPattern(BaseModel):
     """
-    A very small subset of RFC-5545 RRULE expressed as first-class fields:
+    A small subset of RFC-5545 RRULE expressed as first-class fields:
 
     * **frequency** – base unit of recurrence.
     * **interval**  – "every *n* units"; defaults to 1.
@@ -40,7 +42,7 @@ class RepeatPattern(BaseModel):
     * **until**     – or stop at this date/time (ISO-8601).
     * **time_of_day** – local *clock* time at which each occurrence starts.
 
-    Anything more elaborate can still be represented by creating multiple
+    Calendar slot schedules can still be represented by creating multiple
     `RepeatPattern` instances for a single task.
     """
 
@@ -101,6 +103,66 @@ _WEEKDAY_TO_INDEX = {
 }
 
 
+def normalize_repeat_patterns(
+    patterns: list[RepeatPattern] | None,
+) -> list[RepeatPattern] | None:
+    """Collapse obvious interval encodings into a single recurrence rule."""
+
+    if not patterns:
+        return patterns
+    if len(patterns) <= 1:
+        return patterns
+
+    normalized = _normalize_full_day_daily_slots(patterns)
+    return normalized if normalized is not None else patterns
+
+
+def _normalize_full_day_daily_slots(
+    patterns: list[RepeatPattern],
+) -> list[RepeatPattern] | None:
+    """Return a minutely rule for evenly spaced daily slots spanning the day."""
+
+    first = patterns[0]
+    if any(
+        pattern.frequency != Frequency.DAILY
+        or pattern.interval != 1
+        or pattern.weekdays is not None
+        or pattern.time_of_day is None
+        or pattern.count != first.count
+        or pattern.until != first.until
+        for pattern in patterns
+    ):
+        return None
+
+    slots = sorted(
+        (pattern.time_of_day.hour * 60 + pattern.time_of_day.minute)
+        for pattern in patterns
+        if pattern.time_of_day is not None
+    )
+    if len(slots) != len(set(slots)):
+        return None
+    if not slots or slots[0] != 0:
+        return None
+
+    wrapped_slots = slots + [24 * 60]
+    gaps = [right - left for left, right in zip(wrapped_slots, wrapped_slots[1:])]
+    if not gaps or any(gap != gaps[0] for gap in gaps):
+        return None
+
+    interval_minutes = gaps[0]
+    if interval_minutes <= 0 or (24 * 60) % interval_minutes != 0:
+        return None
+
+    return [
+        RepeatPattern(
+            frequency=Frequency.MINUTELY,
+            interval=interval_minutes,
+            count=first.count,
+            until=first.until,
+        ),
+    ]
+
+
 def next_repeated_start_at(
     *,
     previous_start: datetime,
@@ -129,6 +191,7 @@ def next_repeated_start_at(
         timezone as `previous_start`.
     """
 
+    patterns = normalize_repeat_patterns(patterns)
     if not patterns:
         return None
     reference_now = now or datetime.now(previous_start.tzinfo)
@@ -179,8 +242,18 @@ def _advance_one_occurrence(current: datetime, pattern: RepeatPattern) -> dateti
     """Return the immediate next occurrence for one pattern."""
 
     if pattern.frequency == Frequency.DAILY:
+        if pattern.time_of_day is not None:
+            return _next_time_of_day_occurrence(
+                current=current,
+                pattern=pattern,
+                reference_now=current,
+            )
         candidate = current + timedelta(days=pattern.interval)
         return _apply_time_of_day(candidate, pattern.time_of_day, current)
+    if pattern.frequency == Frequency.HOURLY:
+        return current + timedelta(hours=pattern.interval)
+    if pattern.frequency == Frequency.MINUTELY:
+        return current + timedelta(minutes=pattern.interval)
     if pattern.frequency == Frequency.WEEKLY:
         if not pattern.weekdays:
             candidate = current + timedelta(weeks=pattern.interval)
@@ -193,6 +266,23 @@ def _advance_one_occurrence(current: datetime, pattern: RepeatPattern) -> dateti
         candidate = _add_years(current, pattern.interval)
         return _apply_time_of_day(candidate, pattern.time_of_day, current)
     raise ValueError(f"Unsupported repeat frequency: {pattern.frequency}")
+
+
+def _next_time_of_day_occurrence(
+    *,
+    current: datetime,
+    pattern: RepeatPattern,
+    reference_now: datetime,
+) -> datetime:
+    """Return the next daily wall-clock slot for a time-of-day pattern."""
+
+    assert pattern.time_of_day is not None, "time-of-day occurrence requires a time"
+    anchor = datetime.combine(current.date(), pattern.time_of_day)
+    if current.tzinfo is not None:
+        anchor = anchor.replace(tzinfo=current.tzinfo)
+    if anchor > reference_now:
+        return anchor
+    return anchor + timedelta(days=pattern.interval)
 
 
 def _next_weekday_occurrence(current: datetime, pattern: RepeatPattern) -> datetime:

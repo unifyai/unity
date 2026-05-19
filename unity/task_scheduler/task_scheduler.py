@@ -42,6 +42,7 @@ from .types.repetition import (
     RepeatPattern,
     Frequency,
     Weekday,
+    normalize_repeat_patterns,
     next_repeated_start_at,
 )
 from .types.task import TaskBase, Task
@@ -1412,6 +1413,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         if repeat is not None:
             repeat = [RepeatPattern(**r) if isinstance(r, dict) else r for r in repeat]
+            repeat = normalize_repeat_patterns(repeat)
 
         if offline and entrypoint is None:
             raise ValueError("Offline tasks require a numeric entrypoint.")
@@ -3632,7 +3634,10 @@ class TaskScheduler(BaseTaskScheduler):
         if repeat is not None:
             # Normalise RepeatPattern objects to plain dicts
             norm_repeat: List[Dict[str, Any]] = []
-            for r in repeat:
+            normalized_repeat = normalize_repeat_patterns(
+                [RepeatPattern(**r) if isinstance(r, dict) else r for r in repeat],
+            )
+            for r in normalized_repeat or []:
                 if isinstance(r, RepeatPattern):
                     norm_repeat.append(r.model_dump())  # type: ignore[assignment]
                 else:

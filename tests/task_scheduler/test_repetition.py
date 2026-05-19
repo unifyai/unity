@@ -9,6 +9,7 @@ from unity.task_scheduler.types.repetition import (
     Frequency,
     RepeatPattern,
     Weekday,
+    normalize_repeat_patterns,
     next_repeated_start_at,
 )
 from unity.task_scheduler.types.schedule import Schedule
@@ -54,6 +55,94 @@ def test_next_repeated_start_at_honors_weekdays_and_count():
         now=datetime(2026, 4, 8, 9, 1, tzinfo=timezone.utc),
     )
     assert exhausted is None
+
+
+def test_next_repeated_start_at_supports_minutely_cadence():
+    pattern = RepeatPattern(frequency=Frequency.MINUTELY, interval=30)
+    previous_start = datetime(2026, 5, 19, 9, 30, tzinfo=timezone.utc)
+
+    next_start = next_repeated_start_at(
+        previous_start=previous_start,
+        patterns=[pattern],
+        current_occurrence_index=0,
+        now=datetime(2026, 5, 19, 9, 31, tzinfo=timezone.utc),
+    )
+
+    assert next_start == datetime(2026, 5, 19, 10, 0, tzinfo=timezone.utc)
+
+
+def test_next_repeated_start_at_skips_missed_subdaily_occurrences():
+    pattern = RepeatPattern(frequency=Frequency.MINUTELY, interval=30)
+    previous_start = datetime(2026, 5, 19, 9, 30, tzinfo=timezone.utc)
+
+    next_start = next_repeated_start_at(
+        previous_start=previous_start,
+        patterns=[pattern],
+        current_occurrence_index=0,
+        now=datetime(2026, 5, 19, 10, 7, tzinfo=timezone.utc),
+    )
+
+    assert next_start == datetime(2026, 5, 19, 10, 30, tzinfo=timezone.utc)
+
+
+def test_next_repeated_start_at_honors_subdaily_count_and_until():
+    previous_start = datetime(2026, 5, 19, 9, 30, tzinfo=timezone.utc)
+
+    exhausted_by_count = next_repeated_start_at(
+        previous_start=previous_start,
+        patterns=[RepeatPattern(frequency=Frequency.MINUTELY, interval=30, count=1)],
+        current_occurrence_index=0,
+        now=datetime(2026, 5, 19, 9, 31, tzinfo=timezone.utc),
+    )
+    assert exhausted_by_count is None
+
+    exhausted_by_until = next_repeated_start_at(
+        previous_start=previous_start,
+        patterns=[
+            RepeatPattern(
+                frequency=Frequency.MINUTELY,
+                interval=30,
+                until=datetime(2026, 5, 19, 9, 45, tzinfo=timezone.utc),
+            ),
+        ],
+        current_occurrence_index=0,
+        now=datetime(2026, 5, 19, 9, 31, tzinfo=timezone.utc),
+    )
+    assert exhausted_by_until is None
+
+
+def test_next_repeated_start_at_supports_same_day_daily_time_slots():
+    patterns = [
+        RepeatPattern(frequency=Frequency.DAILY, interval=1, time_of_day="09:30"),
+        RepeatPattern(frequency=Frequency.DAILY, interval=1, time_of_day="10:00"),
+        RepeatPattern(frequency=Frequency.DAILY, interval=1, time_of_day="10:30"),
+    ]
+    previous_start = datetime(2026, 5, 19, 9, 30, tzinfo=timezone.utc)
+
+    next_start = next_repeated_start_at(
+        previous_start=previous_start,
+        patterns=patterns,
+        current_occurrence_index=0,
+        now=datetime(2026, 5, 19, 9, 31, tzinfo=timezone.utc),
+    )
+
+    assert next_start == datetime(2026, 5, 19, 10, 0, tzinfo=timezone.utc)
+
+
+def test_normalize_repeat_patterns_collapses_full_day_half_hour_slots():
+    patterns = [
+        RepeatPattern(
+            frequency=Frequency.DAILY,
+            interval=1,
+            time_of_day=f"{hour:02d}:{minute:02d}:00",
+        )
+        for hour in range(24)
+        for minute in (0, 30)
+    ]
+
+    normalized = normalize_repeat_patterns(patterns)
+
+    assert normalized == [RepeatPattern(frequency=Frequency.MINUTELY, interval=30)]
 
 
 @_handle_project

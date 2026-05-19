@@ -43,9 +43,11 @@ class TaskBase(BaseModel):
     repeat: Optional[List[RepeatPattern]] = Field(
         default=None,
         description=(
-            "Pattern defining how the task recurs over time. Recurring live tasks "
-            "may begin with entrypoint=null and execute from the natural-language "
-            "description until a post-run review stores a stable function."
+            "Pattern defining how the task recurs over time. Use minutely/hourly "
+            "frequencies for sub-daily intervals; use daily/weekly/monthly/yearly "
+            "for calendar recurrences. Recurring live tasks may begin with "
+            "entrypoint=null and execute from the natural-language description "
+            "until a post-run review stores a stable function."
         ),
     )
     priority: Priority = Field(
