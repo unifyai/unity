@@ -23,7 +23,8 @@ _ROUTING_RULES = """Routing rules:
 - Use personal memory for private notes, ambiguous ownership, or anything that should not be visible to collaborators.
 - Use a shared space only when the content clearly belongs to that space's named team, domain, or scope of work.
 - If the user asks you to write something more broadly than personal memory and the right space is unclear, ask a brief clarifying question before writing.
-- Never invent a shared space destination. Use only personal memory or one of the listed space ids."""
+- Never invent a shared space destination. Use only personal memory or one of the listed space ids.
+- ``space:<id>`` tokens route memory and tasks only. Contact-addressed comms (``send_unify_message``, SMS, email, and similar) require an integer contact id; never pass a space token as ``contact_id``."""
 
 
 def build_accessible_spaces_block(space_summaries: list[SpaceSummary]) -> str:

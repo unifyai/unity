@@ -2205,12 +2205,18 @@ class CommsPrimitives:
         file attachment, which will be uploaded first and then referenced from
         the outbound message and transcript history.
 
+        ``contact_id`` must be the integer id of an existing contact record.
+        Shared-space routing tokens such as ``space:80`` are for memory and
+        task destinations only; they are not valid here. To notify people who
+        collaborate in a shared space, message each member's contact id
+        individually. There is no comms primitive that posts to a space channel.
+
         Parameters
         ----------
         content : str
             Message body to send through the Unify platform.
         contact_id : int | str
-            Existing contact that should receive the Unify message.
+            Integer contact id for the recipient. Not a ``space:<id>`` token.
         attachment_filepath : str | None, optional
             Workspace-local file path for one attachment to upload and include.
 
