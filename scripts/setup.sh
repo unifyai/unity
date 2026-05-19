@@ -145,14 +145,72 @@ ensure_orchestra_repo() {
     log_success "orchestra: $(git -C "$ORCHESTRA_REPO" rev-parse --short HEAD)"
 }
 
+# --- Python 3.12 selection for poetry --------------------------------------
+# Orchestra pins itself to ~3.12 because several core deps (asyncpg, tiktoken,
+# ...) ship no Python 3.13 wheels. Locate a 3.12 interpreter ourselves and
+# tell poetry to use it explicitly, so users on a 3.13-default system don't
+# get surprise build errors.
+find_python312() {
+    # 1. uv-managed Python (uv is required upstream by install.sh)
+    if command -v uv >/dev/null 2>&1; then
+        local uv_py
+        uv_py=$(uv python find 3.12 2>/dev/null || true)
+        if [ -n "$uv_py" ] && [ -x "$uv_py" ]; then
+            echo "$uv_py"
+            return 0
+        fi
+        log_info "Installing Python 3.12 via uv (orchestra requires it)..."
+        uv python install 3.12 >/dev/null 2>&1 || true
+        uv_py=$(uv python find 3.12 2>/dev/null || true)
+        if [ -n "$uv_py" ] && [ -x "$uv_py" ]; then
+            echo "$uv_py"
+            return 0
+        fi
+    fi
+    # 2. system python3.12 on PATH
+    if command -v python3.12 >/dev/null 2>&1; then
+        command -v python3.12
+        return 0
+    fi
+    return 1
+}
+
 install_orchestra_deps() {
     log_info "Installing orchestra dependencies via poetry (first-time: a few minutes)..."
-    (cd "$ORCHESTRA_REPO" && poetry install --no-interaction --quiet) || {
-        log_error "poetry install failed in $ORCHESTRA_REPO"
-        log_info "Try manually: cd $ORCHESTRA_REPO && poetry install"
+
+    local py312
+    py312="$(find_python312)" || {
+        log_error "Couldn't locate a Python 3.12 interpreter."
+        log_info "Orchestra requires Python 3.12.x. Install one with:"
+        log_info "  uv python install 3.12        (uv was installed by install.sh)"
+        log_info "  brew install python@3.12      (macOS via Homebrew)"
+        log_info "  sudo apt-get install python3.12 python3.12-venv   (Debian/Ubuntu)"
         return 1
     }
-    log_success "Orchestra dependencies installed"
+    log_info "Using Python 3.12 at $py312"
+
+    (cd "$ORCHESTRA_REPO" && poetry env use "$py312" >/dev/null 2>&1) || {
+        log_warn "Couldn't pin poetry env to $py312 — proceeding (may fail)."
+    }
+
+    # Capture install output so a failure surfaces the actual cause instead
+    # of an opaque "poetry install failed" message.
+    local install_log
+    install_log="$(mktemp)"
+    if (cd "$ORCHESTRA_REPO" && poetry install --no-interaction) >"$install_log" 2>&1; then
+        rm -f "$install_log"
+        log_success "Orchestra dependencies installed"
+    else
+        log_error "poetry install failed in $ORCHESTRA_REPO"
+        echo ""
+        echo "  --- Last 40 lines of poetry output ---"
+        tail -40 "$install_log" | sed 's/^/  /'
+        echo "  --------------------------------------"
+        echo "  Full log: $install_log"
+        echo ""
+        log_info "Try manually:  cd $ORCHESTRA_REPO && poetry install"
+        return 1
+    fi
 }
 
 # --- Orchestra spin-up ----------------------------------------------------

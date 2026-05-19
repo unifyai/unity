@@ -8,11 +8,20 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
+from unity.common.task_execution_context import current_task_execution_delegate
 from unity.common.startup_timing import log_startup_timing
 from unity.conversation_manager.cm_types import Medium
-from unity.conversation_manager.events import FastBrainNotification, TaskDue
+from unity.conversation_manager.domains import brain_action_tools, managers_utils
+from unity.conversation_manager.events import (
+    ActorHandleStarted,
+    FastBrainNotification,
+    TaskDue,
+)
+from unity.common.prompt_helpers import now as prompt_now
 from unity.logger import LOGGER
+from unity.manager_registry import ManagerRegistry
 from unity.session_details import SESSION_DETAILS
+from unity.task_scheduler.types.activated_by import ActivatedBy
 from unity.task_scheduler.machine_state import (
     TaskActivationSnapshot,
     TaskRunProvenance,
@@ -22,10 +31,113 @@ from unity.task_scheduler.machine_state import (
 )
 
 if TYPE_CHECKING:
+    from unity.actor.base import BaseActor
+    from unity.common.async_tool_loop import SteerableToolHandle
     from unity.conversation_manager.conversation_manager import ConversationManager
 
 _TASK_CONTEXT_SUMMARY_MAX_CHARS = 220
 _TRIGGER_CONTEXT_CANDIDATE_LIMIT = 3
+
+
+class _ConversationTaskExecutionDelegate:
+    """Route due-task execution through the live actor owned by the conversation."""
+
+    def __init__(self, actor: "BaseActor") -> None:
+        self._actor = actor
+
+    async def start_task_run(
+        self,
+        *,
+        task_description: str,
+        entrypoint: int | None,
+        parent_chat_context: list[dict] | None,
+        clarification_up_q: asyncio.Queue[str] | None,
+        clarification_down_q: asyncio.Queue[str] | None,
+    ) -> "SteerableToolHandle":
+        return await self._actor.act(
+            task_description,
+            entrypoint=entrypoint,
+            _parent_chat_context=parent_chat_context,
+            _clarification_up_q=clarification_up_q,
+            _clarification_down_q=clarification_down_q,
+            persist=False,
+            _reuse_actor_slot=entrypoint is not None,
+        )
+
+
+async def _register_live_task_handle(
+    cm: "ConversationManager",
+    *,
+    handle: "SteerableToolHandle",
+    query: str,
+) -> int:
+    """Register a deterministically started task with CM steering state."""
+
+    handle_id = brain_action_tools._next_handle_id
+    brain_action_tools._next_handle_id += 1
+    cm.in_flight_actions[handle_id] = {
+        "handle": handle,
+        "query": query,
+        "persist": False,
+        "action_type": "task",
+        "handle_actions": [
+            {
+                "action_name": "task_started",
+                "query": query,
+                "timestamp": prompt_now(),
+            },
+        ],
+        "initial_snapshot_state": getattr(cm, "_current_snapshot_state", None),
+        "context_opted_in": False,
+    }
+    asyncio.create_task(
+        managers_utils.actor_watch_result(
+            handle_id,
+            handle,
+            action_type="task",
+        ),
+    )
+    asyncio.create_task(managers_utils.actor_watch_notifications(handle_id, handle))
+    asyncio.create_task(managers_utils.actor_watch_clarifications(handle_id, handle))
+    await cm.event_broker.publish(
+        f"app:actor:actor_started_handle_{handle_id}",
+        ActorHandleStarted(
+            handle_id=handle_id,
+            action_name="task",
+            query=query,
+        ).to_json(),
+    )
+    return handle_id
+
+
+async def _start_live_task_due_execution(
+    event: TaskDue,
+    cm: "ConversationManager",
+    activation: TaskActivationSnapshot,
+) -> int:
+    """Start a validated live due task through the scheduler execution path."""
+
+    if cm.actor is None:
+        raise RuntimeError(
+            "Cannot execute due task before the live actor is initialized.",
+        )
+
+    scheduler = ManagerRegistry.get_task_scheduler()
+    delegate = _ConversationTaskExecutionDelegate(cm.actor)
+    delegate_token = current_task_execution_delegate.set(delegate)
+    try:
+        handle = await scheduler.execute(
+            task_id=event.task_id,
+            _activated_by=ActivatedBy.schedule,
+        )
+    finally:
+        current_task_execution_delegate.reset(delegate_token)
+
+    query = (
+        f"Scheduled task due now: '{_task_due_label(event, activation)}' "
+        f"(task_id={event.task_id})."
+    )
+    return await _register_live_task_handle(cm, handle=handle, query=query)
 
 
 def _current_task_assistant_id() -> str | None:
@@ -119,9 +231,7 @@ def _task_due_notification_text(
         parts.append(
             "Default behavior: work silently unless you genuinely need the user.",
         )
-    parts.append(
-        f"If the task still applies, start it with primitives.tasks.execute(task_id={event.task_id}).",
-    )
+    parts.append("The task run has been started automatically.")
     return " ".join(parts)
 
 
@@ -338,11 +448,13 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
         _task_due_notification_text(event, activation),
         event.timestamp,
     )
+    handle_id = await _start_live_task_due_execution(event, cm, activation)
     cm._session_logger.info(
         "task_due",
         (
             f"Accepted due task {event.task_id} "
-            f"(activation_revision={activation.activation_revision or '-'})"
+            f"(activation_revision={activation.activation_revision or '-'}, "
+            f"handle_id={handle_id})"
         ),
     )
     await _queue_fast_brain_task_context(
@@ -350,7 +462,7 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
         content=_task_due_fast_brain_context(event, activation),
         source="task_due",
     )
-    return True
+    return False
 
 
 async def _consume_startup_wake_reasons(cm: "ConversationManager") -> None:

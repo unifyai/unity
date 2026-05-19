@@ -362,7 +362,7 @@ class TaskScheduler(BaseTaskScheduler):
         function_id: int,
         rationale: str,
     ) -> dict[str, Any]:
-        """Attach an entrypoint to future non-terminal instances of a logical task."""
+        """Attach an offline entrypoint to future non-terminal task instances."""
 
         if function_id < 0:
             raise ValueError("function_id must be a non-negative integer.")
@@ -385,7 +385,10 @@ class TaskScheduler(BaseTaskScheduler):
         log_ids = [log.id for log in future_logs]
         self._write_log_entries(
             logs=log_ids,
-            entries={"entrypoint": int(function_id)},
+            entries={
+                "entrypoint": int(function_id),
+                "offline": True,
+            },
         )
         return {
             "outcome": "attached",
@@ -716,6 +719,7 @@ class TaskScheduler(BaseTaskScheduler):
         trigger_attempt_token: str | None = None,
         response_format: Optional[Type[BaseModel]] = None,
         isolated: Optional[bool] = None,
+        _activated_by: ActivatedBy | None = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
@@ -744,6 +748,7 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=_parent_chat_context,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            activated_by=_activated_by or ActivatedBy.explicit,
             detach=bool(isolated),
         )
         return handle
@@ -920,6 +925,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        activated_by: ActivatedBy = ActivatedBy.explicit,
         detach: bool = False,
     ) -> SteerableToolHandle:
         """Start queue execution at `task_id` and return a composite queue handle."""
@@ -929,7 +935,7 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
-            activated_by=ActivatedBy.explicit,
+            activated_by=activated_by,
             # Detach first task when explicitly requested; otherwise keep queue semantics
             detach=detach,
             # Only at creation: if we are starting from a mid-queue task in chained mode,

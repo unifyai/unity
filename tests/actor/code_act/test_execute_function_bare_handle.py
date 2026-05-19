@@ -12,7 +12,9 @@ This ensures the core loop adopts the handle via the bare-handle path
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, AsyncIterator
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -21,6 +23,7 @@ from unity.actor.code_act_actor import CodeActActor
 from unity.actor.execution import ExecutionResult
 from unity.actor.environments import StateManagerEnvironment
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.llm_helpers import method_to_schema
 from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import Primitives, PrimitiveScope
 from unity.manager_registry import ManagerRegistry
@@ -92,6 +95,113 @@ async def execute_function_tool(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+class _FakeFunctionManager:
+    def __init__(self):
+        self.execute_in_venv = AsyncMock(
+            return_value={
+                "stdout": [],
+                "stderr": [],
+                "result": "venv ok",
+                "error": None,
+            },
+        )
+
+    def _get_function_data_by_name(self, *, name: str):
+        if name != "stored_report":
+            return None
+        return {
+            "function_id": 12,
+            "name": "stored_report",
+            "implementation": "def stored_report():\n    return 'default env'",
+            "venv_id": 31,
+            "is_primitive": False,
+        }
+
+    def search_functions(self, **kwargs):
+        return {"metadata": []}
+
+    def filter_functions(self, **kwargs):
+        return {"metadata": []}
+
+    def list_functions(self, **kwargs):
+        return {"metadata": []}
+
+    async def add_functions(self, **kwargs):
+        return {"metadata": []}
+
+    async def delete_function(self, **kwargs):
+        return {"deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_execute_function_does_not_expose_venv_id():
+    fm = _FakeFunctionManager()
+    actor = CodeActActor(
+        function_manager=fm,  # type: ignore[arg-type]
+        can_store=False,
+    )
+
+    try:
+        execute_function = actor.get_tools("act")["execute_function"]
+        if hasattr(execute_function, "fn"):
+            execute_function = execute_function.fn
+
+        signature = inspect.signature(execute_function)
+        schema = method_to_schema(
+            execute_function,
+            tool_name="execute_function",
+            include_class_name=False,
+        )
+    finally:
+        await actor.close()
+
+    assert "venv_id" not in signature.parameters
+    assert "venv_id" not in schema["function"]["parameters"]["properties"]
+    assert "venv_id" not in schema["function"]["description"]
+
+
+@pytest.mark.asyncio
+async def test_execute_function_uses_stored_venv_when_caller_omits_it():
+    fm = _FakeFunctionManager()
+    actor = CodeActActor(
+        function_manager=fm,  # type: ignore[arg-type]
+        can_store=False,
+    )
+    captured: dict[str, object] = {}
+
+    async def _fake_execute(**kwargs):
+        captured.update(kwargs)
+        return {
+            "stdout": [],
+            "stderr": [],
+            "result": "venv ok",
+            "error": None,
+            "language": kwargs["language"],
+            "state_mode": kwargs["state_mode"],
+            "session_id": kwargs["session_id"],
+            "venv_id": kwargs["venv_id"],
+            "session_created": False,
+            "duration_ms": 0,
+        }
+
+    actor._session_executor.execute = AsyncMock(side_effect=_fake_execute)  # type: ignore[method-assign]
+
+    try:
+        execute_function = actor.get_tools("act")["execute_function"]
+        if hasattr(execute_function, "fn"):
+            execute_function = execute_function.fn
+
+        result = await execute_function(
+            function_name="stored_report",
+            call_kwargs={},
+        )
+    finally:
+        await actor.close()
+
+    assert result.result == "venv ok"
+    assert captured["venv_id"] == 31
 
 
 @pytest.mark.asyncio

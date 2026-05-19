@@ -1,9 +1,11 @@
 import asyncio
+import contextlib
 
 import pytest
 
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.execution import PythonExecutionSession
+from unity.events.active_work import ACTIVE_WORK
 
 
 @pytest.mark.asyncio
@@ -179,3 +181,128 @@ async def test_tool_loop_handle_next_notification():
                 await handle.stop("cleanup")
             except Exception:
                 pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_execute_code_tracks_and_clears_active_work():
+    ACTIVE_WORK.clear()
+    actor = CodeActActor()
+    actor._active_work_heartbeat_interval_s = 0.01
+
+    try:
+        execute_code = actor.get_tools("act")["execute_code"]
+        task = asyncio.create_task(
+            execute_code(
+                "run silent async work",
+                "import asyncio\nawait asyncio.sleep(0.05)\n'done'",
+                language="python",
+                state_mode="stateless",
+            ),
+        )
+
+        deadline = asyncio.get_event_loop().time() + 1.0
+        while ACTIVE_WORK.snapshot().active_count == 0:
+            if asyncio.get_event_loop().time() >= deadline:
+                pytest.fail("active work was not registered")
+            await asyncio.sleep(0.005)
+
+        assert ACTIVE_WORK.snapshot().active_count == 1
+        await task
+        assert ACTIVE_WORK.snapshot().active_count == 0
+    finally:
+        ACTIVE_WORK.clear()
+        await actor.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_execute_code_clears_active_work_after_exception_timeout_and_cancellation():
+    ACTIVE_WORK.clear()
+
+    actor = CodeActActor(timeout=0.02)
+    actor._active_work_heartbeat_interval_s = 0.01
+    execute_code = actor.get_tools("act")["execute_code"]
+
+    try:
+        error_result = await execute_code(
+            "raise an exception",
+            "raise RuntimeError('boom')",
+            language="python",
+            state_mode="stateless",
+        )
+        assert error_result.error is not None
+        assert ACTIVE_WORK.snapshot().active_count == 0
+
+        timeout_result = await execute_code(
+            "timeout async work",
+            "import asyncio\nawait asyncio.sleep(1)",
+            language="python",
+            state_mode="stateless",
+        )
+        assert "timed out" in str(timeout_result.error)
+        assert ACTIVE_WORK.snapshot().active_count == 0
+
+        task = asyncio.create_task(
+            execute_code(
+                "cancel async work",
+                "import asyncio\nawait asyncio.sleep(1)",
+                language="python",
+                state_mode="stateless",
+            ),
+        )
+        deadline = asyncio.get_event_loop().time() + 1.0
+        while ACTIVE_WORK.snapshot().active_count == 0:
+            if asyncio.get_event_loop().time() >= deadline:
+                pytest.fail("active work was not registered before cancellation")
+            await asyncio.sleep(0.005)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert ACTIVE_WORK.snapshot().active_count == 0
+    finally:
+        ACTIVE_WORK.clear()
+        await actor.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_execute_code_fallback_progress_and_semantic_notify_reset():
+    ACTIVE_WORK.clear()
+
+    actor = CodeActActor()
+    actor._active_work_heartbeat_interval_s = 0.01
+    actor._active_work_fallback_initial_delay_s = 0.03
+    actor._active_work_fallback_repeat_interval_s = 0.05
+    execute_code = actor.get_tools("act")["execute_code"]
+
+    try:
+        notification_q: asyncio.Queue[dict] = asyncio.Queue()
+        await execute_code(
+            "run silent work long enough for fallback progress",
+            "import asyncio\nawait asyncio.sleep(0.06)",
+            language="python",
+            state_mode="stateless",
+            _notification_up_q=notification_q,
+        )
+        fallback = await asyncio.wait_for(notification_q.get(), timeout=1.0)
+        assert fallback["source"] == "active_work"
+        assert "Still working" in fallback["message"]
+        assert notification_q.empty()
+
+        actor._active_work_fallback_initial_delay_s = 0.06
+        semantic_q: asyncio.Queue[dict] = asyncio.Queue()
+        await execute_code(
+            "emit semantic progress before the fallback delay",
+            "import asyncio\nnotify({'type': 'custom_progress', 'message': 'halfway'})\nawait asyncio.sleep(0.04)",
+            language="python",
+            state_mode="stateless",
+            _notification_up_q=semantic_q,
+        )
+        semantic = await asyncio.wait_for(semantic_q.get(), timeout=1.0)
+        assert semantic["type"] == "custom_progress"
+        assert semantic["message"] == "halfway"
+        assert semantic_q.empty()
+    finally:
+        ACTIVE_WORK.clear()
+        await actor.close()

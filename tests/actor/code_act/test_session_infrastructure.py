@@ -1,4 +1,5 @@
 import sys
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,6 +10,18 @@ from unity.actor.execution import (
 )
 from unity.function_manager.function_manager import VenvPool
 from unity.function_manager.shell_pool import ShellPool
+
+
+class _FakeFunctionManager:
+    def __init__(self):
+        self.execute_in_venv = AsyncMock(
+            return_value={
+                "stdout": [],
+                "stderr": [],
+                "result": "venv ok",
+                "error": None,
+            },
+        )
 
 
 @pytest.mark.parametrize(
@@ -130,6 +143,30 @@ async def test_session_executor_python_stateful_reuses_session():
         assert isinstance(r2["duration_ms"], int)
     finally:
         await ex.close()
+
+
+@pytest.mark.asyncio
+async def test_session_executor_stateless_python_uses_venv_subprocess():
+    fm = _FakeFunctionManager()
+    executor = SessionExecutor(
+        venv_pool=None,
+        shell_pool=None,
+        function_manager=fm,  # type: ignore[arg-type]
+    )
+
+    result = await executor.execute(
+        code="1 + 1",
+        language="python",
+        state_mode="stateless",
+        session_id=None,
+        venv_id=31,
+    )
+
+    assert result["result"] == "venv ok"
+    fm.execute_in_venv.assert_awaited_once()
+    call_kwargs = fm.execute_in_venv.await_args.kwargs
+    assert call_kwargs["venv_id"] == 31
+    assert call_kwargs["is_async"] is True
 
 
 @pytest.mark.asyncio

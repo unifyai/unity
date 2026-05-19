@@ -3,6 +3,8 @@ Tests for SingleFunctionActor - a minimal actor that executes a single function.
 """
 
 import asyncio
+from unittest.mock import AsyncMock
+
 import pytest
 
 from unity.actor.single_function_actor import (
@@ -76,6 +78,51 @@ def failing_task() -> str:
 # ────────────────────────────────────────────────────────────────────────────
 # 1. Basic execution tests
 # ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_function_id_execution_uses_stored_venv_id():
+    """Function-id execution should honor the function row's stored venv."""
+
+    class _FakeFunctionManager:
+        def __init__(self):
+            self.execute_in_venv = AsyncMock(
+                return_value={
+                    "stdout": "",
+                    "stderr": "",
+                    "result": "venv ok",
+                    "error": None,
+                },
+            )
+
+        def filter_functions(self, **kwargs):
+            assert kwargs["filter"] == "function_id == 777"
+            return {
+                "metadata": [
+                    {
+                        "function_id": 777,
+                        "name": "nightly_report",
+                        "implementation": "def nightly_report():\n    return 'default env'",
+                        "argspec": "()",
+                        "docstring": "Build the nightly report.",
+                        "verify": False,
+                        "venv_id": 23,
+                    },
+                ],
+            }
+
+    fm = _FakeFunctionManager()
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,  # type: ignore[arg-type]
+    )
+
+    handle = await actor.act(function_id=777, call_kwargs={})
+    result = await handle.result()
+
+    assert result.result == "venv ok"
+    fm.execute_in_venv.assert_awaited_once()
+    assert fm.execute_in_venv.await_args.kwargs["venv_id"] == 23
 
 
 @pytest.mark.asyncio
