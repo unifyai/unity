@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from tests.helpers import _handle_project
 import pytest
 import unify
@@ -7,6 +9,8 @@ from unity.common.tool_outcome import ToolErrorException
 from unity.session_details import SESSION_DETAILS
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.priority import Priority
+from unity.task_scheduler.types.repetition import Frequency, RepeatPattern
+from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.status import Status
 
 
@@ -118,6 +122,44 @@ def test_invalid_space_destination_raises_tool_error():
             )
     finally:
         SESSION_DETAILS.space_ids = []
+
+
+@_handle_project
+def test_clone_recurring_task_instance_uses_space_destination_root():
+    """Re-arming a recurring task must clone into the same Tasks root as the template row."""
+    ts = TaskScheduler()
+    space_id = 987658
+    SESSION_DETAILS.space_ids = [space_id]
+
+    try:
+        initial_start = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(
+            hours=1,
+        )
+        out = ts._create_task(
+            name="Daily shared alert",
+            description="Check KPI thresholds for the patch team space.",
+            status=Status.scheduled,
+            schedule=Schedule(start_at=initial_start.isoformat()),
+            repeat=[RepeatPattern(frequency=Frequency.DAILY)],
+            destination=f"space:{space_id}",
+        )
+        task_id = out["details"]["task_id"]
+        current = ts._filter_tasks(filter=f"task_id == {task_id}")[0]
+        assert current.destination == f"space:{space_id}"
+
+        ts._clone_task_instance(current)
+
+        rows = ts._filter_tasks(filter=f"task_id == {task_id}")
+        assert len(rows) == 2
+        assert {row.instance_id for row in rows} == {0, 1}
+        assert all(row.destination == f"space:{space_id}" for row in rows)
+    finally:
+        try:
+            unify.delete_context(f"Spaces/{space_id}/Tasks")
+        except Exception:
+            pass
+        SESSION_DETAILS.space_ids = []
+        ContextRegistry.forget_departed_space_roots([])
 
 
 @_handle_project

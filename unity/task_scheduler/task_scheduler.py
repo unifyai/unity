@@ -980,20 +980,18 @@ class TaskScheduler(BaseTaskScheduler):
             handle=handle,
         )
 
-        # Clone if this is a triggerable or recurring task
         if task.status == Status.triggerable or (
             task.repeat is not None and task.schedule_start_at is not None
         ):
             self._clone_task_instance(task)
 
-        # Promote status to active (and record the activation reason) and clear the primed pointer if needed
-
-        self._update_task_status_instance(
-            task_id=task_id,
-            instance_id=task.instance_id,
-            new_status=Status.active,
-            activated_by=reason,
-        )
+        with self._use_task_destination(task.destination):
+            self._update_task_status_instance(
+                task_id=task_id,
+                instance_id=task.instance_id,
+                new_status=Status.active,
+                activated_by=reason,
+            )
         if self._primed_task and self._primed_task.task_id == task_id:
             self._primed_task = None
 
@@ -1225,7 +1223,8 @@ class TaskScheduler(BaseTaskScheduler):
                 "next_task": None,
                 "start_at": next_start_at.isoformat(),
             }
-        self._view.create_one(entries=clone_payload, new=True)
+        with self._use_task_destination(task.destination):
+            self._view.create_one(entries=clone_payload, new=True)
         # Maintain cached total count (+1 new instance row)
         if self._num_tasks_cached is not None:
             self._num_tasks_cached += 1
