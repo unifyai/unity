@@ -200,6 +200,7 @@ async def test_scheduled_execution_consumes_provenance_and_rearms(monkeypatch):
         repeat=[RepeatPattern(frequency=Frequency.DAILY)],
     )["details"]["task_id"]
     captured: dict[str, object] = {}
+    run_updates: list[tuple[TaskRunReference | None, dict]] = []
 
     monkeypatch.setattr(task_scheduler_module.SESSION_DETAILS.assistant, "agent_id", 42)
     remember_live_task_run_provenance(
@@ -229,7 +230,9 @@ async def test_scheduled_execution_consumes_provenance_and_rearms(monkeypatch):
     )
     monkeypatch.setattr(
         "unity.task_scheduler.active_task.update_task_run_record",
-        lambda *args, **kwargs: None,
+        lambda run_reference, updates: run_updates.append(
+            (run_reference, dict(updates)),
+        ),
     )
 
     handle = await scheduler.execute(
@@ -243,6 +246,13 @@ async def test_scheduled_execution_consumes_provenance_and_rearms(monkeypatch):
     assert provenance.source_type == "scheduled"
     assert provenance.execution_mode == "live"
     assert provenance.scheduled_for == "2026-04-10T09:00:00+00:00"
+    assert run_updates
+    assert run_updates[-1][0] == TaskRunReference(
+        assistant_id="42",
+        run_key="live:scheduled:42:0:rev-scheduled:once",
+    )
+    assert run_updates[-1][1]["state"] == "completed"
+    assert run_updates[-1][1]["completed_at"]
 
     rows = sorted(
         scheduler._filter_tasks(filter=f"task_id == {task_id}"),

@@ -433,6 +433,8 @@ def build_update_prompt(
             "",
             "Repeat field examples",
             "---------------------",
+            "• Every 30 minutes: set `schedule.start_at` to the first due datetime and `repeat=[{'frequency':'minutely','interval':30}]`. Do not represent minute/hour intervals as many daily `time_of_day` rules.",
+            "• Every 2 hours: set `schedule.start_at` to the first due datetime and `repeat=[{'frequency':'hourly','interval':2}]`.",
             "• Daily at a fixed time: set `schedule.start_at` to the first due datetime and `repeat=[{'frequency':'daily','interval':1}]`.",
             "• Weekly on Monday at 12:00 UTC: set first `schedule.start_at` to the next Monday 12:00 UTC and `repeat=[{'frequency':'weekly','interval':1,'weekdays':['MO'],'time_of_day':'12:00'}]`.",
             "• End after N runs: include `count`. End after a date: include `until`.",
