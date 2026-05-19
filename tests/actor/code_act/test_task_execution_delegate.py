@@ -9,6 +9,9 @@ from unity.actor.code_act_actor import CodeActActor, _CodeActTaskExecutionDelega
 from unity.actor.environments.state_managers import StateManagerEnvironment
 from unity.actor.simulated import SimulatedActor
 from unity.common.task_execution_context import current_task_execution_delegate
+from unity.conversation_manager.domains.task_activation import (
+    _ConversationTaskExecutionDelegate,
+)
 from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import PrimitiveScope, Primitives
 from unity.manager_registry import ManagerRegistry
@@ -68,6 +71,47 @@ async def test_codeact_task_delegate_reuses_actor_slot_for_entrypoint_tasks():
 
     assert calls[0]["_reuse_actor_slot"] is True
     assert calls[0]["entrypoint"] == 123
+
+
+@pytest.mark.asyncio
+async def test_task_execution_delegates_accept_shared_protocol_kwargs():
+    class _FakeHandle:
+        async def result(self):
+            return "ok"
+
+    class _FakeActor:
+        def __init__(self):
+            self.calls = []
+
+        async def act(self, *args, **kwargs):
+            self.calls.append({"args": args, "kwargs": kwargs})
+            return _FakeHandle()
+
+    for delegate_cls in (
+        _CodeActTaskExecutionDelegate,
+        _ConversationTaskExecutionDelegate,
+    ):
+        actor = _FakeActor()
+        delegate = delegate_cls(actor)  # type: ignore[arg-type]
+
+        handle = await delegate.start_task_run(
+            task_description="Run with the shared task delegate protocol.",
+            entrypoint=None,
+            parent_chat_context=None,
+            clarification_up_q=None,
+            clarification_down_q=None,
+            images=[],
+            guidelines="Follow task-specific execution guidelines.",
+            future_option=True,
+        )
+
+        assert await handle.result() == "ok"
+        call = actor.calls[0]
+        assert call["args"][0] == "Run with the shared task delegate protocol."
+        assert (
+            call["kwargs"]["guidelines"] == "Follow task-specific execution guidelines."
+        )
+        assert call["kwargs"]["future_option"] is True
 
 
 @pytest.mark.asyncio

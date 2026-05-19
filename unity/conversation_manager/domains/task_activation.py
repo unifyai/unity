@@ -12,6 +12,7 @@ from unity.common.task_execution_context import current_task_execution_delegate
 from unity.common.startup_timing import log_startup_timing
 from unity.conversation_manager.cm_types import Medium
 from unity.conversation_manager.domains import brain_action_tools, managers_utils
+from unity.conversation_manager.domains.comms_utils import publish_system_error
 from unity.conversation_manager.events import (
     ActorHandleStarted,
     FastBrainNotification,
@@ -53,15 +54,21 @@ class _ConversationTaskExecutionDelegate:
         parent_chat_context: list[dict] | None,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
+        images: Any | None = None,
+        **kwargs: Any,
     ) -> "SteerableToolHandle":
+        _ = images
+        task_guidelines = kwargs.pop("guidelines", None)
         return await self._actor.act(
             task_description,
+            guidelines=task_guidelines,
             entrypoint=entrypoint,
             _parent_chat_context=parent_chat_context,
             _clarification_up_q=clarification_up_q,
             _clarification_down_q=clarification_down_q,
             persist=False,
             _reuse_actor_slot=entrypoint is not None,
+            **kwargs,
         )
 
 
@@ -443,12 +450,26 @@ async def _handle_task_due_event(event: TaskDue, cm: "ConversationManager") -> b
                 ),
             ),
         )
+    try:
+        handle_id = await _start_live_task_due_execution(event, cm, activation)
+    except Exception as exc:
+        error_message = (
+            f"Scheduled task '{_task_due_label(event, activation)}' failed to start "
+            f"through TaskScheduler.execute: {type(exc).__name__}: {exc}"
+        )
+        cm._session_logger.error("task_due", error_message)
+        cm.notifications_bar.push_notif("Tasks", error_message, event.timestamp)
+        publish_system_error(
+            error_message,
+            error_type="scheduled_task_start_failed",
+        )
+        return False
+
     cm.notifications_bar.push_notif(
         "Tasks",
         _task_due_notification_text(event, activation),
         event.timestamp,
     )
-    handle_id = await _start_live_task_due_execution(event, cm, activation)
     cm._session_logger.info(
         "task_due",
         (

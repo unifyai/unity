@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.helpers import _handle_project
 from unity.conversation_manager.domains.event_handlers import (
     EventHandler,
     _event_type_to_log_key,
@@ -1908,6 +1909,183 @@ class TestTaskDueEventHandlers:
         assert captured["task_id"] == 101
         assert captured["_activated_by"] == ActivatedBy.schedule
         assert captured["delegate"] is not None
+
+    @pytest.mark.asyncio
+    @_handle_project
+    async def test_task_due_start_uses_real_scheduler_delegate_contract(
+        self,
+        mock_cm,
+        monkeypatch,
+    ):
+        """Due-task startup should exercise the real scheduler/delegate boundary."""
+
+        from unity.actor.simulated import SimulatedActor
+        from unity.conversation_manager.domains.task_activation import (
+            _start_live_task_due_execution,
+        )
+        from unity.task_scheduler import task_scheduler as task_scheduler_module
+        from unity.task_scheduler.machine_state import (
+            TaskRunProvenance,
+            TaskRunReference,
+            remember_live_task_run_provenance,
+        )
+        from unity.task_scheduler.task_scheduler import TaskScheduler
+        from unity.task_scheduler.types.activated_by import ActivatedBy
+        from unity.task_scheduler.types.repetition import Frequency, RepeatPattern
+        from unity.task_scheduler.types.schedule import Schedule
+        from unity.task_scheduler.types.status import Status
+
+        calls: list[dict] = []
+        actor = SimulatedActor(steps=0)
+        original_act = actor.act
+
+        async def _spy_act(*args, **kwargs):
+            calls.append(kwargs)
+            return await original_act(*args, **kwargs)
+
+        actor.act = _spy_act  # type: ignore[method-assign]
+        scheduler = TaskScheduler(actor=actor)
+        task_id = scheduler._create_task(
+            name="Scheduled integration report",
+            description="Prepare the scheduled report.",
+            status=Status.scheduled,
+            schedule=Schedule(start_at="2026-04-10T09:00:00+00:00"),
+            repeat=[RepeatPattern(frequency=Frequency.DAILY)],
+        )["details"]["task_id"]
+        event = TaskDue(
+            task_id=task_id,
+            source_task_log_id=555,
+            activation_revision="rev-1",
+            scheduled_for="2026-04-10T09:00:00+00:00",
+            task_label="Scheduled integration report",
+        )
+        activation = TaskActivationSnapshot(
+            assistant_id="42",
+            activation_key=f"42:{task_id}",
+            task_id=task_id,
+            source_task_log_id=555,
+            activation_revision="rev-1",
+            task_name="Scheduled integration report",
+        )
+        mock_cm.actor = actor
+
+        monkeypatch.setattr(
+            task_scheduler_module.SESSION_DETAILS.assistant,
+            "agent_id",
+            42,
+        )
+        remember_live_task_run_provenance(
+            TaskRunProvenance(
+                assistant_id="42",
+                task_id=task_id,
+                source_type="scheduled",
+                execution_mode="live",
+                source_task_log_id=555,
+                activation_revision="rev-1",
+                scheduled_for="2026-04-10T09:00:00+00:00",
+                task_name="Scheduled integration report",
+                task_description="Prepare the scheduled report.",
+            ),
+        )
+        monkeypatch.setattr(
+            "unity.task_scheduler.active_task.create_or_adopt_live_task_run",
+            lambda provenance: TaskRunReference(
+                assistant_id=provenance.assistant_id,
+                run_key="live:scheduled:42:0:rev-1:2026-04-10T09:00:00+00:00",
+            ),
+        )
+        monkeypatch.setattr(
+            "unity.task_scheduler.active_task.update_task_run_record",
+            lambda *args, **kwargs: None,
+        )
+
+        async def _noop(*args, **kwargs):
+            return None
+
+        with (
+            patch(
+                "unity.conversation_manager.domains.task_activation.ManagerRegistry.get_task_scheduler",
+                return_value=scheduler,
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.managers_utils.actor_watch_result",
+                new=_noop,
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.managers_utils.actor_watch_notifications",
+                new=_noop,
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.managers_utils.actor_watch_clarifications",
+                new=_noop,
+            ),
+        ):
+            handle_id = await _start_live_task_due_execution(event, mock_cm, activation)
+
+        assert handle_id in mock_cm.in_flight_actions
+        assert calls
+        assert calls[0]["guidelines"] is not None
+        assert calls[0]["persist"] is False
+
+        rows = sorted(
+            scheduler._filter_tasks(filter=f"task_id == {task_id}"),
+            key=lambda task: task.instance_id,
+        )
+        assert [row.instance_id for row in rows] == [0, 1]
+        assert rows[0].status == Status.active
+        assert rows[0].activated_by == ActivatedBy.schedule
+        assert rows[1].status == Status.scheduled
+
+    @pytest.mark.asyncio
+    async def test_task_due_start_failure_surfaces_error_without_llm_prompt(
+        self,
+        mock_cm,
+    ):
+        from unity.conversation_manager.domains.task_activation import (
+            _handle_task_due_event,
+        )
+
+        event = TaskDue(
+            task_id=101,
+            source_task_log_id=555,
+            activation_revision="rev-1",
+            scheduled_for="2026-04-10T09:00:00+00:00",
+            task_label="Morning briefing",
+        )
+
+        with (
+            patch(
+                "unity.conversation_manager.domains.task_activation.validate_task_due_activation",
+                return_value=(
+                    TaskActivationSnapshot(
+                        assistant_id="42",
+                        activation_key="42:101",
+                        task_id=101,
+                        source_task_log_id=555,
+                        activation_revision="rev-1",
+                        task_name="Morning briefing",
+                    ),
+                    None,
+                ),
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation._start_live_task_due_execution",
+                new=AsyncMock(side_effect=RuntimeError("delegate mismatch")),
+            ),
+            patch(
+                "unity.conversation_manager.domains.task_activation.publish_system_error",
+            ) as mock_publish_system_error,
+        ):
+            should_request_llm = await _handle_task_due_event(event, mock_cm)
+
+        assert should_request_llm is False
+        assert len(mock_cm.notifications_bar.notifications) == 1
+        notification = mock_cm.notifications_bar.notifications[0].content
+        assert "failed to start through TaskScheduler.execute" in notification
+        assert "delegate mismatch" in notification
+        assert "started automatically" not in notification
+        mock_cm.request_llm_run.assert_not_called()
+        mock_publish_system_error.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_task_due_queues_fast_brain_context_during_voice_call(self, mock_cm):
