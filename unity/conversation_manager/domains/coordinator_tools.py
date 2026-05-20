@@ -139,13 +139,11 @@ class SpacePatch(TypedDict, total=False):
     description: str
 
 
-COORDINATOR_TOOL_METHOD_NAMES: tuple[str, ...] = (
+DEFAULT_COORDINATOR_METHOD_NAMES: tuple[str, ...] = (
     "create_assistant",
     "delete_assistant",
     "update_assistant_config",
     "list_assistants",
-    "list_org_members",
-    "invite_org_member",
     "pre_seed_colleague",
     "create_space",
     "delete_space",
@@ -160,6 +158,17 @@ COORDINATOR_TOOL_METHOD_NAMES: tuple[str, ...] = (
     "add_setup_checklist_item",
     "update_setup_checklist_item",
 )
+
+ORG_CONTEXT_COORDINATOR_METHOD_NAMES: tuple[str, ...] = (
+    DEFAULT_COORDINATOR_METHOD_NAMES
+    + (
+        "list_org_members",
+        "invite_org_member",
+    )
+)
+
+# Full primitive registry surface used by actor-routed coordinator primitives.
+COORDINATOR_TOOL_METHOD_NAMES: tuple[str, ...] = ORG_CONTEXT_COORDINATOR_METHOD_NAMES
 
 
 class CoordinatorTools:
@@ -1646,7 +1655,12 @@ class CoordinatorTools:
 
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the Coordinator-only tools for the slow-brain loop."""
-        return {name: getattr(self, name) for name in COORDINATOR_TOOL_METHOD_NAMES}
+        method_names = (
+            ORG_CONTEXT_COORDINATOR_METHOD_NAMES
+            if SESSION_DETAILS.org_id is not None
+            else DEFAULT_COORDINATOR_METHOD_NAMES
+        )
+        return {name: getattr(self, name) for name in method_names}
 
     def _org_member_is_reachable(self, member_user_id: str) -> bool | ToolError:
         """Return whether a user id belongs to this Coordinator's org roster."""

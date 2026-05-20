@@ -231,20 +231,18 @@ def build_brain_spec(
     )
     authorized_humans: list[dict] | None = None
     workspace_coordinator_name: str | None = None
-    if cm.initialized and SESSION_DETAILS.is_coordinator:
+    if cm.initialized:
         from unity.coordinator_manager.coordinator_manager import (
             CoordinatorOnboardingManager,
         )
 
-        authorized_humans = CoordinatorOnboardingManager().get_org_members()
-    elif cm.initialized:
-        from unity.coordinator_manager.coordinator_manager import (
-            CoordinatorOnboardingManager,
-        )
-
-        workspace_coordinator_name = (
-            CoordinatorOnboardingManager().get_workspace_coordinator_name()
-        )
+        coordinator_manager = CoordinatorOnboardingManager()
+        if SESSION_DETAILS.is_coordinator and SESSION_DETAILS.org_id is not None:
+            authorized_humans = coordinator_manager.get_org_members()
+        elif not SESSION_DETAILS.is_coordinator:
+            workspace_coordinator_name = (
+                coordinator_manager.get_workspace_coordinator_name()
+            )
 
     _active_contact_ms = _mark_step()
     # Prepend the assistant's job title / specialization (if set) to the bio
