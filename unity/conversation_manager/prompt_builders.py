@@ -385,7 +385,7 @@ def _build_comms_tool_listing(
     return "\n".join(lines)
 
 
-def _build_coordinator_workspace_tool_listing(*, is_org_coordinator: bool) -> str:
+def _build_coordinator_workspace_tool_listing(*, is_org_workspace: bool) -> str:
     """Build the Coordinator workspace tools block for the output format section."""
     lines = [
         "- `act` is the execution path for privileged Coordinator workspace lifecycle operations.",
@@ -393,7 +393,7 @@ def _build_coordinator_workspace_tool_listing(*, is_org_coordinator: bool) -> st
         "- Before running coordinator mutations inside `act`, gather identifiers and confirmation details in chat unless the request is already explicit and unambiguous.",
         "- Prefer one `act` request that executes the full confirmed setup step (and validates outcomes) over fragmented no-op turns.",
     ]
-    if is_org_coordinator:
+    if is_org_workspace:
         lines.append(
             "- `primitives.coordinator.list_org_members` and `primitives.coordinator.invite_org_member` are available for org membership changes; run invite actions only after explicit admin confirmation.",
         )
@@ -1081,7 +1081,6 @@ def build_system_prompt(
     is_coordinator: bool = False,
     authorized_humans: list[dict[str, Any]] | None = None,
     workspace_coordinator_name: str | None = None,
-    org_coordinator_name: str | None = None,
     is_org_workspace: bool = True,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
@@ -1133,8 +1132,6 @@ def build_system_prompt(
         Organization roster context for org-scoped Coordinator sessions.
     workspace_coordinator_name : str | None
         Name of the active workspace Coordinator for regular-assistant setup deferral.
-    org_coordinator_name : str | None
-        Backwards-compatible alias for ``workspace_coordinator_name``.
     is_org_workspace : bool
         Whether the active workspace is organization-scoped (vs personal).
 
@@ -1144,10 +1141,7 @@ def build_system_prompt(
         Structured prompt parts (call .to_list() for LLM, .flatten() for plain string).
     """
     # Build reusable blocks using internal helpers
-    if workspace_coordinator_name is None and org_coordinator_name is not None:
-        workspace_coordinator_name = org_coordinator_name
-
-    is_org_coordinator = is_coordinator and is_org_workspace
+    coordinator_has_org_context = is_coordinator and is_org_workspace
 
     boss_details = _build_boss_details_block(
         contact_id=contact_id,
@@ -1165,7 +1159,7 @@ def build_system_prompt(
             email_address=email_address,
             authorized_humans=authorized_humans,
         )
-        if is_org_coordinator
+        if coordinator_has_org_context
         else ""
     )
     voice_output_block = _build_voice_output_block(is_internal_call=is_internal_call)
@@ -1199,7 +1193,7 @@ def build_system_prompt(
     coordinator_knowledge_tool_listing = ""
     if is_coordinator and not demo_mode:
         coordinator_workspace_tool_listing = _build_coordinator_workspace_tool_listing(
-            is_org_coordinator=is_org_coordinator,
+            is_org_workspace=coordinator_has_org_context,
         )
         coordinator_knowledge_tool_listing = _build_coordinator_knowledge_tool_listing()
     action_steering_tool_listing = _build_action_steering_tool_listing()
@@ -1251,7 +1245,7 @@ def build_system_prompt(
             parts.add(coordinator_reference)
 
     # Boss details
-    if is_org_coordinator:
+    if coordinator_has_org_context:
         parts.add(
             _build_coordinator_authorized_humans_section(authorized_humans_details),
         )

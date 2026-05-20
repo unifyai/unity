@@ -574,16 +574,6 @@ def _get_assistant_email_role(message: EmailMessage) -> str | None:
     return None
 
 
-def _format_coordinator_datetime(value: Any) -> str:
-    """Return a stable ISO string for Coordinator state timestamps."""
-
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return str(value)
-
-
 class Renderer:
 
     def render_state(
@@ -606,7 +596,6 @@ class Renderer:
         google_meet_active: bool = False,
         teams_meet_active: bool = False,
         active_web_sessions: list | None = None,
-        coordinator_state: dict[str, Any] | None = None,
         coordinator_checklist: list[dict[str, Any]] | None = None,
         managers_initialized: bool = True,
         vm_ready: bool = True,
@@ -658,7 +647,6 @@ class Renderer:
         coordinator_render = ""
         if SESSION_DETAILS.is_coordinator:
             coordinator_render = self.render_coordinator_goal_state(
-                coordinator_state=coordinator_state,
                 coordinator_checklist=coordinator_checklist,
             )
         _web_sessions_ms = _mark_step()
@@ -751,41 +739,26 @@ class Renderer:
     @staticmethod
     def render_coordinator_goal_state(
         *,
-        coordinator_state: dict[str, Any] | None = None,
         coordinator_checklist: list[dict[str, Any]] | None = None,
     ) -> str:
         """Render the Coordinator's onboarding goal state for the slow brain."""
 
-        if not coordinator_state:
+        if not coordinator_checklist:
             return ""
 
-        lines = ["<coordinator_goal>"]
-        mode = coordinator_state.get("mode")
-        if mode:
-            lines.append(f"mode: {mode}")
-
-        started_at = _format_coordinator_datetime(coordinator_state.get("started_at"))
-        if started_at:
-            lines.append(f"started_at: {started_at}")
-
-        ready_at = _format_coordinator_datetime(coordinator_state.get("ready_at"))
-        if ready_at:
-            lines.append(f"ready_at: {ready_at}")
-
-        if coordinator_checklist:
-            lines.append("checklist:")
-            for item in coordinator_checklist:
-                item_id = item.get("item_id", "?")
-                title = item.get("title", "")
-                status = item.get("status", "pending")
-                kind = item.get("kind")
-                description = item.get("description")
-                line = f"- [{status}] #{item_id}: {title}"
-                if kind:
-                    line += f" ({kind})"
-                lines.append(line)
-                if description:
-                    lines.append(f"  {description}")
+        lines = ["<coordinator_goal>", "checklist:"]
+        for item in coordinator_checklist:
+            item_id = item.get("item_id", "?")
+            title = item.get("title", "")
+            status = item.get("status", "pending")
+            kind = item.get("kind")
+            description = item.get("description")
+            line = f"- [{status}] #{item_id}: {title}"
+            if kind:
+                line += f" ({kind})"
+            lines.append(line)
+            if description:
+                lines.append(f"  {description}")
 
         lines.append("</coordinator_goal>")
         return "\n".join(lines)

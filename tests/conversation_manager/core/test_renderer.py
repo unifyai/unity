@@ -240,12 +240,8 @@ class TestCoordinatorGoalRendering:
     def test_empty_state_renders_no_block(self, renderer):
         assert renderer.render_coordinator_goal_state() == ""
 
-    def test_state_and_checklist_render_goal_block(self, renderer):
+    def test_checklist_render_goal_block(self, renderer):
         rendered = renderer.render_coordinator_goal_state(
-            coordinator_state={
-                "mode": "active",
-                "started_at": datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc),
-            },
             coordinator_checklist=[
                 {
                     "item_id": 1,
@@ -258,7 +254,7 @@ class TestCoordinatorGoalRendering:
         )
 
         assert rendered.startswith("<coordinator_goal>")
-        assert "mode: active" in rendered
+        assert "checklist:" in rendered
         assert "- [pending] #1: Create support assistant (assistant)" in rendered
         assert "Owner approved support coverage." in rendered
         assert rendered.endswith("</coordinator_goal>")
@@ -268,8 +264,13 @@ class TestCoordinatorGoalRendering:
     def test_render_state_gates_goal_block_to_coordinators(self, renderer):
         snapshot = renderer.render_state(
             ContactIndex(),
-            coordinator_state={"mode": "active"},
-            coordinator_checklist=[],
+            coordinator_checklist=[
+                {
+                    "item_id": 1,
+                    "title": "Create support assistant",
+                    "status": "pending",
+                },
+            ],
         )
 
         assert "<coordinator_goal>" not in snapshot.full_render
@@ -277,8 +278,13 @@ class TestCoordinatorGoalRendering:
         SESSION_DETAILS.is_coordinator = True
         coordinator_snapshot = renderer.render_state(
             ContactIndex(),
-            coordinator_state={"mode": "active"},
-            coordinator_checklist=[],
+            coordinator_checklist=[
+                {
+                    "item_id": 1,
+                    "title": "Create support assistant",
+                    "status": "pending",
+                },
+            ],
         )
 
         assert "<coordinator_goal>" in coordinator_snapshot.full_render

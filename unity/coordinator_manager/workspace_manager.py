@@ -7,8 +7,7 @@ runtime, which guarantees consistent reachability checks and activity tracking.
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from unity.common.tool_outcome import ToolError
 from unity.conversation_manager.domains.coordinator_tools import (
@@ -522,41 +521,6 @@ class CoordinatorWorkspaceManager(metaclass=SingletonABCMeta):
             assistant_config=assistant_config,
             assistant_id=assistant_id,
             space_id=space_id,
-        )
-
-    def set_setup_state(
-        self,
-        *,
-        mode: Literal["active", "ready_to_go"],
-        ready_at: datetime | None = None,
-        chat_prompt: str | None = None,
-        chat_prompt_label: str | None = None,
-    ) -> dict[str, Any] | ToolError:
-        """Update the coordinator setup lifecycle state for the workspace.
-
-        Use this when onboarding progress changes between active setup work and
-        ready-to-go handoff. Optional chat prompt fields attach a suggested next
-        user action that can appear as a CTA in the setup experience.
-
-        Parameters
-        ----------
-        mode : Literal["active", "ready_to_go"]
-            Coordinator setup lifecycle mode to persist.
-        ready_at : datetime | None, optional
-            Optional explicit ready timestamp for handoff transitions.
-        chat_prompt : str | None, optional
-            Optional CTA prompt text for user follow-up guidance.
-        chat_prompt_label : str | None, optional
-            Optional CTA button label paired with ``chat_prompt``.
-        """
-        permission_error = self._require_coordinator_role()
-        if permission_error is not None:
-            return permission_error
-        return self._delegate.set_setup_state(
-            mode=mode,
-            ready_at=ready_at,
-            chat_prompt=chat_prompt,
-            chat_prompt_label=chat_prompt_label,
         )
 
     def add_setup_checklist_item(

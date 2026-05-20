@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
 
 import unify
@@ -154,7 +153,6 @@ DEFAULT_COORDINATOR_METHOD_NAMES: tuple[str, ...] = (
     "list_space_members",
     "list_spaces_for_assistant",
     "commission_colleague_into_workspace",
-    "set_setup_state",
     "add_setup_checklist_item",
     "update_setup_checklist_item",
 )
@@ -1347,36 +1345,6 @@ class CoordinatorTools:
             )
         except RequestError as exc:
             return _request_error_to_tool_error(exc)
-
-    def set_setup_state(
-        self,
-        *,
-        mode: Literal["active", "ready_to_go"],
-        ready_at: datetime | None = None,
-        chat_prompt: str | None = None,
-        chat_prompt_label: str | None = None,
-    ) -> dict[str, Any] | ToolError:
-        """Update the Coordinator setup lifecycle state.
-
-        Use this when onboarding progress changes between active setup work and
-        ready-to-go handoff. Optional chat prompt fields attach a suggested next
-        user action that can appear as a CTA in the setup experience.
-        """
-        try:
-            return CoordinatorOnboardingManager().set_state(
-                mode=mode,
-                ready_at=ready_at,
-                chat_prompt=chat_prompt,
-                chat_prompt_label=chat_prompt_label,
-            )
-        except RequestError as exc:
-            return _request_error_to_tool_error(exc)
-        except Exception as exc:
-            return {
-                "error_kind": "internal",
-                "message": "Failed to update coordinator setup state.",
-                "details": {"error": str(exc)},
-            }
 
     def add_setup_checklist_item(
         self,

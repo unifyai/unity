@@ -11,7 +11,6 @@ from unify.utils.http import RequestError
 from unity.common.context_registry import ContextRegistry
 from unity.coordinator_manager.coordinator_manager import (
     COORDINATOR_CHECKLIST_CONTEXT,
-    COORDINATOR_STATE_CONTEXT,
     CoordinatorOnboardingManager,
 )
 from unity.manager_registry import ManagerRegistry
@@ -42,23 +41,13 @@ class TestCoordinatorOnboardingManager:
             ),
         ):
             manager = CoordinatorOnboardingManager()
-            state_context = manager._get_state_context()
             checklist_context = manager._get_checklist_context()
-        state_root = state_context.removesuffix("/Coordinator/State")
-        checklist_root = checklist_context.removesuffix(
-            "/Coordinator/Checklist",
-        )
-        assert state_root == checklist_root
-        assert state_context.endswith("/Coordinator/State")
+        checklist_root = checklist_context.removesuffix("/Coordinator/Checklist")
         assert checklist_context.endswith("/Coordinator/Checklist")
         assert ContextRegistry.read_roots(
             CoordinatorOnboardingManager,
-            COORDINATOR_STATE_CONTEXT,
-        ) == [state_root]
-        assert ContextRegistry.read_roots(
-            CoordinatorOnboardingManager,
             COORDINATOR_CHECKLIST_CONTEXT,
-        ) == [state_root]
+        ) == [checklist_root]
 
     def test_direct_instantiation_registers_singleton_instance(self):
         with patch("unity.common.context_registry._create_context_with_retry"):
@@ -177,7 +166,7 @@ class TestCoordinatorOnboardingManager:
 
         assert list_members.call_count == 2
 
-    def test_org_coordinator_name_uses_org_wide_assistant_listing(self):
+    def test_workspace_coordinator_name_uses_user_assistant_listing(self):
         SESSION_DETAILS.org_id = 7
         SESSION_DETAILS.unify_key = "owner-key"
 
@@ -199,15 +188,12 @@ class TestCoordinatorOnboardingManager:
                 },
             ],
         ) as list_assistants:
-            assert manager.get_org_coordinator_name() == "Avery Coordinator"
-            assert manager.get_org_coordinator_name() == "Avery Coordinator"
+            assert manager.get_workspace_coordinator_name() == "Avery Coordinator"
+            assert manager.get_workspace_coordinator_name() == "Avery Coordinator"
 
-        list_assistants.assert_called_once_with(
-            list_all_org=True,
-            api_key="owner-key",
-        )
+        list_assistants.assert_called_once_with(api_key="owner-key")
 
-    def test_org_coordinator_name_returns_none_when_no_coordinator_exists(self):
+    def test_workspace_coordinator_name_returns_none_when_no_coordinator_exists(self):
         SESSION_DETAILS.org_id = 7
         SESSION_DETAILS.unify_key = "owner-key"
 
@@ -218,9 +204,9 @@ class TestCoordinatorOnboardingManager:
             "unity.coordinator_manager.coordinator_manager.unify.list_assistants",
             return_value=[{"first_name": "Patch", "surname": "One"}],
         ):
-            assert manager.get_org_coordinator_name() is None
+            assert manager.get_workspace_coordinator_name() is None
 
-    def test_org_coordinator_name_failures_do_not_poison_cache(self):
+    def test_workspace_coordinator_name_failures_do_not_poison_cache(self):
         SESSION_DETAILS.org_id = 7
         SESSION_DETAILS.unify_key = "owner-key"
 
@@ -243,12 +229,12 @@ class TestCoordinatorOnboardingManager:
                 ],
             ],
         ) as list_assistants:
-            assert manager.get_org_coordinator_name() is None
-            assert manager.get_org_coordinator_name() == "Avery Coordinator"
+            assert manager.get_workspace_coordinator_name() is None
+            assert manager.get_workspace_coordinator_name() == "Avery Coordinator"
 
         assert list_assistants.call_count == 2
 
-    def test_org_coordinator_name_cache_follows_session_identity(self):
+    def test_workspace_coordinator_name_cache_follows_api_key_identity(self):
         SESSION_DETAILS.org_id = 7
         SESSION_DETAILS.unify_key = "owner-key"
 
@@ -274,10 +260,11 @@ class TestCoordinatorOnboardingManager:
                 ],
             ],
         ) as list_assistants:
-            assert manager.get_org_coordinator_name() == "Avery Coordinator"
+            assert manager.get_workspace_coordinator_name() == "Avery Coordinator"
             SESSION_DETAILS.org_id = 8
+            assert manager.get_workspace_coordinator_name() == "Avery Coordinator"
             SESSION_DETAILS.unify_key = "admin-key"
-            assert manager.get_org_coordinator_name() == "Blair Coordinator"
+            assert manager.get_workspace_coordinator_name() == "Blair Coordinator"
 
         assert list_assistants.call_count == 2
 
@@ -299,7 +286,7 @@ class TestCoordinatorOnboardingManager:
                     },
                 ],
             ):
-                assert manager.get_org_coordinator_name() == "Avery Coordinator"
+                assert manager.get_workspace_coordinator_name() == "Avery Coordinator"
 
         create_context.assert_not_called()
 

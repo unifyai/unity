@@ -17,7 +17,6 @@ from unity.conversation_manager.domains.coordinator_tools import (
 from unity.session_details import SESSION_DETAILS
 
 _SETUP_WRAPPER_METHOD_BY_TOOL = {
-    "set_setup_state": "set_state",
     "add_setup_checklist_item": "add_checklist_item",
     "update_setup_checklist_item": "update_checklist_item",
 }
@@ -52,7 +51,6 @@ class TestCoordinatorTools:
             "list_space_members",
             "list_spaces_for_assistant",
             "commission_colleague_into_workspace",
-            "set_setup_state",
             "add_setup_checklist_item",
             "update_setup_checklist_item",
         }
@@ -60,10 +58,8 @@ class TestCoordinatorTools:
     def test_method_partitions_track_org_context_surface(self):
         assert "list_org_members" not in DEFAULT_COORDINATOR_METHOD_NAMES
         assert "invite_org_member" not in DEFAULT_COORDINATOR_METHOD_NAMES
-        assert "set_setup_state" in DEFAULT_COORDINATOR_METHOD_NAMES
         assert "list_org_members" in ORG_CONTEXT_COORDINATOR_METHOD_NAMES
         assert "invite_org_member" in ORG_CONTEXT_COORDINATOR_METHOD_NAMES
-        assert "set_setup_state" in ORG_CONTEXT_COORDINATOR_METHOD_NAMES
         assert set(DEFAULT_COORDINATOR_METHOD_NAMES).issubset(
             set(ORG_CONTEXT_COORDINATOR_METHOD_NAMES),
         )
@@ -76,7 +72,7 @@ class TestCoordinatorTools:
 
         assert "list_org_members" not in tools
         assert "invite_org_member" not in tools
-        assert "set_setup_state" in tools
+        assert "add_setup_checklist_item" in tools
 
     def test_list_assistants_uses_owner_key_and_current_sdk_shape(self, monkeypatch):
         calls = []
@@ -357,7 +353,6 @@ class TestCoordinatorTools:
     @pytest.mark.parametrize(
         ("tool_name", "tool_kwargs"),
         [
-            ("set_setup_state", {"mode": "active"}),
             ("add_setup_checklist_item", {"title": "Connect CRM", "status": "done"}),
             ("update_setup_checklist_item", {"item_id": 7, "status": "done"}),
         ],
@@ -388,11 +383,6 @@ class TestCoordinatorTools:
     @pytest.mark.parametrize(
         ("tool_name", "tool_kwargs", "expected_message"),
         [
-            (
-                "set_setup_state",
-                {"mode": "active"},
-                "Failed to update coordinator setup state.",
-            ),
             (
                 "add_setup_checklist_item",
                 {"title": "Connect CRM", "status": "done"},

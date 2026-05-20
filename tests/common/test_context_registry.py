@@ -211,10 +211,6 @@ def test_coordinator_contexts_do_not_fan_out_to_spaces():
     ):
         assert ContextRegistry.read_roots(
             CoordinatorOnboardingManager,
-            "Coordinator/State",
-        ) == ["user123/42"]
-        assert ContextRegistry.read_roots(
-            CoordinatorOnboardingManager,
             "Coordinator/Checklist",
         ) == ["user123/42"]
 

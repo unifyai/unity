@@ -1,4 +1,4 @@
-"""State manager for the Coordinator's onboarding checklist."""
+"""Checklist manager for Coordinator onboarding metadata."""
 
 from __future__ import annotations
 
@@ -21,18 +21,8 @@ from unity.coordinator_manager.activity import publish_coordinator_activity
 from unity.manager_registry import SingletonABCMeta
 from unity.session_details import SESSION_DETAILS
 
-COORDINATOR_STATE_CONTEXT = "Coordinator/State"
 COORDINATOR_CHECKLIST_CONTEXT = "Coordinator/Checklist"
-COORDINATOR_STATE_MODES = {"active", "ready_to_go"}
 COORDINATOR_CHECKLIST_STATUSES = {"pending", "done", "skipped"}
-
-
-class CoordinatorState(BaseModel):
-    """Single-row state for the Coordinator's onboarding mode."""
-
-    mode: Literal["active", "ready_to_go"] = "active"
-    started_at: datetime
-    ready_at: datetime | None = None
 
 
 class CoordinatorChecklistItem(BaseModel):
@@ -48,15 +38,10 @@ class CoordinatorChecklistItem(BaseModel):
 
 
 class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta):
-    """Manage the Coordinator's private setup state and checklist."""
+    """Manage the Coordinator's private setup checklist and workspace lookups."""
 
     class Config:
         required_contexts = [
-            TableContext(
-                name=COORDINATOR_STATE_CONTEXT,
-                description="Single-row Coordinator onboarding state.",
-                fields=model_to_fields(CoordinatorState),
-            ),
             TableContext(
                 name=COORDINATOR_CHECKLIST_CONTEXT,
                 description="Coordinator-owned setup checklist items.",
@@ -70,23 +55,11 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
         """Initialize local caches for Coordinator setup metadata."""
 
         super().__init__()
-        self._state_context: str | None = None
         self._checklist_context: str | None = None
         self._org_members_cache_key: tuple[int | None, str] | object = _CACHE_EMPTY
         self._org_members_cache: list[dict[str, Any]] | object = _CACHE_EMPTY
-        self._org_coordinator_name_cache_key: tuple[int | None, str] | object = (
-            _CACHE_EMPTY
-        )
-        self._org_coordinator_name_cache: str | None | object = _CACHE_EMPTY
-
-    def get_state(self) -> dict[str, Any] | None:
-        """Return the current Coordinator state row, if one exists."""
-
-        rows = unify.get_logs(context=self._get_state_context(), limit=1)
-        if not rows:
-            return None
-
-        return dict(rows[0].entries or {})
+        self._workspace_coordinator_name_cache_key: str | None | object = _CACHE_EMPTY
+        self._workspace_coordinator_name_cache: str | None | object = _CACHE_EMPTY
 
     def get_checklist(self) -> list[dict[str, Any]]:
         """Return Coordinator checklist rows ordered by item id."""
@@ -101,7 +74,7 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
     def get_org_members(self) -> list[dict[str, Any]]:
         """Return authorized humans in the Coordinator's organization."""
 
-        cache_key = _org_cache_key()
+        cache_key = _org_members_cache_key()
         if (
             self._org_members_cache_key == cache_key
             and self._org_members_cache is not _CACHE_EMPTY
@@ -127,21 +100,15 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
     def get_workspace_coordinator_name(self) -> str | None:
         """Return the display name for the active workspace Coordinator."""
 
-        cache_key = _org_cache_key()
+        cache_key = _workspace_coordinator_cache_key()
         if (
-            self._org_coordinator_name_cache_key == cache_key
-            and self._org_coordinator_name_cache is not _CACHE_EMPTY
+            self._workspace_coordinator_name_cache_key == cache_key
+            and self._workspace_coordinator_name_cache is not _CACHE_EMPTY
         ):
-            return self._org_coordinator_name_cache  # type: ignore[return-value]
+            return self._workspace_coordinator_name_cache  # type: ignore[return-value]
 
         try:
-            if SESSION_DETAILS.org_id is None:
-                assistants = unify.list_assistants(api_key=SESSION_DETAILS.unify_key)
-            else:
-                assistants = unify.list_assistants(
-                    list_all_org=True,
-                    api_key=SESSION_DETAILS.unify_key,
-                )
+            assistants = unify.list_assistants(api_key=SESSION_DETAILS.unify_key)
         except RequestError:
             return None
 
@@ -153,88 +120,9 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             ),
             None,
         )
-        self._org_coordinator_name_cache_key = cache_key
-        self._org_coordinator_name_cache = coordinator_name
+        self._workspace_coordinator_name_cache_key = cache_key
+        self._workspace_coordinator_name_cache = coordinator_name
         return coordinator_name
-
-    def get_org_coordinator_name(self) -> str | None:
-        """Backwards-compatible alias for workspace coordinator lookup."""
-
-        return self.get_workspace_coordinator_name()
-
-    def set_state(
-        self,
-        *,
-        mode: Literal["active", "ready_to_go"],
-        ready_at: datetime | None = None,
-        chat_prompt: str | None = None,
-        chat_prompt_label: str | None = None,
-    ) -> ToolOutcome | ToolError:
-        """Create or update the Coordinator state row and optional handoff CTA."""
-
-        if mode not in COORDINATOR_STATE_MODES:
-            return _tool_error(
-                "invalid_argument",
-                "Coordinator state mode must be 'active' or 'ready_to_go'.",
-                {"mode": mode},
-            )
-
-        now = _utc_now()
-        current = self.get_state()
-        if current is not None and current.get("mode") == mode and ready_at is None:
-            return {"outcome": "coordinator state unchanged", "details": {"mode": mode}}
-
-        next_ready_at = ready_at
-        if mode == "ready_to_go" and next_ready_at is None:
-            next_ready_at = now
-        should_emit_ready = mode == "ready_to_go" and (
-            current is None or current.get("mode") != "ready_to_go"
-        )
-
-        if current is None:
-            unity_log(
-                context=self._get_state_context(),
-                mode=mode,
-                started_at=_log_datetime(now),
-                ready_at=_log_datetime(next_ready_at),
-                new=True,
-                mutable=True,
-                add_to_all_context=False,
-            )
-        else:
-            ids = unify.get_logs(
-                context=self._get_state_context(),
-                limit=1,
-                return_ids_only=True,
-            )
-            if not ids:
-                return _tool_error(
-                    "not_found",
-                    "Coordinator state row disappeared before it could be updated.",
-                    {},
-                )
-            updates: dict[str, Any] = {
-                "mode": mode,
-                "ready_at": _log_datetime(next_ready_at),
-            }
-            unify.update_logs(
-                logs=[ids[0]],
-                context=self._get_state_context(),
-                entries=updates,
-                overwrite=True,
-            )
-
-        if should_emit_ready:
-            publish_coordinator_activity(
-                phase="completed",
-                stage="handoff",
-                title="Setup is ready to go",
-                surfaces=["colleagues", "workspaces", "tasks", "credentials"],
-                summary="The setup plan is ready for the user to review and keep tuning.",
-                chat_prompt=chat_prompt,
-                chat_prompt_label=chat_prompt_label,
-            )
-        return {"outcome": "coordinator state updated", "details": {"mode": mode}}
 
     def add_checklist_item(
         self,
@@ -406,14 +294,6 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
             )
         return ids
 
-    def _get_state_context(self) -> str:
-        if self._state_context is None:
-            self._state_context = ContextRegistry.get_context(
-                self,
-                COORDINATOR_STATE_CONTEXT,
-            )
-        return self._state_context
-
     def _get_checklist_context(self) -> str:
         if self._checklist_context is None:
             self._checklist_context = ContextRegistry.get_context(
@@ -426,8 +306,12 @@ class CoordinatorOnboardingManager(BaseStateManager, metaclass=SingletonABCMeta)
 _CACHE_EMPTY = object()
 
 
-def _org_cache_key() -> tuple[int | None, str]:
+def _org_members_cache_key() -> tuple[int | None, str]:
     return SESSION_DETAILS.org_id, SESSION_DETAILS.unify_key
+
+
+def _workspace_coordinator_cache_key() -> str | None:
+    return SESSION_DETAILS.unify_key
 
 
 def _assistant_display_name(assistant: dict[str, Any]) -> str | None:

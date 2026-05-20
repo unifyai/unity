@@ -153,7 +153,7 @@ class TestCoordinatorPrompt:
         assert "invite_org_member" not in prompt
 
     def test_regular_assistant_gets_updated_coordinator_reference_block(self):
-        prompt = _build(org_coordinator_name="Avery Coordinator")
+        prompt = _build(workspace_coordinator_name="Avery Coordinator")
 
         assert "Team Coordinator" in prompt
         assert "Escalate to Avery Coordinator" in prompt
@@ -164,10 +164,10 @@ class TestCoordinatorPrompt:
         assert "I cannot forward it automatically" not in prompt
 
     def test_coordinator_reference_block_is_absent_without_name_or_on_coordinator(self):
-        personal_prompt = _build(org_coordinator_name=None)
+        personal_prompt = _build(workspace_coordinator_name=None)
         coordinator_prompt = _build(
             is_coordinator=True,
-            org_coordinator_name="Avery Coordinator",
+            workspace_coordinator_name="Avery Coordinator",
         )
 
         assert "Team Coordinator" not in personal_prompt
@@ -184,8 +184,6 @@ class TestCoordinatorPrompt:
             "Coordinator conversational cadence",
             "Coordinator parallel tool discipline",
             "Unify system literacy",
-            "Coordinator/State",
-            "set_setup_state",
         ):
             assert marker not in prompt
         assert "Conversational restraint" in prompt
@@ -225,7 +223,7 @@ class TestPromptSectionOwnershipMatrix:
             },
             {
                 "name": "regular_non_demo_with_org",
-                "kwargs": {"org_coordinator_name": "Avery Coordinator"},
+                "kwargs": {"workspace_coordinator_name": "Avery Coordinator"},
                 "present": (
                     "Act capabilities\n----------------",
                     "Concurrent action and acknowledgment\n------------------------------------",
@@ -253,7 +251,7 @@ class TestPromptSectionOwnershipMatrix:
                 "name": "regular_demo_with_org",
                 "kwargs": {
                     "demo_mode": True,
-                    "org_coordinator_name": "Avery Coordinator",
+                    "workspace_coordinator_name": "Avery Coordinator",
                 },
                 "present": (
                     "Demo mode\n---------",
@@ -270,7 +268,7 @@ class TestPromptSectionOwnershipMatrix:
                 "name": "coordinator_non_demo_with_org",
                 "kwargs": {
                     "is_coordinator": True,
-                    "org_coordinator_name": "Avery Coordinator",
+                    "workspace_coordinator_name": "Avery Coordinator",
                 },
                 "present": (
                     "**Coordinator workspace tools:**",
@@ -288,7 +286,7 @@ class TestPromptSectionOwnershipMatrix:
                 "kwargs": {
                     "is_coordinator": True,
                     "demo_mode": True,
-                    "org_coordinator_name": "Avery Coordinator",
+                    "workspace_coordinator_name": "Avery Coordinator",
                 },
                 "present": (
                     "Authorized humans\n-----------------",
@@ -481,7 +479,7 @@ class TestExternalAppIntegration:
         assert "Can you help me manage my apps and online services?" in prompt
 
     def test_org_assistant_onboarding_allows_direct_setup_with_shared_handoff(self):
-        prompt = _build(org_coordinator_name="Avery Coordinator")
+        prompt = _build(workspace_coordinator_name="Avery Coordinator")
 
         assert "I can walk through app setup and day-to-day usage directly" in prompt
         assert (

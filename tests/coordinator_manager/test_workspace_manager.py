@@ -70,7 +70,6 @@ def test_workspace_manager_inherits_rich_delegate_docstrings():
         "create_space",
         "add_space_member",
         "commission_colleague_into_workspace",
-        "set_setup_state",
         "add_setup_checklist_item",
         "update_setup_checklist_item",
     )

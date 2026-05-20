@@ -62,6 +62,7 @@ _COORDINATOR_PRIMITIVE_PATTERN = re.compile(r"primitives\.coordinator\.([a-z_]+)
 def test_eval_coordinator_tool_surface_matches_runtime() -> None:
     """Keep eval coordinator primitive expectations in runtime lockstep."""
     expected = set(_COORDINATOR_TOOLS)
+    assert "set_setup_state" not in expected
     assert expected == set(CoordinatorWorkspaceManager._PRIMITIVE_METHODS)
     assert expected == set(
         get_registry().primitive_methods(manager_alias="coordinator"),
@@ -171,7 +172,7 @@ class CoordinatorScenario:
     masked_components: tuple[str, ...] = ()
     screen_context: str | None = None
     is_coordinator: bool = True
-    org_coordinator_name: str | None = None
+    workspace_coordinator_name: str | None = None
     mode: Mode = Mode.TEXT
     forbidden_tools: frozenset[str] = field(default_factory=frozenset)
     required_tools: frozenset[str] = field(default_factory=frozenset)
@@ -573,18 +574,6 @@ class _RecordingTools:
                 "assistant_id": resolved_assistant_id,
             },
         }
-
-    def set_setup_state(
-        self,
-        *,
-        mode: str,
-        ready_at: str | None = None,
-        chat_prompt: str | None = None,
-        chat_prompt_label: str | None = None,
-    ) -> dict[str, Any]:
-        """Update Coordinator onboarding state after confirmed setup progress."""
-
-        return {"outcome": "coordinator state updated", "details": {"mode": mode}}
 
     def add_setup_checklist_item(
         self,
@@ -1540,7 +1529,7 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
             "No automatic cross-chat relay channel is provided.",
         ),
         is_coordinator=False,
-        org_coordinator_name="Avery Coordinator",
+        workspace_coordinator_name="Avery Coordinator",
         rubric=(
             "The response should explicitly name Avery Coordinator for team-shaping "
             "work, avoid implying act can bypass Coordinator boundaries, and offer "
@@ -1655,8 +1644,8 @@ def _build_brain_spec(scenario: CoordinatorScenario):
         ),
         patch(
             "unity.coordinator_manager.coordinator_manager."
-            "CoordinatorOnboardingManager.get_org_coordinator_name",
-            return_value=scenario.org_coordinator_name,
+            "CoordinatorOnboardingManager.get_workspace_coordinator_name",
+            return_value=scenario.workspace_coordinator_name,
         ),
     ):
         return build_brain_spec(cm, snapshot_state=snapshot_state)
