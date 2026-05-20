@@ -112,144 +112,56 @@ class TestAccessibleSpacesBlock:
 
 
 class TestCoordinatorPrompt:
-    """Coordinator sessions get privileged onboarding guidance."""
+    """Coordinator sessions use a unified base prompt plus org-context surfaces."""
 
-    def test_coordinator_persona_lists_workspace_tools(self):
+    def test_org_coordinator_prompt_lists_org_roster_and_workspace_tools(self):
         prompt = _build(
             is_coordinator=True,
             authorized_humans=[
-                {"first_name": "Dana", "surname": "Owner", "email": "dana@acme.com"},
+                {
+                    "first_name": "Dana",
+                    "surname": "Owner",
+                    "email": "dana@acme.com",
+                    "is_admin": True,
+                },
+                {
+                    "first_name": "Francis",
+                    "surname": "Lead",
+                    "email": "francis@acme.com",
+                    "is_admin": False,
+                },
             ],
         )
 
-        assert "I am the Coordinator" in prompt
         assert "Authorized humans" in prompt
-        assert "Dana Owner" in prompt
-        assert "Coordinator workspace tools" in prompt
-        assert "Coordinator tool routing (quick guide)" in prompt
-        assert "setup and orchestration teammate" in prompt
-        assert "Coordinator mission" in prompt
-        assert "I do not personally own recurring day-to-day execution" in prompt
-        assert "Coordinator workspace ontology" in prompt
-        assert "`primitives.coordinator.*`" in prompt
-        assert "all privileged Coordinator workspace lifecycle operations" in prompt
-
-    def test_coordinator_authorized_humans_fallback_uses_roster_shape(self):
-        prompt = _build(is_coordinator=True)
-
-        assert "Authorized humans" in prompt
-        assert "- Alice Smith; email:" not in prompt
-        assert "- Alice Smith; contact_id: 1" in prompt
-        assert "Contact ID: 1" not in prompt
-
-    def test_regular_assistant_does_not_get_coordinator_persona(self):
-        prompt = _build()
-
-        assert "I am the Coordinator" not in prompt
-        assert "Coordinator workspace tools" not in prompt
-        assert "`create_assistant`" not in prompt
-        assert "`chat_prompt` and `chat_prompt_label`" not in prompt
-
-    def test_coordinator_persona_carries_product_literacy_and_boundaries(self):
-        prompt = _build(is_coordinator=True)
-
-        assert "Unify system literacy" in prompt
-        assert "Context map" in prompt
-        assert "Tasks/Activations" in prompt
-        assert "Tasks/Runs" in prompt
-        assert "Knowledge" in prompt
-        assert "Guidance" in prompt
-        assert "Spaces/<space_id>/..." in prompt
-        assert "Coordinator/State" in prompt
-        assert "Console map" in prompt
-        assert "Secrets is where credentials and secret values belong" in prompt
-        assert "Integration walkthrough Q&A" in prompt
-        assert "I never read or accept secret values in chat or voice" in prompt
-        assert "I do not handle OAuth consent screens on the user's behalf" in prompt
-        assert "pre_seed_colleague" in prompt
-        assert "one colleague root only" in prompt
-        assert 'destination="space:<id>"' in prompt
-        assert "primitives.coordinator.*" in prompt
+        assert "Dana Owner; email: dana@acme.com; role: admin" in prompt
+        assert "Francis Lead; email: francis@acme.com; role: member" in prompt
+        assert "**Coordinator workspace tools:**" in prompt
         assert (
-            "assistant/space/membership/checklist/state operations run through `act`"
+            "`primitives.coordinator.list_org_members` and "
+            "`primitives.coordinator.invite_org_member` are available for org membership changes"
             in prompt
         )
-        assert "cannot upload local custom media for colleague profiles" in prompt
-        assert "fine-grained per-user permissions" in prompt
+        assert "Team Coordinator\n----------------" not in prompt
 
-        assert "per-body authoring" not in prompt
-        assert "I will pull" not in prompt
-        assert "I'll pull" not in prompt
-        assert "I will sync" not in prompt
-        assert "I'll sync" not in prompt
-        assert "I will watch" not in prompt
-        assert "I'll watch" not in prompt
-        assert "I will poll" not in prompt
-        assert "I'll poll" not in prompt
-        assert "no manual setup needed" not in prompt
-        assert "access tokens with me" not in prompt
-        assert "⋮ → Secrets" not in prompt
+    def test_personal_coordinator_uses_boss_details_and_hides_org_tools(self):
+        prompt = _build(is_coordinator=True, is_org_workspace=False)
 
-    def test_coordinator_prompt_carries_requirements_discovery_workflow(self):
-        prompt = _build(is_coordinator=True)
+        assert "Boss details" in prompt
+        assert "Authorized humans" not in prompt
+        assert "list_org_members" not in prompt
+        assert "invite_org_member" not in prompt
 
-        assert "Requirements discovery workflow" in prompt
-        assert "company, its operating model" in prompt
-        assert "workflows that hurt" in prompt
-        assert "tools people use daily" in prompt
-        assert "who owns each handoff" in prompt
-        assert "success criteria" in prompt
-        assert "first validation" in prompt
-        assert "Requirements brief" in prompt
-        assert "Proposed setup" in prompt
-        assert "one high-leverage question at a time" in prompt
-        assert "do not turn discovery into a generic intake form" in prompt
-        assert "I am an onboarder, not an interrogator" in prompt
-        assert "whether the user wants to continue with the next integration" in prompt
-        assert "When enough is known, I stop asking" in prompt
-        assert "discovery -> team/workspace setup -> integrations" in prompt
-        assert "guide, not a rigid sequence" in prompt
-
-    def test_coordinator_prompt_guides_dynamic_checklist_lifecycle(self):
-        prompt = _build(is_coordinator=True)
-
-        assert "Coordinator checklist and state usage" in prompt
-        assert "default status is `pending`" in prompt
-        assert 'add_setup_checklist_item(status="done")' in prompt
-        assert "run the checklist mutation tool calls in that same turn" in prompt
-        assert "mark the completed checklist item `done`" in prompt
-        assert "update stale checklist items before moving forward" in prompt
-
-    def test_coordinator_prompt_fingerholds_integration_secret_setup(self):
-        prompt = _build(is_coordinator=True)
-
-        assert (
-            "Can you set up an integration yourself, or does it always belong to a colleague?"
-            in prompt
-        )
-        assert "I offer two safe paths" in prompt
-        assert "guide one step at a time" in prompt
-        assert "I can guide their current screen" in prompt
-        assert "one-owner workflow -> owning colleague's Secrets" in prompt
-        assert "shared team workflow -> shared-space Secrets" in prompt
-        assert "If multiple colleagues need the same credential" in prompt
-        assert "Long-lived keys are saved in Secrets" in prompt
-        assert "never ask for secret values in chat" in prompt
-        assert "Run one read-only validation" in prompt
-        assert "unresolved threshold/freshness/owner detail" in prompt
-
-    def test_regular_org_assistant_gets_coordinator_reference_block(self):
+    def test_regular_assistant_gets_updated_coordinator_reference_block(self):
         prompt = _build(org_coordinator_name="Avery Coordinator")
 
         assert "Team Coordinator" in prompt
-        assert "Avery Coordinator" in prompt
-        assert "your Coordinator" in prompt
-        assert "creating or removing colleagues" in prompt
-        assert "creating or removing team spaces" in prompt
-        assert "adding or removing space members" in prompt
-        assert "I cannot forward it automatically" in prompt
-        assert "you'll need to bring it to your Coordinator from the sidebar" in prompt
-        assert "`create_assistant`" not in prompt
+        assert "Escalate to Avery Coordinator" in prompt
+        assert "create or remove colleagues" in prompt
+        assert "create or remove team spaces" in prompt
+        assert "add or remove space members" in prompt
+        assert "invite org members" in prompt
+        assert "I cannot forward it automatically" not in prompt
 
     def test_coordinator_reference_block_is_absent_without_name_or_on_coordinator(self):
         personal_prompt = _build(org_coordinator_name=None)
@@ -259,56 +171,37 @@ class TestCoordinatorPrompt:
         )
 
         assert "Team Coordinator" not in personal_prompt
-        assert "I cannot forward it automatically" not in personal_prompt
         assert "Team Coordinator" not in coordinator_prompt
-        assert "I cannot forward it automatically" not in coordinator_prompt
 
-    def test_base_and_coordinator_keep_distinct_literacy_sections(self):
-        base_prompt = _build()
-        coordinator_prompt = _build(is_coordinator=True)
-
-        assert "Console knowledge" in base_prompt
-        assert "Unify system literacy" not in base_prompt
-        assert "Unify system literacy" in coordinator_prompt
-        assert "Console knowledge" not in coordinator_prompt
-
-    def test_concurrency_guidance_is_split_by_role(self):
-        base_prompt = _build()
-        coordinator_prompt = _build(is_coordinator=True)
-
-        assert "Concurrent action and acknowledgment" in base_prompt
-        assert "Coordinator parallel tool discipline" not in base_prompt
-
-        assert "Coordinator parallel tool discipline" in coordinator_prompt
-        assert "Concurrent action and acknowledgment" not in coordinator_prompt
-        assert "Dependent calls must be staged" in coordinator_prompt
-        assert "`primitives.coordinator.*`" in coordinator_prompt
-        assert "coordinator lifecycle mutations via `act`" in coordinator_prompt
-        assert "not only an acknowledgment" in coordinator_prompt
-        assert "do not end a successful mutation turn silently" in coordinator_prompt
-        assert "run confirmed lifecycle work through `act`" in coordinator_prompt
-        assert "pair the fast-path call with `act(persist=True)`" in coordinator_prompt
-
-    def test_coordinator_ontology_defines_colleague_and_space_terms(self):
+    def test_coordinator_prompt_removes_legacy_setup_sections(self):
         prompt = _build(is_coordinator=True)
 
-        assert "Coordinator workspace ontology" in prompt
-        assert "**Colleague**" in prompt
-        assert "**Personal scope**" in prompt
-        assert "**Space / workspace**" in prompt
-        assert "If one colleague owns the workflow" in prompt
-        assert "If several colleagues need the same setup" in prompt
-
-    def test_coordinator_parallel_discipline_appears_with_tool_listing(self):
-        prompt = _build(is_coordinator=True)
-
-        assert "Coordinator parallel tool discipline" in prompt
-        assert prompt.index("**Action steering tools**") < prompt.index(
+        for marker in (
+            "Coordinator workspace ontology",
+            "Requirements discovery workflow",
+            "Coordinator checklist and state usage",
+            "Coordinator disposition",
+            "Coordinator conversational cadence",
             "Coordinator parallel tool discipline",
-        )
-        assert prompt.index("Coordinator parallel tool discipline") < prompt.index(
-            "Action steering guidelines",
-        )
+            "Unify system literacy",
+            "Coordinator/State",
+            "set_setup_state",
+        ):
+            assert marker not in prompt
+        assert "Conversational restraint" in prompt
+        assert "Intent vs verified outcomes" in prompt
+        assert "Parallel tool discipline" in prompt
+
+    def test_base_and_coordinator_share_restraint_but_keep_role_specific_sections(self):
+        base_prompt = _build()
+        coordinator_prompt = _build(is_coordinator=True)
+
+        assert "Intent vs verified outcomes" in base_prompt
+        assert "Intent vs verified outcomes" in coordinator_prompt
+        assert "Console knowledge" in base_prompt
+        assert "Console knowledge" not in coordinator_prompt
+        assert "Concurrent action and acknowledgment" in base_prompt
+        assert "Concurrent action and acknowledgment" not in coordinator_prompt
 
 
 class TestPromptSectionOwnershipMatrix:
@@ -324,12 +217,10 @@ class TestPromptSectionOwnershipMatrix:
                     "Concurrent action and acknowledgment\n------------------------------------",
                 ),
                 "absent": (
-                    "I am the Coordinator",
                     "**Coordinator workspace tools:**",
                     "Authorized humans\n-----------------",
                     "Team Coordinator\n----------------",
                     "Demo mode\n---------",
-                    "Coordinator parallel tool discipline\n----------------------------------",
                 ),
             },
             {
@@ -341,11 +232,9 @@ class TestPromptSectionOwnershipMatrix:
                     "Team Coordinator\n----------------",
                 ),
                 "absent": (
-                    "I am the Coordinator",
                     "**Coordinator workspace tools:**",
                     "Authorized humans\n-----------------",
                     "Demo mode\n---------",
-                    "Coordinator parallel tool discipline\n----------------------------------",
                 ),
             },
             {
@@ -353,12 +242,10 @@ class TestPromptSectionOwnershipMatrix:
                 "kwargs": {"demo_mode": True},
                 "present": ("Demo mode\n---------",),
                 "absent": (
-                    "I am the Coordinator",
                     "**Coordinator workspace tools:**",
                     "Authorized humans\n-----------------",
                     "Act capabilities\n----------------",
                     "Team Coordinator\n----------------",
-                    "Coordinator parallel tool discipline\n----------------------------------",
                     "Concurrent action and acknowledgment\n------------------------------------",
                 ),
             },
@@ -373,11 +260,9 @@ class TestPromptSectionOwnershipMatrix:
                     "Team Coordinator\n----------------",
                 ),
                 "absent": (
-                    "I am the Coordinator",
                     "**Coordinator workspace tools:**",
                     "Authorized humans\n-----------------",
                     "Act capabilities\n----------------",
-                    "Coordinator parallel tool discipline\n----------------------------------",
                     "Concurrent action and acknowledgment\n------------------------------------",
                 ),
             },
@@ -388,11 +273,9 @@ class TestPromptSectionOwnershipMatrix:
                     "org_coordinator_name": "Avery Coordinator",
                 },
                 "present": (
-                    "I am the Coordinator",
                     "**Coordinator workspace tools:**",
                     "Authorized humans\n-----------------",
                     "Act capabilities\n----------------",
-                    "Coordinator parallel tool discipline\n----------------------------------",
                 ),
                 "absent": (
                     "Team Coordinator\n----------------",
@@ -408,16 +291,31 @@ class TestPromptSectionOwnershipMatrix:
                     "org_coordinator_name": "Avery Coordinator",
                 },
                 "present": (
-                    "I am the Coordinator",
-                    "**Coordinator workspace tools:**",
                     "Authorized humans\n-----------------",
                     "Demo mode\n---------",
                 ),
                 "absent": (
+                    "**Coordinator workspace tools:**",
                     "Team Coordinator\n----------------",
                     "Act capabilities\n----------------",
-                    "Coordinator parallel tool discipline\n----------------------------------",
                     "Concurrent action and acknowledgment\n------------------------------------",
+                ),
+            },
+            {
+                "name": "coordinator_non_demo_personal_workspace",
+                "kwargs": {
+                    "is_coordinator": True,
+                    "is_org_workspace": False,
+                },
+                "present": (
+                    "**Coordinator workspace tools:**",
+                    "Boss details\n------------",
+                ),
+                "absent": (
+                    "Authorized humans\n-----------------",
+                    "Team Coordinator\n----------------",
+                    "list_org_members",
+                    "invite_org_member",
                 ),
             },
         )
@@ -435,7 +333,7 @@ class TestPromptSectionOwnershipMatrix:
 
 
 class TestCoordinatorVoicePrompt:
-    """Coordinator voice calls get compact role guidance, not slow-brain literacy."""
+    """Coordinator voice calls rely on shared bio and base voice scaffolding."""
 
     def test_regular_voice_prompt_unchanged_when_flag_is_false(self):
         omitted = _build_voice()
@@ -444,19 +342,12 @@ class TestCoordinatorVoicePrompt:
         assert omitted == explicit_false
         assert "Coordinator voice role" not in omitted
 
-    def test_coordinator_voice_prompt_adds_compact_role_section_after_bio(self):
+    def test_coordinator_voice_prompt_does_not_add_extra_role_block_after_bio(self):
         prompt = _build_voice(is_coordinator=True)
 
         assert "Bio\n---\nI help Acme configure its Unify team." in prompt
-        assert "Coordinator voice role" in prompt
-        assert "this organization's Coordinator" in prompt
-        assert "assistant workforce" in prompt
-        assert "colleague should own a workflow" in prompt
-        assert "I do not personally run colleagues' recurring day-to-day work" in prompt
-        assert "Console Secrets" in prompt
-        assert "screen share" in prompt
-        assert prompt.index("Bio\n---") < prompt.index("Coordinator voice role")
-        assert prompt.index("Coordinator voice role") < prompt.index("Brevity\n-------")
+        assert "Coordinator voice role" not in prompt
+        assert prompt.index("Bio\n---") < prompt.index("Brevity\n-------")
 
     def test_coordinator_voice_prompt_excludes_slow_brain_literacy(self):
         prompt = _build_voice(is_coordinator=True)
@@ -589,15 +480,16 @@ class TestExternalAppIntegration:
         prompt = _build(demo_mode=True)
         assert "Can you help me manage my apps and online services?" in prompt
 
-    def test_org_assistant_onboarding_routes_integration_setup_to_coordinator(self):
+    def test_org_assistant_onboarding_allows_direct_setup_with_shared_handoff(self):
         prompt = _build(org_coordinator_name="Avery Coordinator")
 
-        assert "already connected to my work" in prompt
-        assert "Avery Coordinator owns that setup" in prompt
-        assert "route setup decisions to Avery Coordinator" in prompt
-        assert "I cannot forward it automatically" in prompt
-        assert "no manual setup needed" not in prompt
-        assert "access tokens with me" not in prompt
+        assert "I can walk through app setup and day-to-day usage directly" in prompt
+        assert (
+            "If a credential needs to be shared across the team or org, I can route "
+            "that handoff to Avery Coordinator."
+        ) in prompt
+        assert "Avery Coordinator owns that setup" not in prompt
+        assert "I cannot forward it automatically" not in prompt
 
     def test_act_capabilities_absent_in_demo_mode(self):
         prompt = _build(demo_mode=True)

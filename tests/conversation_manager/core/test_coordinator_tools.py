@@ -7,6 +7,9 @@ import requests
 from unify.utils.http import RequestError
 
 from unity.conversation_manager.domains.coordinator_tools import (
+    COORDINATOR_TOOL_METHOD_NAMES,
+    DEFAULT_COORDINATOR_METHOD_NAMES,
+    ORG_CONTEXT_COORDINATOR_METHOD_NAMES,
     CoordinatorPreseedWrite,
     CoordinatorTools,
     _preseed_write_payload,
@@ -53,6 +56,27 @@ class TestCoordinatorTools:
             "add_setup_checklist_item",
             "update_setup_checklist_item",
         }
+
+    def test_method_partitions_track_org_context_surface(self):
+        assert "list_org_members" not in DEFAULT_COORDINATOR_METHOD_NAMES
+        assert "invite_org_member" not in DEFAULT_COORDINATOR_METHOD_NAMES
+        assert "set_setup_state" in DEFAULT_COORDINATOR_METHOD_NAMES
+        assert "list_org_members" in ORG_CONTEXT_COORDINATOR_METHOD_NAMES
+        assert "invite_org_member" in ORG_CONTEXT_COORDINATOR_METHOD_NAMES
+        assert "set_setup_state" in ORG_CONTEXT_COORDINATOR_METHOD_NAMES
+        assert set(DEFAULT_COORDINATOR_METHOD_NAMES).issubset(
+            set(ORG_CONTEXT_COORDINATOR_METHOD_NAMES),
+        )
+        assert COORDINATOR_TOOL_METHOD_NAMES == ORG_CONTEXT_COORDINATOR_METHOD_NAMES
+
+    def test_as_tools_hides_org_only_methods_without_org_context(self):
+        SESSION_DETAILS.org_id = None
+
+        tools = CoordinatorTools(cm=object()).as_tools()
+
+        assert "list_org_members" not in tools
+        assert "invite_org_member" not in tools
+        assert "set_setup_state" in tools
 
     def test_list_assistants_uses_owner_key_and_current_sdk_shape(self, monkeypatch):
         calls = []

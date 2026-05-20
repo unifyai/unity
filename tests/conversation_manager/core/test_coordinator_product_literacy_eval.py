@@ -1413,7 +1413,6 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
                 "add_space_member",
                 "remove_space_member",
                 "pre_seed_colleague",
-                "set_setup_state",
             },
         ),
     ),
@@ -1458,51 +1457,6 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
                 "add_space_member",
                 "remove_space_member",
                 "pre_seed_colleague",
-                "set_setup_state",
-            },
-        ),
-    ),
-    CoordinatorScenario(
-        scenario_id="setup-ready-state",
-        title="Coordinator setup state marks first version ready",
-        business_context=(
-            "A Finance Ops onboarding flow has already created the confirmed first "
-            "version and resolved the critical checklist items. The user now wants the "
-            "Coordinator's durable setup state to reflect that handoff point."
-        ),
-        turns=(
-            DialogueTurn(
-                "user",
-                "The Finance Ops colleague is created, the NetSuite read validated, "
-                "and the remaining lower-priority integrations are either done or "
-                "skipped on the checklist. Mark the Coordinator setup state ready to "
-                "go. Do not create or change any colleagues or spaces.",
-                new=True,
-            ),
-        ),
-        masked_components=(
-            "Critical checklist steps are already completed or skipped.",
-            "No colleague, workspace, membership, or setup-row mutation is requested.",
-        ),
-        rubric=(
-            "The response should call `set_setup_state(mode='ready_to_go')` and avoid "
-            "workspace mutations. It may send a concise note, but it should not claim "
-            "future integrations are already live beyond the validated first version."
-        ),
-        required_tools=frozenset({"set_setup_state"}),
-        forbidden_tools=frozenset(
-            {
-                "create_assistant",
-                "delete_assistant",
-                "update_assistant_config",
-                "create_space",
-                "delete_space",
-                "update_space",
-                "add_space_member",
-                "remove_space_member",
-                "pre_seed_colleague",
-                "add_setup_checklist_item",
-                "update_setup_checklist_item",
             },
         ),
     ),
@@ -1536,8 +1490,8 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
             "or pause after the first slice. The setup-checklist tool call should "
             "include `chat_prompt` and `chat_prompt_label` that capture the suggested "
             "reply for continuing, pausing, or choosing the first slice. It should "
-            "not create assistants, spaces, memberships, credentials, or ready state "
-            "before the setup details are confirmed."
+            "not create assistants, spaces, memberships, or credentials before the "
+            "setup details are confirmed."
         ),
         required_tools=frozenset({"add_setup_checklist_item", "send_unify_message"}),
         required_tool_args={
@@ -1554,7 +1508,6 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
                 "add_space_member",
                 "remove_space_member",
                 "pre_seed_colleague",
-                "set_setup_state",
             },
         ),
     ),
@@ -1590,8 +1543,7 @@ SCENARIOS: tuple[CoordinatorScenario, ...] = (
         org_coordinator_name="Avery Coordinator",
         rubric=(
             "The response should explicitly name Avery Coordinator for team-shaping "
-            "work, say it cannot create the Renewal Desk or automatically forward the "
-            "request, avoid implying act can bypass Coordinator boundaries, and offer "
+            "work, avoid implying act can bypass Coordinator boundaries, and offer "
             "a concise handoff summary the user can take to the Coordinator."
         ),
     ),

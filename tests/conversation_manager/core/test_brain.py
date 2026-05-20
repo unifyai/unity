@@ -410,7 +410,7 @@ class TestBuildBrainSpecCoordinatorPrompt:
         prompt = spec.system_prompt.flatten()
         assert "Team Coordinator" in prompt
         assert "Avery Coordinator" in prompt
-        assert "I cannot forward it automatically" in prompt
+        assert "Escalate to Avery Coordinator" in prompt
         list_assistants.assert_called_once_with(
             list_all_org=True,
             api_key="owner-key",
@@ -421,14 +421,16 @@ class TestBuildBrainSpecCoordinatorPrompt:
         SESSION_DETAILS.unify_key = "owner-key"
         SESSION_DETAILS.assistant.is_coordinator = True
 
-        with patch(
-            "unity.coordinator_manager.coordinator_manager.unify.list_org_members",
-            return_value=[{"first_name": "Dana", "surname": "Owner"}],
-        ) as list_org_members:
-            with patch(
+        with (
+            patch(
+                "unity.coordinator_manager.coordinator_manager.unify.list_org_members",
+                return_value=[{"first_name": "Dana", "surname": "Owner"}],
+            ) as list_org_members,
+            patch(
                 "unity.coordinator_manager.coordinator_manager.unify.list_assistants",
-            ) as list_assistants:
-                spec = build_brain_spec(_make_cm(), _make_snapshot())
+            ) as list_assistants,
+        ):
+            spec = build_brain_spec(_make_cm(), _make_snapshot())
 
         prompt = spec.system_prompt.flatten()
         assert "Authorized humans" in prompt
@@ -450,5 +452,26 @@ class TestBuildBrainSpecCoordinatorPrompt:
 
         prompt = spec.system_prompt.flatten()
         assert "Team Coordinator" not in prompt
-        assert "I cannot forward it automatically" not in prompt
+        assert "Escalate to Avery Coordinator" not in prompt
         list_assistants.assert_called_once_with(api_key="owner-key")
+
+    def test_personal_coordinator_skips_org_member_and_workspace_fetch(self):
+        SESSION_DETAILS.org_id = None
+        SESSION_DETAILS.unify_key = "owner-key"
+        SESSION_DETAILS.assistant.is_coordinator = True
+
+        with (
+            patch(
+                "unity.coordinator_manager.coordinator_manager.unify.list_org_members",
+            ) as list_org_members,
+            patch(
+                "unity.coordinator_manager.coordinator_manager.unify.list_assistants",
+            ) as list_assistants,
+        ):
+            spec = build_brain_spec(_make_cm(), _make_snapshot())
+
+        prompt = spec.system_prompt.flatten()
+        assert "Authorized humans" not in prompt
+        assert "Boss details" in prompt
+        list_org_members.assert_not_called()
+        list_assistants.assert_not_called()

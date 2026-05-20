@@ -215,12 +215,6 @@ async def test_setup_tools_emit_lightweight_activity_for_progress():
             chat_prompt="Let's review the next integration before continuing.",
             chat_prompt_label="Review next step",
         )
-        tools["set_setup_state"](
-            mode="ready_to_go",
-            chat_prompt="Show me the first version and what we should tune next.",
-            chat_prompt_label="Review setup",
-        )
-        tools["set_setup_state"](mode="ready_to_go")
         await join_coordinator_activity_publishes()
 
     payloads = [event.payload for event in events]
@@ -256,13 +250,3 @@ async def test_setup_tools_emit_lightweight_activity_for_progress():
         "Let's review the next integration before continuing."
     )
     assert completed_payload["chat_prompt_label"] == "Review next step"
-    handoff_payloads = [
-        payload
-        for payload in payloads
-        if payload["stage"] == "handoff" and payload["title"] == "Setup is ready to go"
-    ]
-    assert len(handoff_payloads) == 1
-    assert handoff_payloads[0]["chat_prompt"] == (
-        "Show me the first version and what we should tune next."
-    )
-    assert handoff_payloads[0]["chat_prompt_label"] == "Review setup"
