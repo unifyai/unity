@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+from types import SimpleNamespace
 from typing import Dict, List
 from datetime import datetime, timezone, timedelta
 
@@ -29,7 +30,10 @@ from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.activated_by import ActivatedBy
 from unity.task_scheduler.types.repetition import Frequency, RepeatPattern
 from unity.task_scheduler.types.status import Status
-from unity.common.task_execution_context import current_post_run_review_context
+from unity.common.task_execution_context import (
+    current_post_run_review_context,
+    current_task_execution_delegate,
+)
 
 #  The helper used in the existing test‑suite – applies project‑level monkey‐
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -261,6 +265,333 @@ async def test_scheduled_execution_consumes_provenance_and_rearms(monkeypatch):
     assert [row.instance_id for row in rows] == [0, 1]
     assert rows[0].status == Status.completed
     assert rows[1].status == Status.scheduled
+
+
+@pytest.mark.asyncio
+@pytest.mark.llm_call
+@_handle_project
+async def test_scheduled_execution_live_delegate_materializes_run_and_rearms(
+    monkeypatch,
+):
+    scheduler = TaskScheduler()
+    task_id = scheduler._create_task(
+        name="Delegate live report",
+        description="Send the live delegated report.",
+        status=Status.scheduled,
+        schedule=Schedule(
+            start_at=(
+                datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=1)
+            ).isoformat(),
+        ),
+        repeat=[RepeatPattern(frequency=Frequency.DAILY)],
+    )["details"]["task_id"]
+    captured: dict[str, object] = {}
+    run_updates: list[tuple[TaskRunReference | None, dict]] = []
+
+    class _DelegateHandle:
+        async def result(self):
+            return "live delegate completed"
+
+    class _LiveDelegate:
+        async def start_task_run(self, **kwargs):
+            captured["delegate_kwargs"] = kwargs
+            return _DelegateHandle()
+
+    def _fake_create_or_adopt(provenance: TaskRunProvenance) -> TaskRunReference:
+        captured["provenance"] = provenance
+        return TaskRunReference(
+            assistant_id=provenance.assistant_id,
+            run_key="live:scheduled:42:delegate:once",
+        )
+
+    monkeypatch.setattr(task_scheduler_module.SESSION_DETAILS.assistant, "agent_id", 42)
+    remember_live_task_run_provenance(
+        TaskRunProvenance(
+            assistant_id="42",
+            task_id=task_id,
+            source_type="scheduled",
+            execution_mode="live",
+            source_task_log_id=555,
+            activation_revision="rev-live-delegate",
+            scheduled_for="2026-04-10T09:00:00+00:00",
+            task_name="Delegate live report",
+            task_description="Send the live delegated report.",
+        ),
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.create_or_adopt_live_task_run",
+        _fake_create_or_adopt,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.update_task_run_record",
+        lambda run_reference, updates: run_updates.append(
+            (run_reference, dict(updates)),
+        ),
+    )
+
+    token = current_task_execution_delegate.set(_LiveDelegate())
+    try:
+        handle = await scheduler.execute(
+            task_id=task_id,
+            _activated_by=ActivatedBy.schedule,
+            isolated=True,
+        )
+        result = await handle.result()
+    finally:
+        current_task_execution_delegate.reset(token)
+
+    assert result == "live delegate completed"
+    delegate_kwargs = captured["delegate_kwargs"]
+    assert delegate_kwargs["entrypoint"] is None
+    assert "Send the live delegated report." in delegate_kwargs["task_description"]
+    provenance = captured["provenance"]
+    assert isinstance(provenance, TaskRunProvenance)
+    assert provenance.execution_mode == "live"
+    assert run_updates[-1][0] == TaskRunReference(
+        assistant_id="42",
+        run_key="live:scheduled:42:delegate:once",
+    )
+    assert run_updates[-1][1]["state"] == "completed"
+
+    rows = sorted(
+        scheduler._filter_tasks(filter=f"task_id == {task_id}"),
+        key=lambda task: task.instance_id,
+    )
+    assert [row.instance_id for row in rows] == [0, 1]
+    assert rows[0].status == Status.completed
+    assert rows[1].status == Status.scheduled
+
+
+@pytest.mark.asyncio
+@pytest.mark.llm_call
+@_handle_project
+async def test_scheduled_execution_offline_delegate_materializes_run_and_rearms(
+    monkeypatch,
+):
+    from unity.task_scheduler import offline_runner
+
+    scheduler = TaskScheduler()
+    task_id = scheduler._create_task(
+        name="Offline report",
+        description="Send the offline delegated report.",
+        status=Status.scheduled,
+        schedule=Schedule(
+            start_at=(
+                datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=1)
+            ).isoformat(),
+        ),
+        repeat=[RepeatPattern(frequency=Frequency.DAILY)],
+        entrypoint=777,
+        offline=True,
+    )["details"]["task_id"]
+    captured: dict[str, object] = {}
+    run_updates: list[tuple[TaskRunReference | None, dict]] = []
+
+    class _FunctionHandle:
+        async def result(self):
+            return SimpleNamespace(
+                result={"ok": True},
+                stdout="sent",
+                stderr="",
+                error="",
+            )
+
+    class _FakeSingleFunctionActor:
+        def __init__(self, *, headless):
+            assert headless is True
+            captured["actor_created"] = True
+
+        async def act(self, *, request, function_id):
+            captured["function_request"] = request
+            captured["function_id"] = function_id
+            return _FunctionHandle()
+
+        async def close(self):
+            captured["actor_closed"] = True
+
+    def _fake_create_or_adopt(provenance: TaskRunProvenance) -> TaskRunReference:
+        captured["provenance"] = provenance
+        return TaskRunReference(
+            assistant_id=provenance.assistant_id,
+            run_key="offline:scheduled:42:delegate:once",
+        )
+
+    monkeypatch.setattr(task_scheduler_module.SESSION_DETAILS.assistant, "agent_id", 42)
+    monkeypatch.setattr(
+        offline_runner,
+        "SingleFunctionActor",
+        _FakeSingleFunctionActor,
+    )
+    remember_live_task_run_provenance(
+        TaskRunProvenance(
+            assistant_id="42",
+            task_id=task_id,
+            source_type="scheduled",
+            execution_mode="offline",
+            source_task_log_id=555,
+            activation_revision="rev-offline-delegate",
+            scheduled_for="2026-04-10T09:00:00+00:00",
+            task_name="Offline report",
+            task_description="Send the offline delegated report.",
+        ),
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.create_or_adopt_live_task_run",
+        _fake_create_or_adopt,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.update_task_run_record",
+        lambda run_reference, updates: run_updates.append(
+            (run_reference, dict(updates)),
+        ),
+    )
+
+    config = offline_runner.OfflineTaskConfig(
+        assistant_id="42",
+        run_key="offline:scheduled:42:delegate:once",
+        task_id=task_id,
+        function_id=777,
+        request="Send the offline delegated report.",
+        source_type="scheduled",
+        source_task_log_id=555,
+        activation_revision="rev-offline-delegate",
+        task_name="Offline report",
+        task_description="Send the offline delegated report.",
+        scheduled_for="2026-04-10T09:00:00+00:00",
+    )
+    delegate = offline_runner._OfflineTaskExecutionDelegate(config)
+    token = current_task_execution_delegate.set(delegate)
+    try:
+        handle = await scheduler.execute(
+            task_id=task_id,
+            _activated_by=ActivatedBy.schedule,
+            isolated=True,
+        )
+        result = await handle.result()
+    finally:
+        current_task_execution_delegate.reset(token)
+        await delegate.close()
+
+    assert '"function_id": 777' in result
+    assert captured["function_id"] == 777
+    assert "Send the offline delegated report." in captured["function_request"]
+    assert captured["actor_closed"] is True
+    provenance = captured["provenance"]
+    assert isinstance(provenance, TaskRunProvenance)
+    assert provenance.execution_mode == "offline"
+    assert run_updates[-1][0] == TaskRunReference(
+        assistant_id="42",
+        run_key="offline:scheduled:42:delegate:once",
+    )
+    assert run_updates[-1][1]["state"] == "completed"
+    assert '"stdout": "sent"' in run_updates[-1][1]["result_summary"]
+
+    rows = sorted(
+        scheduler._filter_tasks(filter=f"task_id == {task_id}"),
+        key=lambda task: task.instance_id,
+    )
+    assert [row.instance_id for row in rows] == [0, 1]
+    assert rows[0].status == Status.completed
+    assert rows[1].status == Status.scheduled
+
+
+@pytest.mark.asyncio
+@pytest.mark.llm_call
+@_handle_project
+async def test_triggered_execution_offline_delegate_consumes_trigger_provenance(
+    monkeypatch,
+):
+    from unity.task_scheduler import offline_runner
+
+    scheduler = TaskScheduler()
+    task_id = scheduler._create_task(
+        name="Triggered offline report",
+        description="Send the triggered offline delegated report.",
+        status=Status.triggerable,
+        entrypoint=777,
+        offline=True,
+    )["details"]["task_id"]
+    captured: dict[str, object] = {}
+    run_updates: list[tuple[TaskRunReference | None, dict]] = []
+
+    class _FunctionHandle:
+        async def result(self):
+            return SimpleNamespace(
+                result={"ok": True},
+                stdout="sent",
+                stderr="",
+                error="",
+            )
+
+    class _FakeSingleFunctionActor:
+        def __init__(self, *, headless):
+            assert headless is True
+
+        async def act(self, *, request, function_id):
+            captured["function_request"] = request
+            captured["function_id"] = function_id
+            return _FunctionHandle()
+
+        async def close(self):
+            captured["actor_closed"] = True
+
+    def _fake_create_or_adopt(provenance: TaskRunProvenance) -> TaskRunReference:
+        captured["provenance"] = provenance
+        return TaskRunReference(
+            assistant_id=provenance.assistant_id,
+            run_key="offline:triggered:42:delegate:once",
+        )
+
+    monkeypatch.setattr(task_scheduler_module.SESSION_DETAILS.assistant, "agent_id", 42)
+    monkeypatch.setattr(
+        offline_runner,
+        "SingleFunctionActor",
+        _FakeSingleFunctionActor,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.create_or_adopt_live_task_run",
+        _fake_create_or_adopt,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.active_task.update_task_run_record",
+        lambda run_reference, updates: run_updates.append(
+            (run_reference, dict(updates)),
+        ),
+    )
+
+    config = offline_runner.OfflineTaskConfig(
+        assistant_id="42",
+        run_key="offline:triggered:42:delegate:once",
+        task_id=task_id,
+        function_id=777,
+        request="Send the triggered offline delegated report.",
+        source_type="triggered",
+        source_task_log_id=555,
+        activation_revision="rev-triggered-offline-delegate",
+        task_name="Triggered offline report",
+        task_description="Send the triggered offline delegated report.",
+        source_ref="sms-message-123",
+        source_medium="sms",
+        source_contact_id="123",
+    )
+
+    await offline_runner._execute_scheduler_managed_task(config)
+
+    provenance = captured["provenance"]
+    assert isinstance(provenance, TaskRunProvenance)
+    assert provenance.source_type == "triggered"
+    assert provenance.execution_mode == "offline"
+    assert provenance.source_ref == "sms-message-123"
+    assert provenance.source_medium == "sms"
+    assert provenance.source_contact_id == "123"
+    assert provenance.attempt_token == "offline:triggered:42:delegate:once"
+    assert captured["function_id"] == 777
+    assert captured["actor_closed"] is True
+    assert run_updates[-1][0] == TaskRunReference(
+        assistant_id="42",
+        run_key="offline:triggered:42:delegate:once",
+    )
+    assert run_updates[-1][1]["state"] == "completed"
 
 
 # --------------------------------------------------------------------------- #
