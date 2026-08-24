@@ -224,6 +224,43 @@ class Function(AuthoredRow):
         json_schema_extra={"ui_editable": True},
     )
 
+    # ── Usage trace: the memory strength behind activation-weighted
+    # retrieval (see function_manager/activation.py). Written fire-and-
+    # forget at the execution choke points; read at query time by
+    # search_functions to compute standing. Never consulted by execution
+    # itself — a dormant function still runs when addressed directly.
+    created_at: Optional[str] = Field(
+        None,
+        description=(
+            "ISO timestamp of the row's creation. Creation counts as the "
+            "function's first activation event (the newborn grace), so a "
+            "fresh function surfaces long enough to earn its first call."
+        ),
+    )
+    usage_calls: int = Field(
+        0,
+        description="Total recorded invocations across all execution paths.",
+    )
+    usage_last_called_at: Optional[str] = Field(
+        None,
+        description="ISO timestamp of the most recent recorded invocation.",
+    )
+    usage_recent_calls: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Bounded window of recent invocation timestamps (ISO), kept for "
+            "rhythm estimation — decay runs against the function's own "
+            "median inter-use interval, not a global half-life."
+        ),
+    )
+    usage_search_hits: int = Field(
+        0,
+        description=(
+            "How often search surfaced this function. Retrieved-but-never-"
+            "called is a near-miss relevance signal, distinct from unused."
+        ),
+    )
+
     # Source-defined custom function tracking
     custom_key: Optional[str] = Field(
         None,

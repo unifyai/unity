@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import textwrap
 import json
 from typing import (
@@ -44,27 +43,18 @@ _FUNCTION_GUIDANCE_AND_KNOWLEDGE_LIBRARY = textwrap.dedent("""
     name via `execute_function`.
 
     Always search **FunctionManager, GuidanceManager, and KnowledgeManager**
-    before deciding how to execute:
-
-    1. `FunctionManager_search_functions` — find existing implementations
-    2. `GuidanceManager_search` — find procedures and composition strategies
-    3. `KnowledgeManager_search` — find durable domain claims
-    4. Prefer healthy matches (empty `stale_reasons`); stale entries are
-       second-class — disclose the debt if used and repair via
-       update/re-link.
-    5. Use what you find: call a relevant function via `execute_function`,
-       follow relevant guidance, use relevant claims (fetch full text
-       with `get_knowledge` when needed).
-    6. A no-hit is **not** permission to immediately write new code.
-       Search is a discovery step, not an execution decision.
-    7. After discovery, choose the minimal correct execution path:
-       - if the request or discovery step already identifies one exact function
-         or primitive call, use `execute_function`
-       - use `execute_code` only when the task genuinely requires
-         multi-step composition.
-
-    Search/filter results truncate long entries: when a discovered entry
-    is actually relevant, fetch the complete body with
+    (`FunctionManager_search_functions`, `GuidanceManager_search`,
+    `KnowledgeManager_search`) before deciding how to execute, then use
+    what you find: call a relevant function via `execute_function`, follow
+    relevant guidance, use relevant claims. Prefer healthy matches (empty
+    `stale_reasons`); stale entries are second-class — disclose the debt
+    if used and repair via update/re-link. A no-hit is **not** permission to immediately write new code.
+    Search is a discovery step, not an execution decision. After discovery,
+    choose the minimal correct execution path —
+    if the request or discovery step already identifies one exact function
+    or primitive call, use `execute_function`; use `execute_code` only
+    when the task genuinely requires multi-step composition. Search/filter results truncate long entries: when a
+    discovered entry is actually relevant, fetch the complete body with
     `GuidanceManager_get_guidance` / `KnowledgeManager_get_knowledge` — do
     not act on a truncated preview.
 
@@ -175,9 +165,9 @@ _DISCOVERY_FIRST_POLICY = textwrap.dedent("""
        only families whose tools are absent. Do not answer in plain text
        first, do not serialize families across turns, and call only tools
        that appear in the current tool list.
-    2. Then choose the minimal correct execution path.
-    3. If one exact function or primitive call is enough, use execute_function.
-    4. Use execute_code only when the task genuinely needs multi-step
+    2. Then choose the minimal correct execution path:
+       if one exact function or primitive call is enough, use execute_function;
+       use execute_code only when the task genuinely needs multi-step
        composition, branching, iteration, or combining intermediate results.
 """).strip()
 
@@ -473,6 +463,43 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     `compress_context`.
 """).strip()
 
+_STORAGE_SESSION_NOTICE = textwrap.dedent("""
+    ### Skill Storage
+
+    In this persistent session, a dedicated skill-consolidation process
+    reviews your trajectory automatically **after each completed turn**
+    (and again when the session ends). Do not call `store_skills` for
+    work a completed turn already contains — the automatic review covers
+    it. Reserve `store_skills` for mid-turn moments: something worth
+    keeping is at risk before a risky continuation, or the user
+    explicitly asks to store a skill right now.
+
+    Consolidation results arrive in the conversation as bracketed
+    background notes. When a note (or your own storage) reports a stored
+    function covering a deliverable that is requested again, the whole
+    turn is one execution and a report: call the stored function
+    (`execute_function`, or by name inside `execute_code`), then relay
+    its result — do not re-derive the procedure inline, and do not
+    re-verify work the function already validates. When the requester
+    amends the deliverable's spec, apply the amendment as an
+    `overwrite=True` edit to that stored function so the stored procedure
+    tracks the live spec.
+
+    **Direct writes vs trajectory storage**: user-requested "remember
+    this" writes go directly to the libraries
+    (`GuidanceManager_add_guidance`, `KnowledgeManager_add_knowledge`
+    after search, `FunctionManager_add_functions` / `_delete_function`).
+    `store_skills` extracts reusable implementations, compositional
+    strategies, and durable claims from what you just did — not direct
+    user-requested mutations.
+
+    **Before compression**: when the context window nears capacity,
+    `store_skills` and `compress_context` become the only tools available.
+    Call `store_skills` first (with a specific request) if the trajectory
+    holds unstored skills worth preserving; otherwise go straight to
+    `compress_context`.
+""").strip()
+
 _TASK_SCHEDULING = textwrap.dedent("""
     ### Durable Scheduled And Triggered Tasks
 
@@ -659,51 +686,19 @@ _PLATFORM_CAPABILITIES_INDEX = textwrap.dedent("""
 # ---------------------------------------------------------------------------
 
 
-def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
-    """Builds a JSON string of tool signatures via introspection."""
-    from unify.common.prompt_helpers import unwrap_tool_callable
+# Tool contracts are not restated here: the async tool loop converts every
+# callable's docstring and signature into its JSON schema, which rides every
+# request — the prompt teaches only the calling convention.
+_TOOLS_SECTION = textwrap.dedent("""
+    ### Tools
 
-    tool_info = {}
-    for name, fn in tool_dict.items():
-        target = unwrap_tool_callable(fn)
-        prefix = "async def " if inspect.iscoroutinefunction(target) else "def "
-        tool_info[name] = {
-            "signature": f"{prefix}{name}{inspect.signature(target)}",
-            "docstring": inspect.getdoc(target) or "No docstring available.",
-        }
-    return json.dumps(tool_info, indent=4)
-
-
-def _build_additional_tools_block(
-    *,
-    tools: Optional[Dict[str, Callable]],
-    render_tools_block: Callable,
-) -> str:
-    """Render signatures for non-primary tools (FM discovery, install, etc.)."""
-    if not tools:
-        return ""
-
-    additional_tools = {
-        k: v
-        for k, v in tools.items()
-        if k
-        not in {
-            "execute_function",
-            "execute_code",
-            "list_sessions",
-            "inspect_state",
-            "close_session",
-            "close_all_sessions",
-        }
-    }
-    if not additional_tools:
-        return ""
-
-    return (
-        f"#### Additional Tools\n"
-        f"These tools are called via **structured JSON tool calls**, NOT inside Python code.\n\n"
-        f"{render_tools_block(additional_tools)}"
-    )
+    Every tool is called via **structured JSON tool calls**, never from
+    inside Python code; sandbox callables (`primitives.*`, `query_llm`, …)
+    are the reverse — Python-only, never JSON tool calls. Each tool's
+    authoritative contract (arguments, semantics, cautions) is its schema
+    in the live tool list: consult it rather than guessing, and treat that
+    list as what is callable right now.
+""").strip()
 
 
 def _build_code_act_rules_and_examples(
@@ -747,6 +742,7 @@ def build_code_act_prompt(
     discovery_first_policy: bool = False,
     include_external_app_integration: bool = True,
     include_oauth_helper: bool = True,
+    persist: bool = False,
 ) -> str:
     """Build the system prompt for the CodeActActor.
 
@@ -776,9 +772,14 @@ def build_code_act_prompt(
         Independent of ``include_external_app_integration`` — a
         workspace-email assistant with zero integration packages keeps
         the OAuth section. When gated off, the index line remains.
+    persist:
+        When ``True``, the skill-storage notice describes the persistent
+        session's schedule — automatic consolidation after each completed
+        turn, with results surfaced as background notes — and instructs
+        the session to execute stored functions on repeat requests for the
+        same deliverable. When ``False`` (one-shot act), the notice keeps
+        the post-result consolidation description.
     """
-    from unify.common.prompt_helpers import render_tools_block
-
     has_execute_code = bool(tools and "execute_code" in tools)
     has_fm_tools = bool(
         tools and any(str(k).startswith("FunctionManager_") for k in tools.keys()),
@@ -791,11 +792,6 @@ def build_code_act_prompt(
     )
     has_wm_tools = bool(
         tools and any(str(k).startswith("WorkflowManager_") for k in tools.keys()),
-    )
-
-    additional_tools_block = _build_additional_tools_block(
-        tools=tools,
-        render_tools_block=render_tools_block,
     )
 
     rules_and_examples = _build_code_act_rules_and_examples(
@@ -817,26 +813,7 @@ def build_code_act_prompt(
             "for running Python and shell code with access to injected tool domains.",
         )
 
-        primary_names = [
-            "execute_function",
-            "execute_code",
-            "list_sessions",
-            "inspect_state",
-            "close_session",
-            "close_all_sessions",
-        ]
-        primary_tools = {k: tools[k] for k in primary_names if k in tools}
-        primary_sigs = _build_tool_signatures(primary_tools) if primary_tools else "{}"
-
-        tools_section = (
-            "### Tools\n\n"
-            "#### Execution & Session Tools\n"
-            "These tools are called via **structured JSON tool calls**, NOT inside Python code.\n\n"
-            f"```json\n{primary_sigs}\n```"
-        )
-        if additional_tools_block:
-            tools_section += f"\n\n{additional_tools_block}"
-        parts.append(tools_section)
+        parts.append(_TOOLS_SECTION)
 
         parts.append(_build_sandbox_environment_section())
         parts.append(_TOOL_SELECTION_AND_SURFACES)
@@ -857,7 +834,12 @@ def build_code_act_prompt(
                 parts.append(_DISCOVERY_FIRST_POLICY)
 
         if can_store:
-            parts.append(_STORAGE_DEFERRED_NOTICE)
+            # A persistent session's consolidation runs per completed turn,
+            # not after a final result the loop never produces — the notice
+            # must describe the schedule the session actually gets.
+            parts.append(
+                _STORAGE_SESSION_NOTICE if persist else _STORAGE_DEFERRED_NOTICE,
+            )
 
         # ── Per-assistant / dynamic tail ──
         parts.append(_build_filesystem_context())
@@ -900,7 +882,7 @@ def build_code_act_prompt(
         if has_wm_tools:
             parts.append(_WORKFLOW_SHELF)
 
-        procedure = (
+        parts.append(
             "### Procedure\n\n"
             "1. **Discover** stored functions using `FunctionManager_search_functions`,\n"
             "   `FunctionManager_filter_functions`, or `FunctionManager_list_functions`.\n"
@@ -908,11 +890,8 @@ def build_code_act_prompt(
             "   or a prompt-documented callable by exact name (see Discovery index\n"
             "   scope above).\n"
             "3. Report inability only when neither applies — do NOT write or compose\n"
-            "   code yourself."
+            "   code yourself.",
         )
-        if additional_tools_block:
-            procedure += f"\n\n{additional_tools_block}"
-        parts.append(procedure)
 
         if rules_and_examples:
             parts.append(rules_and_examples)

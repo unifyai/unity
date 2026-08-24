@@ -3794,6 +3794,9 @@ class TestInitializationCompleteHandler:
         """Reset per-test CM attributes the handler reads."""
         mock_cm._startup_wake_reasons = []
         mock_cm.call_manager._socket_server = None
+        # Default to the nothing-restored boot; tests that pin the
+        # history-loaded wording set a positive count explicitly.
+        mock_cm._hydrated_history_count = 0
         yield
 
     @pytest.mark.asyncio
@@ -3824,6 +3827,8 @@ class TestInitializationCompleteHandler:
             INITIALIZATION_COMPLETE_NOTIFICATION,
         )
 
+        # Hydration restored history, so the notification may claim it.
+        mock_cm._hydrated_history_count = 3
         await EventHandler.handle_event(InitializationComplete(), mock_cm)
 
         notif = next(
@@ -3838,6 +3843,41 @@ class TestInitializationCompleteHandler:
         assert "deferred work" in text
         assert "incorrect or incomplete" in text
         # Must explicitly direct the brain to wait and forbid duplicates.
+        assert "call wait" in text
+        assert "do not send a message" in text
+        assert "rephrases" in text or "restates" in text
+
+    @pytest.mark.asyncio
+    async def test_notification_is_truthful_when_nothing_was_restored(
+        self,
+        mock_cm,
+    ):
+        """A boot whose hydration restored nothing must not claim that
+        history was loaded.
+
+        Regression test for the cold-boot amnesia incident (2026-08-22):
+        on a deployment without a persisted Comms stream, the rebooted CM
+        announced "full conversation history has been loaded" over an
+        empty thread render, and the brain went hunting through email and
+        desktop for context the notification told it already had.
+        """
+        from unify.conversation_manager.domains.event_handlers import (
+            INITIALIZATION_COMPLETE_NO_HISTORY_NOTIFICATION,
+        )
+
+        await EventHandler.handle_event(InitializationComplete(), mock_cm)
+
+        notif = next(
+            n
+            for n in mock_cm.notifications_bar.notifications
+            if "Initialization complete" in n.content
+        )
+        assert notif.content == INITIALIZATION_COMPLETE_NO_HISTORY_NOTIFICATION
+
+        text = notif.content.lower()
+        assert "history has been loaded" not in text
+        assert "no prior conversation history" in text
+        # The anti-duplicate directive survives in both variants.
         assert "call wait" in text
         assert "do not send a message" in text
         assert "rephrases" in text or "restates" in text

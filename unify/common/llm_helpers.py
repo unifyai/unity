@@ -537,6 +537,45 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     return schema
 
 
+def _strip_model_schema_noise(schema: Any) -> Any:
+    """Drop pydantic's auto-generated ``title`` and ``default`` annotations.
+
+    Titles restate the property name, and defaults restate optionality that
+    the ``required`` list already encodes (worse: a ``default`` on a
+    discriminator ``const`` suggests the discriminator may be omitted, which
+    the runtime validator rejects). Neither constrains validation, and both
+    multiply across dereferenced unions. The walk follows JSON-schema
+    structure so property *names* called ``title``/``default`` survive.
+    """
+    if isinstance(schema, list):
+        return [_strip_model_schema_noise(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out: Dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in ("title", "default"):
+            continue
+        if key == "properties" and isinstance(value, dict):
+            out[key] = {
+                name: _strip_model_schema_noise(prop) for name, prop in value.items()
+            }
+        elif key in (
+            "items",
+            "prefixItems",
+            "additionalProperties",
+            "anyOf",
+            "oneOf",
+            "allOf",
+            "not",
+            "$defs",
+            "definitions",
+        ):
+            out[key] = _strip_model_schema_noise(value)
+        else:
+            out[key] = value
+    return out
+
+
 def _annotation_to_schema(ann: Any) -> Dict[str, Any]:
     """Inner type→schema conversion. Annotated-description handling lives in the
     public :func:`annotation_to_schema` wrapper."""
@@ -591,7 +630,7 @@ def _annotation_to_schema(ann: Any) -> Dict[str, Any]:
         if isinstance(plain, dict):
             plain.pop("$defs", None)
             plain.pop("definitions", None)
-        return plain
+        return _strip_model_schema_noise(plain)
 
     # Dict[K, V]
     if origin is dict or origin is Dict:

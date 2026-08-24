@@ -173,20 +173,19 @@ mutate state or start work).
 existing records). Bundle the full intent, including any "check if exists" \
 logic, into the mutation call's natural-language `text` argument.
 
-- **Steerable handles**: Manager calls return `SteerableToolHandle` objects \
-for in-flight control. Either **await the result** for immediate use, or \
-**return the handle as the last expression** of `execute_code` to hand \
-steering control back to the outer loop. Prefer returning the handle for \
-long-running or steering-prone operations; prefer awaiting when the same \
-code block needs the result. If intent is neutral or uncertain, default to \
-returning the handle and only await when same-block composition truly \
-requires it.
+- **Steerable handles**: Manager calls are nested tool loops returning \
+`SteerableToolHandle` objects for in-flight control. Default to \
+**returning the handle as the last expression** of `execute_code` so \
+outer-loop steering/progress stays available; await `.result()` only for \
+immediate in-code composition. If intent is neutral or uncertain, default \
+to returning the handle. If a manager asks for clarification, answer via \
+the handle's API.
 
 - **Progress notifications**: surface progress with the `send_notification` \
-tool between `execute_code` blocks; keep messages user-facing and high-level \
-(diagnostics belong in stdlib `logging` with `PHASE`/`SKIP`/`SOFT_FAIL` \
-markers), and do not announce the final result this way — your response \
-text handles that.
+tool between `execute_code` blocks, never from inside generated code; keep \
+messages user-facing and high-level (diagnostics belong in stdlib `logging` \
+with `PHASE`/`SKIP`/`SOFT_FAIL` markers), and do not announce the final \
+result this way — your response text handles that.
 
   **SteerableToolHandle API:**
 

@@ -31,7 +31,18 @@ from unify.function_manager.verification.ledger import (
     args_signature,
     function_trust_hash,
 )
-from unify.function_manager.verification.policy import derive_verify
+from unify.function_manager.verification.policy import derive_verify, spot_check_rate
+
+
+@pytest.fixture(autouse=True)
+def _verification_enabled(monkeypatch):
+    """This module exercises the trust machinery through the global settings
+    too (``derive_verify_for_row``); the master switch defaults off, so hold
+    it on for every test here. The off state has its own explicit test."""
+    from unify.settings import SETTINGS
+
+    monkeypatch.setattr(SETTINGS.function.verification, "enabled", True)
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # Primitive table completeness
@@ -280,7 +291,9 @@ def test_args_signature_is_order_independent():
 # Trust policy
 # ────────────────────────────────────────────────────────────────────────────
 
-_SETTINGS = VerificationSettings()
+# These tests exercise the trust ladder itself, so the master switch is on;
+# its off state has its own test below.
+_SETTINGS = VerificationSettings(enabled=True)
 _HASH = "deadbeef"
 
 
@@ -351,6 +364,26 @@ def test_derive_verify_requires_current_hash_static_pass_and_no_fails():
     assert derive_verify(unsure_static, settings=_SETTINGS, current_hash=_HASH) is True
     failed = dict(row, ledger=dict(row["ledger"], fails=1))
     assert derive_verify(failed, settings=_SETTINGS, current_hash=_HASH) is True
+
+
+def test_master_switch_off_disables_the_whole_subsystem():
+    """Disabled (the default), every row runs trusted: no pin, hash, ledger,
+    or static-review state can demand verification, and spot checks never
+    sample — the subsystem is absent, not lenient."""
+    off = VerificationSettings()
+    assert off.enabled is False
+    virgin = {
+        "side_effect_class": SideEffectClass.unsafe_effectful.value,
+        "class_source": "primitives",
+        "verification_policy": {},
+    }
+    assert derive_verify(virgin, settings=off, current_hash=_HASH) is False
+    pinned = dict(virgin, verification_policy={"always_verify": True})
+    assert derive_verify(pinned, settings=off, current_hash=_HASH) is False
+    assert spot_check_rate(pinned, off) == 0.0
+    # The same rows verify again the moment the switch turns back on.
+    assert derive_verify(virgin, settings=_SETTINGS, current_hash=_HASH) is True
+    assert derive_verify(pinned, settings=_SETTINGS, current_hash=_HASH) is True
 
 
 def test_policy_can_only_raise_the_bar():

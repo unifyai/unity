@@ -4109,6 +4109,23 @@ INITIALIZATION_COMPLETE_NOTIFICATION = (
     "already gave."
 )
 
+# The truthful variant for a boot whose hydration restored nothing —
+# because there genuinely is no prior conversation, or because the
+# deployment does not persist the Comms stream (EVENTBUS_PUBLISHING_ENABLED
+# off). Claiming "history has been loaded" on such a boot sent brains
+# hunting for context that was never coming (observed 2026-08-22: an
+# assistant told history was loaded, with an empty thread render, searched
+# email and desktop for a spec that lived in the unrendered conversation).
+INITIALIZATION_COMPLETE_NO_HISTORY_NOTIFICATION = (
+    "Initialization complete — all actions are now available. No prior "
+    "conversation history was found to load, so the rendered threads are "
+    "the whole of what is known here. If your previous reply during "
+    "initialization deferred work you can now perform or needs a concrete "
+    "update, follow up now. Otherwise call wait — do NOT send a message "
+    "that simply rephrases, restates, or confirms a reply you already "
+    "gave."
+)
+
 
 @EventHandler.register((InitializationComplete,))
 async def _(
@@ -4117,9 +4134,14 @@ async def _(
     *args,
     **kwargs,
 ):
+    hydrated_count = int(getattr(cm, "_hydrated_history_count", 0) or 0)
     cm.notifications_bar.push_notif(
         "System",
-        INITIALIZATION_COMPLETE_NOTIFICATION,
+        (
+            INITIALIZATION_COMPLETE_NOTIFICATION
+            if hydrated_count
+            else INITIALIZATION_COMPLETE_NO_HISTORY_NOTIFICATION
+        ),
         event.timestamp,
     )
     cm._session_logger.debug("initialization", "Initialization complete")
@@ -4135,7 +4157,11 @@ async def _(
             contact={},
             message=(
                 "Initialization complete — all actions are now available. "
-                "Full conversation history has been loaded."
+                + (
+                    "Full conversation history has been loaded."
+                    if hydrated_count
+                    else "No prior conversation history was found to load."
+                )
             ),
             should_speak=False,
             source="initialization",

@@ -34,6 +34,42 @@ def _is_already_exists_context_error(exc: _UnifyRequestError) -> bool:
     return "already exists" in text and "context" in text
 
 
+class ContextIdentityError(RuntimeError):
+    """A live context is missing identity configuration its manager declares."""
+
+
+def _verify_context_identity(
+    name: str,
+    *,
+    unique_keys: Dict[str, str],
+    auto_counting: Dict[str, Optional[str]],
+    project: Optional[str],
+) -> None:
+    """Raise when the live context lacks the declared identity configuration.
+
+    ``create_context`` reports success both for a fresh create and for a
+    pre-existing context, and a pre-existing context keeps whatever
+    configuration it was first created with — including none at all when a
+    row write reached the backend first and auto-created it bare. A bare
+    context assigns no ids to inserted rows, and no API can retrofit the
+    configuration, so provisioning time is the only place the corruption is
+    caught before unaddressable rows accumulate.
+    """
+    live = unisdk.get_context(name, project=project)
+    missing_keys = set(unique_keys) - set(live.get("unique_keys") or [])
+    missing_counters = set(auto_counting) - set(live.get("auto_counting") or {})
+    if missing_keys or missing_counters:
+        raise ContextIdentityError(
+            f"Context {name!r} is live without its declared identity "
+            f"configuration (missing unique_keys: {sorted(missing_keys)}, "
+            f"missing auto_counting: {sorted(missing_counters)}). It was "
+            "first created without them — typically implicitly, by a row "
+            "write that reached the backend before provisioning — and the "
+            "backend cannot retrofit them. Delete and re-provision the "
+            "context to repair.",
+        )
+
+
 def _create_context_with_retry(
     name: str,
     *,
@@ -69,9 +105,27 @@ def _create_context_with_retry(
                 owner_id=owner_id,
                 project=project,
             )
+            # ``create_context`` reports success for a pre-existing context
+            # too (and its insert races resolve via on-conflict-do-nothing),
+            # so a successful call does not prove the live context carries
+            # the identity configuration just declared. Verify it does.
+            if unique_keys or auto_counting:
+                _verify_context_identity(
+                    name,
+                    unique_keys=unique_keys or {},
+                    auto_counting=auto_counting or {},
+                    project=project,
+                )
             return
         except _UnifyRequestError as exc:
             if _is_already_exists_context_error(exc):
+                if unique_keys or auto_counting:
+                    _verify_context_identity(
+                        name,
+                        unique_keys=unique_keys or {},
+                        auto_counting=auto_counting or {},
+                        project=project,
+                    )
                 return
             if not _is_transient(exc):
                 raise

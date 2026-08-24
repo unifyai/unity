@@ -52,7 +52,7 @@ from ..common.custom_sync import (
 from ..common.embed_utils import ensure_vector_column, list_private_fields
 from ..common.filter_utils import normalize_filter_expr
 from ..common.sync_lease import exclusive_sync_lease
-from ..common.log_utils import create_logs as unity_create_logs
+from ..common.log_utils import assigned_row_id, create_logs as unity_create_logs
 from ..common.llm_client import new_llm_client
 from ..common.llm_helpers import methods_to_tool_dict
 from ..common.metrics_utils import reduce_logs
@@ -480,6 +480,57 @@ class TaskScheduler(BaseTaskScheduler):
             **context,
             "task_execution_context": context,
         }
+
+    def detach_entrypoint_from_definition(
+        self,
+        *,
+        task_id: int,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Drop a task's symbolic entrypoint so future runs plan from scratch.
+
+        An entrypoint is an optimisation: the task ran through the full actor
+        loop before one existed, and dropping it costs speed and determinism
+        but never correctness. That asymmetry is what makes detaching the
+        right answer to an entrypoint that cannot be made to work -- one that
+        dangles, that was derived against a description since rewritten, or
+        that keeps being refused before it can run.
+
+        Without this, such a task delivers nothing on every occurrence
+        forever: the run holds, the definition still names the entrypoint,
+        and the next wake repeats it. Detaching converts a permanent outage
+        into a slower success, and the next successful run may distil a
+        fresh entrypoint of its own.
+        """
+
+        task = self._get_task_or_raise(task_id)
+        with self._use_task_destination(task.destination):
+            log_objs = self._store.get_rows(
+                filter=f"task_id == {task_id}",
+                limit=1,
+                return_ids_only=False,
+            )
+            if not log_objs:
+                return {"outcome": "definition_missing", "task_id": task_id}
+            previous = log_objs[0].entries.get("entrypoint")
+            if previous is None:
+                return {"outcome": "no_entrypoint", "task_id": task_id}
+            self._write_log_entries(
+                logs=log_objs[0].id,
+                entries={"entrypoint": None},
+            )
+            logger.warning(
+                "Detached entrypoint %s from task %s: %s",
+                previous,
+                task_id,
+                reason,
+            )
+            return {
+                "outcome": "entrypoint_detached",
+                "task_id": task_id,
+                "function_id": int(previous),
+                "reason": reason,
+            }
 
     def _attach_entrypoint_to_definition(
         self,
@@ -1781,7 +1832,7 @@ class TaskScheduler(BaseTaskScheduler):
                 {**task_details, **_sync_identity} if _sync_identity else task_details
             )
             log = self._store.log(entries=entries, new=True)
-            task_id = int(log.entries["task_id"])
+            task_id = assigned_row_id(log, "task_id", context=self._store.context)
             if self._num_tasks_cached is not None:
                 self._num_tasks_cached += 1
 
@@ -2004,7 +2055,65 @@ class TaskScheduler(BaseTaskScheduler):
                     logs=log_ids,
                     entries={"enabled": enabled},
                 )
+            if not enabled:
+                self._withdraw_open_occurrence(task)
         return last_result
+
+    def _withdraw_open_occurrence(self, task: Task) -> None:
+        """Retire the occurrence a disarmed definition would still have fired.
+
+        Disarming the definition is not enough on its own. Projection has
+        already minted the next occurrence and it sits in the ledger as
+        ``scheduled``; the dispatcher works from that row, so the wake still
+        arrives, the run is refused with "task is disabled", and the refusal
+        is recorded as a failed start -- which now also tells the owner their
+        task failed. Pausing something is supposed to be quiet.
+
+        Withdrawing it closes that: no wake, no pod, no failure to explain.
+        Re-arming projects a fresh occurrence, so nothing is lost but the one
+        the user asked not to happen.
+
+        A run already under way is left alone, which is this method's caller's
+        stated contract: disarming stops the next wake, and stopping current
+        work is a cancel. "Open" spans ``running`` too, so the state has to be
+        checked rather than assumed from openness.
+
+        Best-effort: the definition is already disarmed by the time this runs,
+        so the worst case is the old behaviour rather than a broken pause.
+        """
+
+        from .machine_state import get_open_task_execution, update_task_run_record
+
+        try:
+            open_run = get_open_task_execution(
+                assistant_id=SESSION_DETAILS.assistant.agent_id,
+                task_id=int(task.task_id),
+                destination=task.destination,
+            )
+            if open_run is None or not open_run.run_key:
+                return
+            if open_run.state == ExecutionState.running.value:
+                return
+            update_task_run_record(
+                TaskRunReference(
+                    assistant_id=open_run.assistant_id or "",
+                    run_key=open_run.run_key,
+                    source_task_log_id=open_run.source_task_log_id,
+                ),
+                {
+                    "state": ExecutionState.cancelled.value,
+                    "completed_at": _now_iso(),
+                    "result_summary": (
+                        "Withdrawn: the task was paused before this occurrence "
+                        "was due, so it was never dispatched."
+                    ),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Could not withdraw the open occurrence for task %s",
+                task.task_id,
+            )
 
     def list_custom_tasks(
         self,
@@ -3866,7 +3975,32 @@ class _TaskSyncAdapter(CustomSyncAdapter):
             return False
         if not self._entrypoint_resolves(int(stored)):
             return True
-        return live_row.get("custom_hash") != fields.get("custom_hash")
+        return self._distillation_base_moved(live_row, fields)
+
+    @staticmethod
+    def _distillation_base_moved(
+        live_row: Dict[str, Any],
+        fields: Dict[str, Any],
+    ) -> bool:
+        """Whether the source changed in a way a distillation depends on.
+
+        Not the whole content hash. That covers every synced field -- name,
+        priority, tags, schedule, repeat -- so a cosmetic edit read as "the
+        base moved" and threw away a working distillation, forcing a full
+        re-derivation on the next run. Stamping a timezone onto a schedule
+        did exactly that once.
+
+        A distillation is derived from what the task asked for, so only the
+        fields that state the request can invalidate it: the description it
+        was distilled against, and the response policy that governs what the
+        result has to be. Everything else changes when the task runs, not
+        what it does.
+        """
+
+        for field in ("description", "response_policy"):
+            if str(live_row.get(field) or "") != str(fields.get(field) or ""):
+                return True
+        return False
 
     def live_rows(self) -> List[Dict[str, Any]]:
         logs = unisdk.get_logs(

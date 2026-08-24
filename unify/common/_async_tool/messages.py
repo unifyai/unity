@@ -166,6 +166,104 @@ def _rebaseline_watermark_hash(client) -> None:
         client._sent_watermark_hash = _hash_msgs_slice(client.messages[:watermark])
 
 
+_REVIEW_COMPACTION_MARKER = "[compacted after skill review:"
+_REVIEW_COMPACTION_MIN_CHARS = 800
+_REVIEW_COMPACTION_HEAD_CHARS = 300
+
+
+_REASONING_PAYLOAD_KEYS = ("provider_specific_fields", "reasoning_details", "reasoning")
+
+
+def strip_reasoning_payloads(msg: dict) -> int:
+    """Drop provider reasoning machinery from one message, in place.
+
+    Encrypted reasoning blobs and reasoning summaries exist so a provider
+    can continue an in-flight chain of thought; once the turn that
+    produced them is over they are pure re-billed bulk — often the
+    largest single component of a long-lived transcript. The visible
+    ``content`` is never touched. Returns the serialized characters
+    removed (approximate, for accounting).
+    """
+    saved = 0
+    for key in _REASONING_PAYLOAD_KEYS:
+        if key in msg and msg[key] is not None:
+            try:
+                saved += len(json.dumps(msg[key], default=str))
+            except (TypeError, ValueError):
+                saved += 0
+            msg.pop(key, None)
+    return saved
+
+
+def compact_reviewed_messages(client, reviewed_message_count: int) -> int:
+    """Shed the bulk of an already-reviewed transcript span, in place.
+
+    Once a storage review has consolidated a stretch of the transcript into
+    stored functions, guidance and claims, that stretch's raw machinery is
+    dead weight: every later dispatch of a long-lived session re-pays it,
+    and so does every later review. Within the first
+    ``reviewed_message_count`` messages this pass:
+
+    * replaces bulky *tool* result contents with a head slice plus an
+      omission marker, and
+    * strips provider reasoning payloads (encrypted blobs, reasoning
+      summaries) from assistant messages — a completed turn's chain of
+      thought is not needed to continue the session.
+
+    Message identity, ordering and tool_call pairing are untouched, so
+    nothing holding a reference to a message dict ever sees it disappear.
+    User-facing words — requests, requirements, the assistant's visible
+    replies — stay verbatim. Placeholders/progress replies, small
+    contents, image-bearing parts, and already-compacted messages are
+    left alone.
+
+    Mutating below the sent watermark is sanctioned here the same way an
+    escape-hatch splice is: the watermark hash is re-baselined afterwards,
+    trading provider prefix cache for a permanently smaller transcript.
+
+    Returns the number of characters removed.
+    """
+    saved = 0
+    messages = list(getattr(client, "messages", None) or [])
+    span = messages[: max(0, min(reviewed_message_count, len(messages)))]
+    for msg in span:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") == "assistant":
+            saved += strip_reasoning_payloads(msg)
+            continue
+        if msg.get("role") != "tool":
+            continue
+        if is_non_final_tool_reply(msg):
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            if any(
+                not (isinstance(part, dict) and part.get("type") == "text")
+                for part in content
+            ):
+                continue
+            text = "\n".join(str(part.get("text") or "") for part in content)
+        else:
+            continue
+        if len(text) < _REVIEW_COMPACTION_MIN_CHARS:
+            continue
+        if _REVIEW_COMPACTION_MARKER in text or "[img:" in text:
+            continue
+        stub = (
+            f"{text[:_REVIEW_COMPACTION_HEAD_CHARS]}\n… "
+            f"{_REVIEW_COMPACTION_MARKER} "
+            f"{len(text) - _REVIEW_COMPACTION_HEAD_CHARS} chars omitted]"
+        )
+        msg["content"] = stub
+        saved += len(text) - len(stub)
+    if saved:
+        _rebaseline_watermark_hash(client)
+    return saved
+
+
 async def emit_completion_pair(
     result: str,
     call_id: str,

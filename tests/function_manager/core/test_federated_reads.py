@@ -152,9 +152,16 @@ def test_search_functions_uses_federated_ranked_search_contexts(monkeypatch):
         include_implementations=False,
     )
 
-    assert rows == [{"name": "ranked", "_federated_score": 0.1}]
+    # The activation pass annotates each surviving row with its ranking
+    # components; the federated fields themselves must pass through intact.
+    assert len(rows) == 1
+    assert rows[0]["name"] == "ranked"
+    assert rows[0]["_federated_score"] == 0.1
+    assert {"_similarity", "_standing", "_retrieval_score"} <= set(rows[0])
     assert captured["references"] == {"embedding_text": "rank useful functions"}
-    assert captured["limit"] == 7
+    # Search overfetches beyond n so scope-dropped rows cannot leave the
+    # caller short; the default policy is max(n + 4, n * 3) capped at 50.
+    assert captured["limit"] == 21
     assert captured["kwargs"] == {"unique_id_field": "function_id", "backfill": True}
 
     contexts = captured["contexts"]

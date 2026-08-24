@@ -11,7 +11,11 @@ import threading
 
 import unisdk
 
-from ..common.log_utils import log as unity_log, create_logs as unity_create_logs
+from ..common.log_utils import (
+    assigned_row_id,
+    create_logs as unity_create_logs,
+    log as unity_log,
+)
 from ..common.authorship import strip_authoring_assistant_id
 from ..common.tool_outcome import ToolErrorException, ToolOutcome
 from ..common.model_to_fields import model_to_fields
@@ -720,7 +724,9 @@ class GuidanceManager(BaseGuidanceManager):
         )
         return {
             "outcome": "guidance created successfully",
-            "details": {"guidance_id": log.entries["guidance_id"]},
+            "details": {
+                "guidance_id": assigned_row_id(log, "guidance_id", context=context),
+            },
         }
 
     @functools.wraps(BaseGuidanceManager.update_guidance, updated=())

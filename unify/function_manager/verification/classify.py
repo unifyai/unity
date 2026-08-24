@@ -181,6 +181,9 @@ PRIMITIVE_EFFECT_CLASSES: Dict[str, SideEffectClass] = {
     # transcripts / web
     "primitives.transcripts.ask": _S.read_only,
     "primitives.web.ask": _S.read_only,
+    # a fetch reads the public internet but writes the bytes to a path derived
+    # from the URL, so repeating it converges rather than accumulating
+    "primitives.web.fetch": _S.idempotent_effectful,
     # workspace email
     "primitives.workspace_email.get_message": _S.read_only,
     "primitives.workspace_email.list_messages": _S.read_only,

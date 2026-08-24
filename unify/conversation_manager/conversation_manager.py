@@ -2,6 +2,7 @@ import asyncio
 import collections
 import contextlib
 import json
+import math
 import time
 import traceback
 from datetime import datetime
@@ -76,6 +77,11 @@ IDLE_SMALLTALK_RECENT_COMMS_SECONDS = 20.0
 RECENT_TOOL_EXECUTIONS_LIMIT = 20
 RECENT_TOOL_PREVIEW_CHARS = 500
 CREDIT_GATE_REPLY_THROTTLE_SECONDS = 300
+# Upper bound a slow-brain turn holds for boot hydration before rendering
+# anyway. Hydration is one EventBus search (seconds); a hold that outlives
+# this bound means hydration is stuck, and an eager reply from the
+# pre-hydration view beats indefinite silence.
+BOOT_HYDRATION_MAX_WAIT_SECONDS = 30.0
 ONBOARDING_OUTBOUND_CONTEXT_TTL_SECONDS = 120
 # How long a Console presence heartbeat keeps the Console orientation block in
 # the prompt. Comfortably longer than Console's keep-warm interval so a user who
@@ -404,6 +410,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # initialization state
         self.initialized: bool = False
+        # Open ⇒ slow-brain turns may render. ``init_conv_manager`` closes it
+        # for the window between boot and global-thread hydration; hydration
+        # completion (restored, empty, or failed) reopens it. Steady-state
+        # turns therefore never wait on it. See ``_run_llm`` for why a turn
+        # must not render from a pre-hydration view.
+        self._hydration_gate: asyncio.Event = asyncio.Event()
+        self._hydration_gate.set()
         self.ready_for_brain: bool = True
         self.vm_ready: bool = False
         self.file_sync_complete: bool = False
@@ -2401,6 +2414,33 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         from ..events.cost_attribution import COST_ATTRIBUTION
 
+        # Hold the turn while boot hydration is still landing. A reply
+        # rendered from a pre-hydration view answers with confident ignorance
+        # about a conversation whose history is seconds from appearing, and
+        # the post-init follow-up turn cannot reliably repair a wrong first
+        # answer already sent. Serving during init is otherwise unchanged:
+        # the gate reopens the moment hydration resolves, well before manager
+        # init finishes, so pre-init replies still happen — just never from
+        # an empty view of a non-empty conversation.
+        if not self._hydration_gate.is_set():
+            _gate_t0 = _rl_time.perf_counter()
+            try:
+                await asyncio.wait_for(
+                    self._hydration_gate.wait(),
+                    timeout=BOOT_HYDRATION_MAX_WAIT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                LOGGER.warning(
+                    f"{DEFAULT_ICON} [ConversationManager] Boot hydration "
+                    f"still pending after {BOOT_HYDRATION_MAX_WAIT_SECONDS:.0f}s "
+                    "— rendering this turn without hydrated history",
+                )
+            log_startup_timing(
+                LOGGER,
+                "⏱️ [StartupTiming] first_reply.hydration_gate_wait duration=%.2fs",
+                _rl_time.perf_counter() - _gate_t0,
+            )
+
         _preamble_t0 = _rl_time.perf_counter()
         _last_preamble_step = _preamble_t0
 
@@ -3061,7 +3101,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             # Initialization is triggered by StartupEvent handler which
             # sets details before starting init. Do not duplicate here.
 
-            while True:
+            # A retired session stops listening: once `stop` is set the broker
+            # has been (or is about to be) closed, so nothing new can arrive,
+            # and an in-process successor must not find this loop still
+            # holding the old session's machinery.
+            while not self.stop.is_set():
                 msg = await pubsub.get_message(
                     timeout=2,
                     ignore_subscribe_messages=True,
@@ -3242,16 +3286,33 @@ class ConversationManager(metaclass=SingletonABCMeta):
         ghost_counter = 0
         suspect_streak = 0
 
-        while True:
+        while not self.stop.is_set():
             await asyncio.sleep(self.inactivity_check_interval)
+            # An explicit retirement (stop_async, SIGTERM) sets `stop` from
+            # outside this loop; every internal exit already breaks after
+            # `_request_shutdown`, so this check only ends the watch when
+            # somebody else decided the session is over.
+            if self.stop.is_set():
+                break
             # A duration, not a check count. The previous constant (20 checks)
             # was tuned when the timeout was 420s, so it silently became a
             # different policy every time the timeout moved. Read per pass
-            # because the timeout is mutable at runtime.
+            # because the timeout is mutable at runtime. A disabled timeout
+            # (``inf``, via UNIFY_INACTIVITY_TIMEOUT_SECONDS=0) falls back to
+            # the 600s floor: the ghost branch can never fire then (pubsub
+            # can never out-idle an infinite timeout), but ``int(inf)`` would
+            # kill this whole loop with OverflowError on its first pass.
             ghost_checks_needed = max(
                 2,
                 int(
-                    max(600.0, self.inactivity_timeout)
+                    max(
+                        600.0,
+                        (
+                            self.inactivity_timeout
+                            if math.isfinite(self.inactivity_timeout)
+                            else 600.0
+                        ),
+                    )
                     / self.inactivity_check_interval,
                 ),
             )
@@ -4158,8 +4219,52 @@ class ConversationManager(metaclass=SingletonABCMeta):
             )
             await asyncio.sleep(2)
 
+    async def _retire_in_flight_actions(self) -> None:
+        """Discard the in-flight action registry the way a pod exit does.
+
+        Idle retirement discards a parked session's Python state by exiting
+        the process; an in-process retirement must do that discarding itself,
+        and it must not wait on work that may never finish — a persist-mode
+        act parked for an interjection, or a provider call that has hung.
+        Every handle gets one stop request under a single shared grace
+        period; whatever ignores it is abandoned along with the registry.
+        """
+        stops = []
+        for handle_data in list(self.in_flight_actions.values()):
+            handle = handle_data.get("handle")
+            if handle is None:
+                continue
+            if hasattr(handle, "trigger_completion"):
+                handle.trigger_completion()
+            else:
+                # Stopping an already-finished handle is a no-op, so no
+                # done() probe — its signature varies across handle types.
+                stops.append(
+                    asyncio.ensure_future(handle.stop(reason="session retired")),
+                )
+        if stops:
+            done, pending = await asyncio.wait(stops, timeout=5.0)
+            for task in done:
+                if not task.cancelled() and task.exception() is not None:
+                    self._session_logger.info(
+                        "session_end",
+                        f"In-flight action stop failed during retirement: "
+                        f"{task.exception()!r}",
+                    )
+            for task in pending:
+                task.cancel()
+            if pending:
+                self._session_logger.info(
+                    "session_end",
+                    f"Abandoned {len(pending)} in-flight action(s) that did "
+                    "not stop within the retirement grace period",
+                )
+        self.in_flight_actions.clear()
+        self.completed_actions.clear()
+
     async def cleanup(self):
         """Clean up any running call processes and file sync."""
+        await self._retire_in_flight_actions()
         await self.store_chat_history()
         refresh_task = self._coordinator_state_refresh_task
         if refresh_task is not None and not refresh_task.done():

@@ -25,6 +25,16 @@ from unify.task_scheduler.task_scheduler import TaskScheduler
 
 pytestmark = pytest.mark.asyncio
 
+
+@pytest.fixture(autouse=True)
+def _verification_enabled(monkeypatch):
+    """This module derives eligibility from the trust ledger; the master
+    switch defaults off, so hold it on for every test here."""
+    from unify.settings import SETTINGS
+
+    monkeypatch.setattr(SETTINGS.function.verification, "enabled", True)
+
+
 _HELPER = "def helper(x: int) -> int:\n    return x * 2\n"
 _ROOT = (
     "def offline_root(x: int = 1) -> int:\n"

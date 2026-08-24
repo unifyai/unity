@@ -38,3 +38,16 @@ def test_ensure_preserves_explicit_assistant_identity(monkeypatch):
     assert os.environ["ASSISTANT_EMAIL"] == "custom@test.example.com"
     assert os.environ["ASSISTANT_NUMBER"] == "+15559998888"
     assert os.environ["ASSISTANT_WHATSAPP_NUMBER"] == "+15557776666"
+
+
+def test_ensure_blanks_ambient_platform_identity(monkeypatch):
+    """A hosted assistant pinned in the machine's .env must not leak into CM
+    test boots: populate_from_env skips blank values, so agent_id stays None
+    and the boot's ownership binding never consults the platform record."""
+    monkeypatch.setenv("ASSISTANT_ID", "524")
+    monkeypatch.setenv("OWNER_TEAM_ID", "7")
+
+    ensure_test_assistant_identity_env()
+
+    assert os.environ["ASSISTANT_ID"] == ""
+    assert os.environ["OWNER_TEAM_ID"] == ""

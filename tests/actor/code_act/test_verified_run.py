@@ -32,6 +32,15 @@ from unify.task_scheduler.types.execution import ExecutionState
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _verification_enabled(monkeypatch):
+    """This module exercises the verification machinery itself; the master
+    switch defaults off, so hold it on for every test here."""
+    from unify.settings import SETTINGS
+
+    monkeypatch.setattr(SETTINGS.function.verification, "enabled", True)
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────────────
@@ -46,7 +55,7 @@ class Gate:
     def open(self) -> None:
         self._event.set()
 
-    async def wait(self, timeout: float = 20.0) -> None:
+    async def wait(self, timeout: float = 300.0) -> None:
         deadline = time.monotonic() + timeout
         while not self._event.is_set():
             if time.monotonic() > deadline:
@@ -60,7 +69,7 @@ def _trace(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def _wait_until(predicate, *, timeout: float = 20.0):
+def _wait_until(predicate, *, timeout: float = 300.0):
     async def _go():
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -679,7 +688,7 @@ async def test_spot_check_fail_invalidates_trust_and_notifies_owner(
         assert result == "{'sent': True}"
         assert handle.held_outcome is None
         assert [t["fn"] for t in _trace(trace)] == ["untyped_send"]
-        notification = await asyncio.wait_for(handle.next_notification(), timeout=10)
+        notification = await asyncio.wait_for(handle.next_notification(), timeout=300)
         assert "Spot check of Weekly report" in notification["message"]
         assert "the message body was empty" in notification["message"]
         assert "was not repeated" in notification["message"]

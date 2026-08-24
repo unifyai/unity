@@ -469,6 +469,13 @@ class EventBus:
         # runtime subscriptions (id → Subscription)
         self._subscriptions: Dict[str, Subscription] = {}
 
+        # The event loop that owns the asyncio primitives below (lock,
+        # events, background tasks). The bus itself is process-global and
+        # outlives any one ConversationManager session; `_adopt_running_loop`
+        # uses this to detect that the owning loop is gone and the primitives
+        # must be recreated for the successor.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
         # Deferred persistence buffer: (entries_dict, context_name) pairs
         # accumulated during publish() and flushed in batch via flush()/clear().
         self._pending_writes: list[tuple[dict, str]] = []
@@ -498,6 +505,7 @@ class EventBus:
             # No loop yet (import time in sync context) – we'll launch lazily.
             pass
         else:
+            self._loop = loop
             self._prefill_task = loop.create_task(self._async_initial_hydration())
 
     # ------------------------------------------------------------------
@@ -599,8 +607,24 @@ class EventBus:
         finally:
             self._prefill_done.set()
 
-        if self._periodic_flush_task is None:
-            self._periodic_flush_task = asyncio.create_task(self._periodic_flush_loop())
+        self._ensure_periodic_flush_task()
+
+    def _ensure_periodic_flush_task(self) -> None:
+        """Keep the periodic flusher alive on the current running loop.
+
+        The flusher is a task on whatever loop first touched the bus. An
+        embedder that replaces its event loop mid-process (an in-process CM
+        reboot) strands that task on the dead loop; without this check every
+        later publish buffers into ``_pending_writes`` forever, no row
+        reaches Orchestra, and the next boot's hydration truthfully finds
+        nothing to restore.
+        """
+        task = self._periodic_flush_task
+        if task is not None and not task.done() and not task.get_loop().is_closed():
+            return
+        self._periodic_flush_task = asyncio.get_running_loop().create_task(
+            self._periodic_flush_loop(),
+        )
 
     async def _periodic_flush_loop(self) -> None:
         """Background task that drains _pending_writes at a fixed cadence."""
@@ -735,12 +759,14 @@ class EventBus:
         Call this at the top of any *public* coroutine that needs the
         internal state to be fully initialised.
         """
+        self._adopt_running_loop()
         if self._prefill_done.is_set():
             if self._prefill_exc:
                 raise self._prefill_exc
             return
 
         if self._prefill_task is None:
+            self._loop = asyncio.get_running_loop()
             self._prefill_task = asyncio.create_task(self._async_initial_hydration())
 
         await self._prefill_done.wait()
@@ -760,9 +786,56 @@ class EventBus:
         try:
             loop = asyncio.get_running_loop()
             if self._prefill_task is None:
+                self._loop = loop
                 self._prefill_task = loop.create_task(self._async_initial_hydration())
         except RuntimeError:
             pass
+
+    def _adopt_running_loop(self) -> None:
+        """Recreate loop-owned primitives when their owning loop is dead.
+
+        The bus is a process-global singleton, but its lock, events, futures
+        and background tasks belong to the one event loop that created them.
+        An in-process reboot — a fresh ConversationManager on a new loop over
+        the same durable world — must not inherit a lock still held by a task
+        frozen on the dead loop, or wait on futures no live loop will ever
+        resolve: both block the successor silently until some outer timeout
+        fires. When the recorded owner is no longer running, the primitives
+        are recreated on the current loop. Completed hydration carries over;
+        hydration frozen mid-flight restarts lazily; orphaned callback
+        futures are dropped, because the tasks behind them can never run
+        again. A live owning loop is never preempted.
+        """
+        loop = asyncio.get_running_loop()
+        owner = self._loop
+        if owner is loop:
+            return
+        if owner is not None and owner.is_running() and not owner.is_closed():
+            return
+        self._loop = loop
+        if owner is None:
+            # First use from a coroutine: nothing was ever bound, so the
+            # existing primitives are safe to keep.
+            return
+        LOGGER.info(
+            "EventBus owning loop is gone; rebinding primitives to the " "current loop",
+        )
+        self._lock = asyncio.Lock()
+        hydrated = self._prefill_done.is_set()
+        prefill_exc = self._prefill_exc
+        self._prefill_done = asyncio.Event()
+        if hydrated:
+            self._prefill_done.set()
+            self._prefill_exc = prefill_exc
+        else:
+            # Frozen mid-hydration on the dead loop: let the next caller
+            # schedule a fresh hydration on this loop.
+            self._prefill_task = None
+            self._prefill_exc = None
+        self._callback_futures.clear()
+        self._periodic_flush_task = (
+            loop.create_task(self._periodic_flush_loop()) if hydrated else None
+        )
 
         # ------------------------------------------------------------------
         #  Pinning helpers
@@ -899,7 +972,9 @@ class EventBus:
         if not EventBus._publishing_enabled:
             return
 
+        self._adopt_running_loop()
         self._lazy_start_hydration_if_needed()
+        self._ensure_periodic_flush_task()
         # Best-effort wait for hydration so row_id counters are initialised.
         # If prefill failed (e.g. Orchestra 500s), degrade gracefully: assign
         # row_ids from zero and keep routing events in-process.  Persistence
@@ -1232,6 +1307,7 @@ class EventBus:
         merged into one time-ordered list, then drop the first *offset* entries
         and return up to *limit* that follow.
         """
+        self._adopt_running_loop()
         # 0. Work out which semantics we're in ---------------------------------
         combined_window = isinstance(offset, int) and isinstance(limit, int)
 
@@ -1594,6 +1670,7 @@ class EventBus:
         Use this instead of join_callbacks when calling from async code to avoid
         deadlocks with nest_asyncio.
         """
+        self._adopt_running_loop()
         cutoff = self._callback_seq
 
         while True:

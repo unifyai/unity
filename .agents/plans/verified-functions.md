@@ -34,6 +34,49 @@ Orchestra treats `held` as terminal (`07641c6b`). Written against
 `staging` @ `5ec185ada` (2026-08-17). Line numbers below are approximate
 as of that commit; symbols are exact. Re-verify both before editing.
 
+**Conversational arm (2026-08-21).** The refinement track showed the
+compiled steady state existed only on the cron-fired path: recurring work
+driven turn-by-turn through one persist=True `act` session never engaged
+distillation, because the post-run review only fires when a session
+completes and a persist loop never self-completes — six structurally
+identical weekly requests replanned live every week (9–13 calls,
+368k–718k prompt tokens/week, rising ~75k/week; unifyai/colleague GH runs
+32509789685 / 32508329275 / 32512181620). Fixed in `f1b21a1b5`: the
+persist-mode turn boundary is now a review boundary. `_StorageCheckHandle`
+runs the librarian after each completed turn that ran tools (serialized,
+coalescing), records each summary as a proactive pass for the final
+on-stop review, and delivers it into the live loop as a `_transcript_note`
+— a loop-authored user notice appended at the safe drain points without
+granting an LLM turn. The review prompt gains a live-session framing plus
+a "Recurring Deliverables Without A Task" section (the conversational
+analogue of the entrypoint review: stated-but-dormant rules belong in the
+stored function, refinements are `overwrite=True` edits, summaries name
+function ids so the next request executes the stored function), and the
+persist-mode actor prompt now states the per-turn schedule and the
+convergence contract. Three follow-up commits flattened the session
+curve: `d8173f138` (reviewed turns shed their tool payloads in place via
+a `_compact_transcript` sentinel + the no-op review concludes in one
+sentence + repeat requests are one execution and a report),
+`ec1c4ce25` (the reviewed-span compactor also strips provider reasoning
+payloads — encrypted blobs and summaries were the dominant transcript
+bulk, re-billed every dispatch and unreadable in the librarian prompt),
+and `ec767a6c0` (a persist loop sheds completed-turn reasoning at every
+park, without waiting for the review to cover the span). Four live
+refinement rounds from these commits (results in
+`colleague/tracks/refinement/results/2026-08-21T*-unify-*`): every round
+6/6 weeks pass + control UNSUPPORTED-as-designed — the week-4 paraphrase
+and week-5 dormant-rule guards held in all four, and the stored skeleton
+fired its scoped `query_llm` joints (~0.5k tokens each) every round.
+Cost: run totals 7.93M → 5.29M prompt tokens; week 1 1.02M → 259k;
+replay weeks ~420–580k including the librarian; the session context is
+now sawtooth-bounded (~45–90k) instead of rising without limit. What
+remains above the cron path's few-thousand-token steady state is the
+conversational surface's floor — each turn still pays the ~16k system
+prompt across ~6–10 framing calls plus the turn review — and trap/
+amendment weeks where the model chooses to re-verify semantics
+(1.4–2.8M on one such week per round, which week varying with
+sampling).
+
 **Thesis.** A recurring task's steady state is a stored function firing with
 no model in the loop. Today the harness reaches that state by one librarian
 judgement after one successful run, with no independent check that the

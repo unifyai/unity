@@ -24,6 +24,16 @@ from unify.function_manager.types.verification import (
 from unify.guidance_manager.guidance_manager import GuidanceManager
 from unify.manager_registry import ManagerRegistry
 
+
+@pytest.fixture(autouse=True)
+def _verification_enabled(monkeypatch):
+    """This module exercises the trust machinery itself; the master switch
+    defaults off, so hold it on for every test here."""
+    from unify.settings import SETTINGS
+
+    monkeypatch.setattr(SETTINGS.function.verification, "enabled", True)
+
+
 _PURE = "def add(a: int, b: int) -> int:\n    return a + b\n"
 _READ = (
     "async def lookup(q: str) -> str:\n    return await primitives.contacts.ask(q)\n"

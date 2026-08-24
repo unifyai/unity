@@ -39,6 +39,10 @@ from ..common.handle_wrappers import HandleWrapperMixin
 
 logger = logging.getLogger(__name__)
 _TASK_RUN_SUMMARY_LIMIT = 4000
+#: Held runs in a row before a task gives up on its entrypoint. Two, because
+#: one hold is an incident and two is a pattern -- and every further one is
+#: another occurrence that silently delivered nothing.
+_CONSECUTIVE_HOLDS_BEFORE_DETACH = 2
 
 
 def _resolve_active_task_run_key(
@@ -426,6 +430,48 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             return
         await waiter()
 
+    def _detach_entrypoint_if_persistently_held(self) -> None:
+        """Give up on an entrypoint that has held every recent occurrence.
+
+        A hold means nothing was sent. One is a bad day; a run of them is a
+        task that will never deliver again, because the definition still
+        names the entrypoint and every wake repeats the same refusal. The
+        ledger already knows -- it records the state of every occurrence --
+        so the decision needs no new bookkeeping.
+
+        Detaching is safe: the task planned from scratch before any
+        entrypoint existed, so the next wake degrades to slower and correct
+        rather than fast and silent. Best-effort, and never at the cost of
+        the run's own recording: a task that just held is in no worse a
+        position if this fails.
+        """
+
+        if self._scheduler is None or self._task_id is None:
+            return
+        try:
+            from .machine_state import list_task_run_history
+
+            history = list_task_run_history(
+                task_id=int(self._task_id),
+                limit=_CONSECUTIVE_HOLDS_BEFORE_DETACH,
+            )
+            if len(history) < _CONSECUTIVE_HOLDS_BEFORE_DETACH:
+                return
+            if any(str(run.get("state")) != "held" for run in history):
+                return
+            self._scheduler.detach_entrypoint_from_definition(
+                task_id=int(self._task_id),
+                reason=(
+                    f"{_CONSECUTIVE_HOLDS_BEFORE_DETACH} consecutive held runs; "
+                    "falling back to planning so the task delivers again"
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "Could not evaluate entrypoint detachment for task %s",
+                self._task_id,
+            )
+
     async def _persist_task_run_terminal_state(
         self,
         *,
@@ -511,6 +557,11 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                         error=str(error) if error is not None else None,
                         extra=extra or None,
                     )
+
+                    if final_status == "held" and self._task_id is not None:
+                        await asyncio.to_thread(
+                            self._detach_entrypoint_if_persistently_held,
+                        )
 
                     if (
                         self._scheduler

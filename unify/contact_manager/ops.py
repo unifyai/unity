@@ -9,7 +9,7 @@ from ..common.authorship import (
     AUTHORING_ASSISTANT_ID_FIELD,
     strip_authoring_assistant_id,
 )
-from ..common.log_utils import log as unity_log
+from ..common.log_utils import assigned_row_id, log as unity_log
 from ..common.tool_outcome import ToolOutcome
 from .types.contact import Contact
 
@@ -321,13 +321,14 @@ def create_contact(
         mutable=True,
         stamp_authoring=True,
     )
+    contact_id = assigned_row_id(log, "contact_id", context=context_name)
     try:
         store.put(log.entries)
     except Exception:
         pass
     return {
         "outcome": "contact created successfully",
-        "details": {"contact_id": log.entries["contact_id"]},
+        "details": {"contact_id": contact_id},
     }
 
 

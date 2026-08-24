@@ -41,6 +41,10 @@ class TasksStore:
         self._ctx = context
         self._project = project or unisdk.active_project()
 
+    @property
+    def context(self) -> str:
+        return self._ctx
+
     # ----------------------------- Context ---------------------------------
     def ensure_context(
         self,

@@ -979,133 +979,73 @@ _STORAGE_WHAT_CAN_BE_STORED = (
 
 _STORAGE_THREE_STORES = (
     "## Three Stores\n\n"
-    "You have access to three complementary stores:\n\n"
     "### Function Store — the *what*\n\n"
-    "The FunctionManager stores concrete, reusable function "
-    "implementations — the building blocks. Each entry is a "
-    "single callable with a clear name, docstring, and implementation.\n\n"
-    "Actions:\n"
-    "- **Add** a genuinely new, reusable function "
-    "(`FunctionManager_add_functions`). If the function imports "
-    "third-party packages, you **must** supply `venv_id`.\n"
-    "- **Update** an existing function with a better implementation "
-    "(`FunctionManager_add_functions` with `overwrite=True`).\n"
-    "- **Merge** overlapping functions into one general-purpose function: "
-    "add the merged version, then delete the old entries "
-    "(`FunctionManager_delete_function`).\n"
-    "- **Delete** functions that are redundant or superseded "
-    "(`FunctionManager_delete_function`).\n"
-    "- **Manage venvs**: create (`FunctionManager_add_venv`), list "
-    "(`FunctionManager_list_venvs`), update "
-    "(`FunctionManager_update_venv`), or delete "
-    "(`FunctionManager_delete_venv`) virtual environments for "
-    "functions with third-party dependencies. Link a function to a "
-    "venv via `FunctionManager_set_function_venv` or pass `venv_id` "
-    "directly to `FunctionManager_add_functions`.\n"
-    "- **Shape verification** of a stored function: confirm its effect "
-    "class within the detected bound (`confirm_side_effect_class`) and "
-    "raise its trust bar (`set_verification_policy`). Neither grants "
-    "trust; verdicts from independent verification do.\n\n"
-    "Do NOT store trivial one-liners, test scaffolding, or functions "
-    "that are too task-specific to be reusable.\n\n"
+    "The FunctionManager stores concrete reusable callables. Add a "
+    "genuinely new function with `FunctionManager_add_functions` "
+    "(`venv_id` required for third-party imports; venvs are managed via "
+    "`FunctionManager_add_venv` / `list_venvs` / `update_venv` / "
+    "`delete_venv` / `set_function_venv`). Revise an existing function in "
+    "place with `overwrite=True`. When a new function subsumes narrower "
+    "variants, delete the superseded entries "
+    "(`FunctionManager_delete_function`). Shape verification with "
+    "`confirm_side_effect_class` and `set_verification_policy` — neither "
+    "grants trust; verdicts from independent verification do. Do NOT "
+    "store trivial one-liners, test scaffolding, or functions too "
+    "task-specific to be reusable.\n\n"
     "### Guidance Store — the *how*\n\n"
-    "The GuidanceManager stores procedural how-to entries: "
-    "step-by-step instructions, standard operating procedures, "
-    "software usage walkthroughs, and strategies for composing "
-    "multiple functions together to accomplish broader tasks. "
-    "Think of guidance entries as recipes or playbooks — they "
-    "describe the procedure, decision points, and caveats, "
-    "rather than containing executable code.\n\n"
-    "In this storage-review context, guidance is most relevant "
-    "when the trajectory reveals a non-obvious multi-step "
-    "composition strategy that would be hard to rediscover. "
-    "A single function call, a linear sequence of obvious steps, "
-    "or a procedure fully explained by the individual function "
-    "docstrings does NOT need guidance. Exception: if a simple "
+    "The GuidanceManager stores procedural recipes: multi-step "
+    "compositions, SOPs, and decision points — prose that references "
+    "functions, not executable code (`GuidanceManager_add_guidance` / "
+    "`GuidanceManager_update_guidance` / `GuidanceManager_delete_guidance`, "
+    "cross-referencing concrete functions via `function_ids`).\n\n"
+    "Guidance earns its entry only when a composition strategy is "
+    "non-obvious and would be hard to rediscover — or when a simple "
     "*domain* operation required a non-obvious correction (an "
-    "error-recovery loop against an external API, a silent data "
-    "failure mode, a precondition of the problem domain discovered "
-    "through trial and error), the corrected approach IS worth "
-    "storing as guidance — the value is in the domain insight, not "
-    "the code complexity.\n\n"
-    "Do NOT store agent-runtime or tooling meta-tips as guidance: "
-    "how `FunctionManager_add_functions` interacts with "
-    "`execute_code` namespaces, when to rediscover/`execute_function` "
-    "after an add, NameError-until-injection quirks, clarification "
-    "tool usage, or other CodeActActor loop plumbing. Those are "
-    "session mechanics, not reusable domain playbooks.\n\n"
-    "When the only reusable artifact is one standalone function and its "
-    "docstring fully explains its inputs, behavior, and use, store the "
-    "function only and finish the review. Do not manufacture a wrapper "
-    "procedure that merely restates the function contract, and do not "
-    "turn the act of writing/testing that function into guidance.\n\n"
+    "error-recovery loop against an external API, a silent data failure "
+    "mode, a precondition discovered by trial and error): there the "
+    "domain insight is the value. Do NOT store agent-runtime or tooling "
+    "meta-tips (tool-loop plumbing, namespace-injection quirks, "
+    "clarification-tool usage) — those are session mechanics, not domain "
+    "playbooks. Do NOT duplicate what a function docstring already "
+    "explains: when the only reusable artifact is one standalone function "
+    "whose docstring fully covers its use, store the function and finish "
+    "the review — no wrapper procedure restating its contract.\n\n"
     "**Shared rules and policies are the other first-class use of "
-    "guidance.** When the instructions a procedure was built from embed a "
-    "durable rule, policy, or convention that is not intrinsic to that one "
-    "procedure — a rule that could equally govern other procedures, now or "
-    "later (thresholds, routing or escalation criteria, formatting or tone "
-    "conventions, approval rules) — the canonical statement of that rule "
-    "belongs in ONE guidance entry, linked via `function_ids` to every "
-    "stored function that applies it. Search guidance for an existing "
-    "statement of the rule first: when one exists, update it to include "
-    "the new function's id in `function_ids` instead of writing a second "
-    "copy; when none exists, add a single entry carrying the rule and link "
-    "it. A shared rule qualifies for a guidance entry even when its "
-    "procedure is simple — the entry's value is having one canonical, "
-    "linked home for the rule, not procedural complexity. Functions may "
-    "still bake the rule's current parameters into their implementation "
-    "for deterministic execution; name the linked guidance entry in the "
-    "function's docstring so future revisions know where the canonical "
-    "statement lives. When such a rule changes later, the entry's "
-    "`function_ids` enumerate exactly which functions must be revised — "
-    "keeping those links complete at storage time is what makes that "
-    "maintenance reliable.\n\n"
-    "Actions:\n"
-    "- **Add** guidance for a genuinely non-trivial compositional "
-    "procedure (`GuidanceManager_add_guidance`). Include `function_ids` "
-    "to cross-reference the concrete functions it describes.\n"
-    "- **Update** existing guidance that is incomplete or "
-    "superseded (`GuidanceManager_update_guidance`).\n"
-    "- **Delete** guidance that is obsolete or redundant "
-    "(`GuidanceManager_delete_guidance`).\n\n"
-    "Do NOT duplicate information that already lives in a "
-    "function's docstring. Do NOT create guidance for simple or "
-    "self-explanatory procedures.\n\n"
+    "guidance.** A durable rule that could equally govern other "
+    "procedures (thresholds, routing or escalation criteria, formatting "
+    "or tone conventions, approval rules) belongs in ONE canonical "
+    "guidance entry, linked via `function_ids` to every stored function "
+    "that applies it — even when the procedure itself is simple. Search "
+    "guidance for an existing statement of the rule first and link the "
+    "new function into it rather than writing a second copy. Functions "
+    "may bake the rule's current parameters into their implementation; "
+    "name the linked entry in the function's docstring. When the rule "
+    "changes later, the entry's `function_ids` enumerate exactly which "
+    "functions must be revised — complete links at storage time are what "
+    "make that maintenance reliable.\n\n"
     "### Knowledge Store — the *is*\n\n"
     "The KnowledgeManager stores durable sourced claims: facts, "
     "policies, definitions, decisions, constraints, insights, and "
-    "preferences. Each claim should carry provenance "
-    "(`source_refs`) when possible.\n\n"
-    "The bar is high. Only store durable non-person, non-procedure, "
-    "non-secret claims that future sessions would otherwise have to "
-    "rediscover. Contact attributes belong in ContactManager; "
-    "procedures belong in GuidanceManager; credentials belong in "
-    "SecretManager. A no-op is fine — most trajectories yield no "
-    "new knowledge claims.\n\n"
-    "Actions (when KnowledgeManager tools are available):\n"
-    "- **Search/filter** before writing "
-    "(`KnowledgeManager_search` / `KnowledgeManager_filter`).\n"
-    "- **Add** a new claim (`KnowledgeManager_add_knowledge`) with "
-    "provenance when known.\n"
-    "- **Update** an existing claim in place "
-    "(`KnowledgeManager_update_knowledge`).\n"
-    "- **Invalidate** or **supersede** when a claim is withdrawn or "
-    "replaced (`KnowledgeManager_invalidate_knowledge` / "
-    "`KnowledgeManager_supersede_knowledge`).\n"
-    "- **Delete** only when hard removal is appropriate "
-    "(`KnowledgeManager_delete_knowledge`).\n\n"
-    "### Relationship between the three stores\n\n"
-    "| Aspect | FunctionManager | GuidanceManager | KnowledgeManager |\n"
-    "|--------|----------------|----------------|------------------|\n"
-    "| Role | the *what* | the *how* | the *is* |\n"
-    "| Granularity | Single callable | Multi-step procedure | Typed claim |\n"
-    "| Content | Executable implementation | Natural-language recipe | Sourced statement |\n"
-    "| Analogy | A tool's docstring | A prompt that references tools | A fact with provenance |\n\n"
-    "When a trajectory reveals both a useful function AND a non-trivial "
-    "procedure that uses it, store the function first, then create a "
-    "guidance entry referencing it via `function_ids`. Store knowledge "
-    "claims only when the trajectory surfaces durable domain facts "
-    "worth remembering independently of how to act on them.\n\n"
+    "preferences, carrying provenance (`source_refs`) when known. "
+    "Search/filter before writing (`KnowledgeManager_search` / "
+    "`KnowledgeManager_filter`); add with "
+    "`KnowledgeManager_add_knowledge`; revise in place with "
+    "`KnowledgeManager_update_knowledge`; retire with "
+    "`KnowledgeManager_invalidate_knowledge` / "
+    "`KnowledgeManager_supersede_knowledge`, or "
+    "`KnowledgeManager_delete_knowledge` when hard removal is "
+    "appropriate. The bar is high: only durable non-person, "
+    "non-procedure, non-secret claims future sessions would otherwise "
+    "rediscover — contact attributes belong in ContactManager, "
+    "procedures in GuidanceManager, credentials in SecretManager. A "
+    "no-op is fine; most trajectories yield no new claims.\n\n"
+    "### Composing the stores\n\n"
+    "Function = executable *what*; guidance = natural-language *how* "
+    "referencing functions; knowledge = sourced *is*. When a trajectory "
+    "reveals both a useful function and a non-trivial procedure using "
+    "it, store the function first, then a guidance entry referencing it "
+    "via `function_ids`. Store claims only when durable domain facts "
+    "matter independently of how to act on them.\n\n"
 )
 
 _STORAGE_SUB_AGENT_PATTERNS = (
@@ -1157,42 +1097,84 @@ _STORAGE_SUB_AGENT_PATTERNS = (
     "right tool selection, scoping, or behavioral guidelines.\n\n"
 )
 
+_STORAGE_RECURRING_DELIVERABLE = (
+    "## Recurring Deliverables Without A Task\n\n"
+    "A deliverable can be recurring with no scheduled task: the requester "
+    'hands the job over once ("every week, ...") and simply asks again '
+    "each time. Converge exactly as for a recurring task, with the "
+    "conversation as the trigger. The first successful production is the "
+    "evidence for a stored function named after the deliverable: skeleton "
+    "in deterministic code, each judging substep at its own notch on the "
+    "dial. Stated-but-dormant requirements belong in the function — a rule "
+    'the requester stated ("if X ever happens, do Y") is evidence even '
+    "unexercised — but never freeze structure neither stated nor observed; "
+    "outside that envelope the function raises or returns early rather "
+    "than guessing. Later instances refine the same function in place "
+    "(`FunctionManager_add_functions` with `overwrite=True`), never "
+    "near-duplicates. Then say so in your summary — name, numeric "
+    "`function_id`, and calling convention — so the live session executes "
+    "the stored function next time instead of re-deriving the procedure.\n\n"
+)
+
 _STORAGE_BASE_INSTRUCTIONS = (
     "## Instructions\n\n"
-    "1. Review the trajectory for reusable patterns.\n"
-    "   Additionally, look for **pitfall patterns** — cases where the "
-    "trajectory reveals that an obvious approach failed in a non-obvious "
-    "way (a silent data loss, a missing property, a precondition the API "
-    "doesn't enforce). These patterns have high reuse value even when the "
-    "corrected code is simple: every future actor will attempt the obvious "
-    "approach first. Indicators include error-recovery loops (the actor hit "
-    "an exception, diagnosed the cause, and restructured the code to avoid "
-    "it) and corrections that address a gap between a tool's apparent "
-    "contract and its actual behavior. A brief guidance entry documenting "
-    "the pitfall — what fails, why, and the correct approach — saves "
-    "future sessions from repeating the same discovery cycle.\n"
+    "1. Review the trajectory for reusable patterns — including **pitfall "
+    "patterns**, where an obvious approach failed in a non-obvious way (a "
+    "silent data loss, a precondition an API doesn't enforce, an "
+    "error-recovery loop after a misleading tool contract). Corrected "
+    "pitfalls have high reuse value even when the fix is simple, because "
+    "every future actor will attempt the obvious approach first; a brief "
+    "guidance entry — what fails, why, the correct approach — saves them "
+    "the discovery cycle.\n"
     "2. Search the existing stores to understand what already exists "
-    "(use the search/filter tools for each store).\n"
-    "3. Decide what actions (if any) would improve the library. "
-    "Prefer a clean, non-redundant library over a large one. "
-    "Most trajectories will only warrant function changes, if "
-    "anything at all. Add guidance when a multi-step composition is "
-    "genuinely non-obvious, and whenever the source instructions embed a "
-    "durable shared rule or policy — factor that rule into a single "
-    "guidance entry linked to the stored function(s) per the Shared rules "
-    "section: search guidance first, link into an existing entry rather "
-    "than duplicating it.\n"
-    "4. **Delete superseded functions when you add a generalization.** "
-    "When you store a new function that subsumes existing narrower "
-    "variants (e.g. you add `greet(name, style)` while the store already "
-    "has `greet_formal(name)` + `greet_casual(name)`), call "
-    "`FunctionManager_delete_function` on the now-redundant entries by "
-    "their `function_id` — leaving them in the library defeats the "
-    "point of merging. The same applies to outright duplicates and to "
-    "narrow special cases that the new function correctly handles.\n"
-    "5. When done (or if there is nothing worth changing), respond "
-    "with a brief summary of what you did (or that nothing was needed)."
+    "(use each store's search/filter tools).\n"
+    "3. Decide what would improve the library. Prefer a clean, "
+    "non-redundant library over a large one — most trajectories warrant "
+    "function changes at most. Add guidance when a composition is "
+    "genuinely non-obvious, and factor any durable shared rule into a "
+    "single linked guidance entry per the Shared rules section.\n"
+    "4. **Delete superseded functions when you add a generalization** "
+    "(`FunctionManager_delete_function` on the now-redundant "
+    "`function_id`s) — the same for outright duplicates and narrow "
+    "special cases the new function handles.\n"
+    "5. When done (or if there is nothing worth changing), respond with "
+    "a brief summary of what you did (or that nothing was needed)."
 )
+
+# ---------------------------------------------------------------------------
+# Shared tool docstrings
+# ---------------------------------------------------------------------------
+
+# One contract for both package-install tools (the act() sandbox overlay and
+# the entrypoint-execution overlay bind differently, but the LLM-facing
+# behavior is identical).
+_INSTALL_PYTHON_PACKAGES_DOC = """Install Python packages into the current execution environment.
+
+**You MUST use this tool whenever you need a Python package that is not
+already available.** Never install via ``execute_code`` (``!pip install``,
+``subprocess.run(["pip", ...])``, ``uv pip install``, or any other
+shell-based method) — direct installs bypass the managed overlay and leave
+the environment in an inconsistent state.
+
+Installed packages are immediately importable in subsequent ``execute_code``
+Python calls, and are removed automatically when the current task completes —
+they never persist to later trajectories. If a requested package conflicts
+with a system dependency, the pre-installed version takes precedence.
+
+Parameters
+----------
+packages : list[str]
+    pip/uv specifiers, e.g. ``"pandas"``, ``"pandas==2.1.0"``,
+    ``"pandas>=2.0,<3.0"``, ``"pandas[sql]"``,
+    ``"git+https://github.com/user/repo.git"``, ``"./path/to/wheel.whl"``.
+
+Returns
+-------
+dict
+    ``success`` (bool), ``stdout`` / ``stderr`` (installer output — on
+    failure inspect ``stderr`` and adjust the specifiers), and ``packages``
+    (the requested specifiers).
+"""
 
 # ---------------------------------------------------------------------------
 # Trajectory compaction for storage review prompts
@@ -1233,8 +1215,17 @@ def _prepare_trajectory_for_storage_review(
       verbatim for that reason.
     * Any other oversized tool result keeps its head and tail around an
       elision marker.
+
+    Provider reasoning payloads (encrypted blobs, reasoning summaries) are
+    dropped outright: the librarian judges visible actions and results,
+    and an encrypted chain of thought is unreadable bulk in its prompt.
     """
+    from unify.common._async_tool.messages import strip_reasoning_payloads
+
     prepared = make_messages_safe_for_context_dump(messages)
+    for _msg in prepared:
+        if isinstance(_msg, dict):
+            strip_reasoning_payloads(_msg)
 
     name_by_call_id: dict[str, str] = {}
     for msg in prepared:
@@ -1633,8 +1624,15 @@ def _start_storage_check_loop(
     stop_reason: str | None = None,
     proactive_summaries: list[str] | None = None,
     post_run_review_context: PostRunReviewContext | None = None,
+    live_session: bool = False,
 ) -> "AsyncToolLoopHandle | None":
     """Start a loop that reviews a completed trajectory for reusable knowledge.
+
+    With ``live_session=True`` the trajectory belongs to a persistent
+    session that is still running: the review covers the turns completed
+    so far, ``original_result`` is the latest turn's response, and the
+    librarian's summary is delivered back into the live session as a
+    background note.
 
     The loop maintains three complementary stores:
 
@@ -1763,6 +1761,35 @@ def _start_storage_check_loop(
             "be worth storing.\n\n"
         )
 
+    live_session_section = ""
+    if live_session:
+        live_session_section = (
+            "## Live Session Turn Review\n\n"
+            "The trajectory below is a persistent interactive session that "
+            "is still running; the agent has just completed a request turn "
+            "and is waiting for the next instruction. You are reviewing "
+            "mid-session — earlier turns are included as context and may "
+            "already have been reviewed (prior passes appear under "
+            "'Proactive Storage Already Performed').\n\n"
+            "- Focus on what the latest turn(s) added since the last "
+            "review pass.\n"
+            "- Steady state is cheap: when the latest turn(s) only "
+            "re-executed already-stored procedures and the requester added "
+            "no new requirement, amendment or correction, there is nothing "
+            "to do — say so in one sentence and finish immediately, "
+            "without searching the stores first.\n"
+            "- Prefer updating an existing stored entry over adding a "
+            "near-duplicate: when this session already stored the "
+            "procedure and a later turn refined its spec, apply the "
+            "refinement with `FunctionManager_add_functions` "
+            "(`overwrite=True`).\n"
+            "- Your final summary is delivered to the live session as a "
+            "background note. Make it actionable: name what changed "
+            "(function names, numeric ids, calling conventions) so the "
+            "session can execute stored functions on the next request "
+            "rather than re-deriving procedures.\n\n"
+        )
+
     task_entrypoint_section = ""
     if task_entrypoint_review:
         metadata = dict(task_entrypoint_review.get("metadata") or {})
@@ -1770,66 +1797,84 @@ def _start_storage_check_loop(
         task_entrypoint_section = (
             "## Recurring Task Entrypoint Review\n\n"
             "This trajectory completed a scheduled or triggered task that had "
-            "no stored entrypoint when it ran. You must explicitly consider "
-            "whether the successful run revealed a stable reusable procedure "
-            "worth attaching to future task instances.\n\n"
-            "No-op is valid: keep the task description-driven if future runs "
-            "need broad planning, changing tool discovery, or open-ended "
-            "judgment. If the procedure can be stabilized as code, it may still "
-            "use focused `query_llm(...)` calls for bounded semantic substeps "
-            "such as summarization, classification, ranking, drafting, or "
-            "source selection. Choose `model=` for those calls deliberately — "
-            'see "Model choice is part of distillation" above.\n\n'
-            "If you store a FunctionManager function and decide it is a stable "
+            "no stored entrypoint when it ran. Explicitly consider whether "
+            "the successful run revealed a stable reusable procedure worth "
+            "attaching to future instances. No-op is valid: keep the task "
+            "description-driven if future runs need broad planning, changing "
+            "tool discovery, or open-ended judgment. A stabilized procedure "
+            "may still use focused `query_llm(...)` calls for bounded "
+            "semantic substeps, choosing `model=` deliberately — see "
+            '"Model choice is part of distillation" above.\n\n'
+            "If you store a FunctionManager function that is a stable "
             "candidate for future runs, call "
-            "`attach_entrypoint_to_recurring_task(function_id=..., rationale=...)`. "
-            "Binding records the function as the executor of future runs; it "
-            "does not grant trust and does not promote the task to offline "
-            "delivery. Do not call it unless the function has already been "
-            "persisted and you have the numeric function_id.\n\n"
-            "An executor candidate must preserve the observed live execution "
-            "chain: the managed primitives and helpers used, the side effects "
-            "and their ordering, the result shape, and the failure semantics. "
-            "It must not hardcode observations from live tool results unless "
-            "they are true task constants, remove validation gates, reorder "
-            "side effects, discard recovery branches, or replace "
-            "runtime-dependent decisions with static assumptions. If the "
-            "candidate materially changes primitives, inputs, ordering, or "
+            "`attach_entrypoint_to_recurring_task(function_id=..., rationale=...)` "
+            "— only after the function is persisted and you have its numeric "
+            "function_id. The candidate must preserve the observed live "
+            'execution chain per "Durable task executor candidates" above; '
+            "if it materially changes primitives, inputs, ordering, or "
             "failure behavior, store it as a helper/guidance only and do not "
             "bind it.\n\n"
-            "Trust and offline delivery are earned, not attested. Once bound, "
-            "the function runs under independent verification: each call is "
-            "checked before and after it runs, verdicts accumulate on the "
-            "function's ledger, and the function is trusted only when the "
-            "policy for its effect class is met. When every function the "
-            "entrypoint calls is trusted, the task is promoted to offline "
-            "delivery automatically; `promote_task_offline()` only re-checks "
-            "that eligibility. There is no evidence to submit.\n\n"
+            "Binding records the executor; it does not grant trust or "
+            "promote the task to offline delivery. Each call then runs under "
+            "independent verification, verdicts accumulate on the function's "
+            "ledger, and once every function the entrypoint calls is trusted "
+            "the task is promoted to offline delivery automatically — "
+            "`promote_task_offline()` only re-checks that eligibility. There "
+            "is no evidence to submit.\n\n"
             "Task metadata:\n"
             f"```json\n{metadata_json}\n```\n\n"
         )
+
+    role_line = (
+        (
+            "You are a skill librarian. A CodeActActor is running a "
+            "persistent interactive session and has just completed a "
+            "request turn. Your job is to review the session trajectory so "
+            "far and decide whether anything is worth persisting for future "
+            "reuse. Often nothing is — that is perfectly fine.\n\n"
+        )
+        if live_session
+        else (
+            "You are a skill librarian. A CodeActActor has just completed a task. "
+            "Your job is to review the execution trajectory and decide whether "
+            "anything is worth persisting for future reuse. Often nothing is — "
+            "that is perfectly fine.\n\n"
+        )
+    )
+    # The recurring-deliverable doctrine covers conversational convergence;
+    # a task-bound run has its own entrypoint-review section instead.
+    recurring_deliverable_section = (
+        "" if task_entrypoint_review else _STORAGE_RECURRING_DELIVERABLE
+    )
+    trajectory_header = (
+        "## Session Trajectory So Far\n\n"
+        if live_session
+        else "## Completed Trajectory\n\n"
+    )
+    result_header = (
+        "## Latest Turn Response\n\n" if live_session else "## Final Result\n\n"
+    )
 
     # Static doctrine first, volatile trajectory last: every storage loop
     # shares the same byte-identical prefix (role + doctrine + instructions),
     # so provider prompt caching only pays cold tokens for the per-run tail.
     system_prompt = (
-        "You are a skill librarian. A CodeActActor has just completed a task. "
-        "Your job is to review the execution trajectory and decide whether "
-        "anything is worth persisting for future reuse. Often nothing is — "
-        "that is perfectly fine.\n\n"
+        f"{role_line}"
         f"{_STORAGE_WHAT_CAN_BE_STORED}"
         f"{_STORAGE_THREE_STORES}"
         f"{_STORAGE_SUB_AGENT_PATTERNS}"
+        f"{recurring_deliverable_section}"
         f"{instructions}"
         "\n\n"
         f"{stop_context_section}"
+        f"{live_session_section}"
         f"{task_entrypoint_section}"
         f"{inner_storage_section}"
         f"{completed_tools_section}"
         f"{proactive_storage_section}"
-        "## Completed Trajectory\n\n"
+        f"{trajectory_header}"
         f"{trajectory_json}\n\n"
-        "## Final Result\n\n"
+        f"{result_header}"
         f"{original_result}"
     )
 
@@ -2004,6 +2049,7 @@ class _StorageCheckHandle(SteerableToolHandle):
         actor: "CodeActActor",
         post_run_review_context: PostRunReviewContext | None = None,
         meter: Optional[RunMeter] = None,
+        turn_reviews_enabled: bool = False,
     ) -> None:
         self._inner = inner
         self._actor = actor
@@ -2019,6 +2065,20 @@ class _StorageCheckHandle(SteerableToolHandle):
         self._stopped: bool = False
         self._stop_reason: Optional[str] = None
         self._active_relay: Optional[asyncio.Task] = None
+
+        # Turn-boundary reviews for persistent sessions. A persist=True loop
+        # never self-completes, so Phase 2 alone would defer distillation to
+        # whenever the session is finally stopped — a session that performs
+        # the same deliverable every turn would never converge. Instead, each
+        # completed turn that ran tools gets a mid-session review of the
+        # trajectory so far; its summary is recorded for the final review and
+        # delivered back into the live loop as a transcript note.
+        self._turn_reviews_enabled = bool(turn_reviews_enabled)
+        self._turn_review_task: Optional[asyncio.Task] = None
+        self._turn_review_handle: Optional["AsyncToolLoopHandle"] = None
+        self._turn_review_rerun: bool = False
+        self._latest_turn_response: str = ""
+        self._reviewed_tool_msg_count: int = 0
 
         # Start the two-phase lifecycle manager.
         self._lifecycle_task = asyncio.create_task(self._run_lifecycle())
@@ -2053,15 +2113,210 @@ class _StorageCheckHandle(SteerableToolHandle):
         self,
         source: "SteerableToolHandle",
     ) -> None:
-        """Forward notifications from *source* into our queue until cancelled."""
+        """Forward notifications from *source* into our queue until cancelled.
+
+        ``type="response"`` notifications are the persist-mode turn
+        boundary — the loop has finished a request and re-entered its wait
+        state — so they are also the trigger for mid-session storage
+        reviews when those are enabled.
+        """
         try:
             while True:
                 notif = await source.next_notification()
                 await self._notification_q.put(notif)
+                if (
+                    self._turn_reviews_enabled
+                    and isinstance(notif, dict)
+                    and notif.get("type") == "response"
+                ):
+                    self._note_turn_boundary(str(notif.get("content") or ""))
         except asyncio.CancelledError:
             pass
         except Exception:
             pass
+
+    def _note_turn_boundary(self, latest_response: str) -> None:
+        """Schedule a mid-session storage review for a completed turn.
+
+        At most one review runs at a time; a boundary that arrives while
+        one is in flight coalesces into a single re-run against the
+        then-current trajectory.
+        """
+        if self._phase != "task":
+            return
+        self._latest_turn_response = latest_response
+        if self._turn_review_task is not None and not self._turn_review_task.done():
+            self._turn_review_rerun = True
+            return
+        self._turn_review_task = asyncio.create_task(self._run_turn_reviews())
+
+    @staticmethod
+    def _tool_activity_count(messages: list) -> int:
+        """Completed tool results in the transcript — the 'work happened' signal."""
+        return sum(
+            1 for m in messages if isinstance(m, dict) and m.get("role") == "tool"
+        )
+
+    def _snapshot_inner_trajectory(self) -> list[dict]:
+        try:
+            client = getattr(self._inner, "_client", None)
+            if client is not None:
+                return make_messages_safe_for_context_dump(
+                    list(getattr(client, "messages", []) or []),
+                )
+        except Exception:
+            pass
+        return []
+
+    async def _run_turn_reviews(self) -> None:
+        """Run mid-session storage reviews until no boundary is pending.
+
+        A turn with no new completed tool activity (pure conversation) is
+        skipped — there is nothing new to distill. Compaction can shrink
+        the transcript; the watermark follows it down so counting stays
+        monotone against the live message list.
+        """
+        while True:
+            self._turn_review_rerun = False
+            trajectory = self._snapshot_inner_trajectory()
+            tool_count = self._tool_activity_count(trajectory)
+            if tool_count < self._reviewed_tool_msg_count:
+                self._reviewed_tool_msg_count = tool_count
+            if tool_count > self._reviewed_tool_msg_count:
+                await self._run_one_turn_review(
+                    trajectory,
+                    tool_count,
+                    reviewed_messages=len(trajectory),
+                )
+            if not self._turn_review_rerun:
+                return
+
+    async def _run_one_turn_review(
+        self,
+        trajectory: list[dict],
+        tool_count: int,
+        *,
+        reviewed_messages: int,
+    ) -> None:
+        ask_tools: dict = {}
+        try:
+            ask_tools = getattr(self._inner._task, "get_ask_tools", lambda: {})()
+        except Exception:
+            pass
+        completed_tool_metadata: dict = {}
+        try:
+            completed_tool_metadata = getattr(
+                self._inner._task,
+                "get_completed_tool_metadata",
+                lambda: {},
+            )()
+        except Exception:
+            pass
+
+        proactive_summaries: list[str] = []
+        _ctx = _CURRENT_AGENT_CONTEXT.get(None)
+        if _ctx is not None:
+            proactive_summaries = list(_ctx.proactive_storage_summaries)
+
+        _tr_suffix = _token_hex(2)
+        _tr_call_id = new_call_id()
+        _tr_parent = TOOL_LOOP_LINEAGE.get([])
+        _tr_parent_lineage = list(_tr_parent) if isinstance(_tr_parent, list) else []
+        _tr_hierarchy = [
+            *_tr_parent_lineage,
+            f"StorageCheck(CodeActActor.act)({_tr_suffix})",
+        ]
+        _tr_lineage_token = TOOL_LOOP_LINEAGE.set(_tr_hierarchy)
+        _tr_suffix_token = _PENDING_LOOP_SUFFIX.set(_tr_suffix)
+        try:
+            await publish_manager_method_event(
+                _tr_call_id,
+                "CodeActActor",
+                "StorageCheck",
+                phase="incoming",
+                display_label=_DEFAULT_STORAGE_REVIEW_LABEL,
+                hierarchy=_tr_hierarchy,
+                instructions=_DEFAULT_STORAGE_REVIEW_INSTRUCTIONS,
+            )
+            storage_handle = _start_storage_check_loop(
+                trajectory=trajectory,
+                ask_tools=ask_tools,
+                completed_tool_metadata=completed_tool_metadata,
+                actor=self._actor,
+                original_result=self._latest_turn_response,
+                parent_lineage=_tr_parent_lineage,
+                proactive_summaries=proactive_summaries or None,
+                live_session=True,
+            )
+            if storage_handle is None:
+                return
+            self._turn_review_handle = storage_handle
+            try:
+                summary = await storage_handle.result()
+            except Exception as exc:
+                logger.warning(
+                    f"Turn StorageCheck failed: {type(exc).__name__}: {exc}",
+                )
+                await self._notification_q.put(
+                    {
+                        "type": "turn_storage_review_complete",
+                        "message": (
+                            f"StorageCheck failed: {type(exc).__name__}: {exc}"
+                        ),
+                        "success": False,
+                    },
+                )
+                return
+            finally:
+                self._turn_review_handle = None
+
+            self._reviewed_tool_msg_count = tool_count
+            if _ctx is not None:
+                _ctx.proactive_storage_summaries.append(summary)
+            await self._notification_q.put(
+                {
+                    "type": "turn_storage_review_complete",
+                    "message": summary,
+                    "success": True,
+                },
+            )
+            # Leave the librarian's summary in the live session's transcript
+            # so the next request can execute what was stored instead of
+            # re-deriving the procedure, and let the reviewed turns shed
+            # their raw tool payloads — the review is the checkpoint that
+            # makes them safe to compact. Both are transcript-only: no LLM
+            # turn fires.
+            queue = getattr(self._inner, "_queue", None)
+            if queue is not None:
+                queue.put_nowait(
+                    {
+                        "_transcript_note": {
+                            "text": (
+                                "[background skill consolidation — automated "
+                                "note, not a user message]\n"
+                                f"{summary}"
+                            ),
+                        },
+                    },
+                )
+                queue.put_nowait(
+                    {
+                        "_compact_transcript": {
+                            "reviewed_messages": reviewed_messages,
+                        },
+                    },
+                )
+        finally:
+            await publish_manager_method_event(
+                _tr_call_id,
+                "CodeActActor",
+                "StorageCheck",
+                phase="outgoing",
+                display_label=_DEFAULT_STORAGE_REVIEW_LABEL,
+                hierarchy=_tr_hierarchy,
+            )
+            TOOL_LOOP_LINEAGE.reset(_tr_lineage_token)
+            _PENDING_LOOP_SUFFIX.reset(_tr_suffix_token)
 
     async def abandon_storage_review(self, *, reason: str) -> None:
         """End the storage phase now, without waiting for the review to finish.
@@ -2086,6 +2341,16 @@ class _StorageCheckHandle(SteerableToolHandle):
 
         if self._completion_event.is_set():
             return
+        turn_handle = self._turn_review_handle
+        if turn_handle is not None:
+            try:
+                await turn_handle.stop(reason=reason)
+            except Exception:
+                pass
+        turn_task = self._turn_review_task
+        if turn_task is not None and not turn_task.done():
+            turn_task.cancel()
+            await asyncio.gather(turn_task, return_exceptions=True)
         handle = self._storage_handle
         if handle is not None:
             try:
@@ -2192,6 +2457,14 @@ class _StorageCheckHandle(SteerableToolHandle):
                 return
 
             self._phase = "storage"
+
+            # A mid-session turn review still in flight finishes first: its
+            # summary joins ``proactive_storage_summaries``, so the final
+            # review below builds on it instead of running concurrently
+            # against the same trajectory.
+            turn_task = self._turn_review_task
+            if turn_task is not None and not turn_task.done():
+                await asyncio.gather(turn_task, return_exceptions=True)
 
             _sc_suffix = _token_hex(2)
             _sc_call_id = new_call_id()
@@ -3651,54 +3924,6 @@ class CodeActActor(BaseCodeActActor):
         async def install_python_packages(
             packages: list[str],
         ) -> dict:
-            """Install Python packages into the current execution environment.
-
-            **CRITICAL**: You MUST use this tool whenever you need a Python
-            package that is not already available. Do NOT attempt to install
-            packages yourself via ``execute_code`` (e.g.
-            ``subprocess.run(["pip", "install", ...])``, ``!pip install``,
-            ``uv pip install``, or any other shell-based installation).  Direct
-            installs bypass the managed overlay and will leave residual
-            packages that pollute subsequent sessions.
-
-            Packages are installed into a temporary directory that is
-            automatically cleaned up when this task finishes.  They are
-            immediately importable in any subsequent ``execute_code`` Python
-            call for the remainder of this task, but they do **not** persist
-            beyond it.
-
-            Parameters
-            ----------
-            packages : list[str]
-                One or more package specifiers, using the same syntax accepted
-                by ``pip install`` / ``uv pip install``.  Examples:
-
-                - ``["pandas"]`` — latest version from PyPI
-                - ``["pandas==2.1.0"]`` — exact version pin
-                - ``["pandas>=2.0,<3.0"]`` — version range
-                - ``["pandas[sql]"]`` — with extras
-                - ``["requests", "beautifulsoup4"]`` — multiple packages
-                - ``["git+https://github.com/user/repo.git"]`` — from a Git repository
-                - ``["./some_wheel.whl"]`` — from a local file
-
-            Returns
-            -------
-            dict
-                - **success** (bool): Whether installation succeeded.
-                - **stdout** (str): Installer standard output.
-                - **stderr** (str): Installer standard error (contains
-                  resolution/download progress and any error messages).
-                - **packages** (list[str]): The specifiers that were requested.
-
-            Notes
-            -----
-            - If a requested package conflicts with a system dependency, the
-              system version takes precedence and the import will resolve to
-              the pre-installed version.  This is by design — the runtime
-              environment must remain stable.
-            - If installation fails, inspect ``stderr`` for resolution errors
-              and adjust your specifiers (e.g. relax a version constraint).
-            """
             try:
                 sb = _CURRENT_SANDBOX.get()
                 overlay: PackageOverlay | None = sb.global_state.get(
@@ -3719,6 +3944,8 @@ class CodeActActor(BaseCodeActActor):
                 }
 
             return overlay.install(packages)
+
+        install_python_packages.__doc__ = _INSTALL_PYTHON_PACKAGES_DOC
 
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
             "execute_code": ToolSpec(fn=execute_code),
@@ -4187,6 +4414,22 @@ class CodeActActor(BaseCodeActActor):
                 )
                 if stored_venv_id is not None:
                     resolved_venv_id = int(stored_venv_id)
+
+                # The synthesized-call path prepends the raw implementation
+                # and runs it in the sandbox, shadowing any boundary-wrapped
+                # callable — so the usage trace is fed here, where the row
+                # is in hand, or this invocation would go unremembered.
+                if isinstance(function_data, dict):
+                    note_use = getattr(
+                        self.function_manager,
+                        "_note_function_use",
+                        None,
+                    )
+                    if callable(note_use):
+                        try:
+                            note_use(function_data)
+                        except Exception:  # noqa: BLE001 - never break a call
+                            pass
 
                 import time as _ef_time
                 import logging as _ef_logging
@@ -5112,48 +5355,6 @@ class CodeActActor(BaseCodeActActor):
         async def install_python_packages(
             packages: list[str],
         ) -> Dict[str, Any]:
-            """
-            Install Python packages into the current execution environment.
-
-            **You MUST use this tool whenever you need a Python package that is
-            not already available.**  Do NOT attempt to install packages via
-            ``execute_code`` (e.g. ``!pip install ...``, ``subprocess.run(["pip",
-            ...])``), ``uv pip install``, or any other shell-based method.
-            Doing so bypasses the managed overlay and will leave the
-            environment in an inconsistent state.
-
-            Accepts the full range of pip/uv package specifiers:
-
-            - ``"pandas"`` (latest version)
-            - ``"pandas==2.1.0"`` (exact version)
-            - ``"pandas>=2.0,<3.0"`` (version range)
-            - ``"pandas[sql]"`` (extras)
-            - ``"git+https://github.com/user/repo.git"`` (VCS)
-            - ``"git+https://github.com/user/repo.git@branch"`` (VCS + ref)
-            - ``"./path/to/wheel.whl"`` (local file)
-
-            Installed packages become immediately importable in subsequent
-            ``execute_code`` Python calls within the same trajectory.
-
-            **Automatic cleanup**: all packages installed via this tool are
-            automatically removed when the current act() trajectory completes.
-            They do NOT persist across trajectories.  If a future trajectory
-            needs the same package, it must install it again.
-
-            Parameters
-            ----------
-            packages : list[str]
-                One or more package specifiers (see examples above).
-
-            Returns
-            -------
-            dict
-                - **success** (bool): True if installation succeeded.
-                - **stdout** (str): Installer standard output.
-                - **stderr** (str): Installer standard error (includes
-                  resolution details and any warnings).
-                - **packages** (list[str]): The specifiers that were requested.
-            """
             overlay = _CURRENT_PACKAGE_OVERLAY.get()
             if overlay is None:
                 return {
@@ -5163,6 +5364,8 @@ class CodeActActor(BaseCodeActActor):
                     "packages": packages,
                 }
             return overlay.install(packages)
+
+        install_python_packages.__doc__ = _INSTALL_PYTHON_PACKAGES_DOC
 
         tools["install_python_packages"] = ToolSpec(
             fn=install_python_packages,
@@ -5218,8 +5421,13 @@ class CodeActActor(BaseCodeActActor):
                     "deployment-owned (custom_hash set); refusing repair. Fix the "
                     "bundle source and re-sync via deployment reconcile.",
                 )
+        # The repairer keeps the verdict history: it is being asked to answer
+        # a verdict, and the prior ones on the same function are what tell it
+        # whether this objection is new or whether its own last attempt
+        # caused it.
         snapshot_for_prompt = strip_ledger_internals(
             [row for row in (function_snapshot or []) if isinstance(row, dict)],
+            keep_verdict_history=True,
         )
         tools = methods_to_tool_dict(
             fm.search_functions,
@@ -5904,6 +6112,7 @@ class CodeActActor(BaseCodeActActor):
             discovery_first_policy=self.tool_policy is _USE_DEFAULT,
             include_external_app_integration=has_integration_packages,
             include_oauth_helper=has_workspace_oauth,
+            persist=bool(persist),
         )
         logger.debug(
             f"⏱️ [CodeActActor.act +{_act_ms()}] prompt built "
@@ -6122,12 +6331,16 @@ class CodeActActor(BaseCodeActActor):
         post_run_review_context = current_post_run_review_context.get()
 
         # Wrap in StorageCheckHandle for post-completion function review.
+        # Persistent sessions additionally review at each completed turn —
+        # a persist loop never self-completes, so without turn reviews a
+        # recurring conversational deliverable would never distill.
         if effective_can_store or post_run_review_context is not None:
             handle = _StorageCheckHandle(
                 inner=handle,
                 actor=self,
                 post_run_review_context=post_run_review_context,
                 meter=run_meter,
+                turn_reviews_enabled=effective_can_store and bool(persist),
             )
             # Tracked so ``close()`` can end a review still in flight. The
             # set is weak: a finished handle the caller has dropped must not

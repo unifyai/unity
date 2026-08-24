@@ -73,6 +73,8 @@ def min_distinct_inputs(fn: Mapping[str, Any], settings: VerificationSettings) -
 
 def spot_check_rate(fn: Mapping[str, Any], settings: VerificationSettings) -> float:
     """Sampling rate for post probes on trusted effectful calls without an output contract."""
+    if not settings.enabled:
+        return 0.0
     klass = policy_class(fn)
     if not klass.is_effectful:
         return 0.0
@@ -102,12 +104,17 @@ def derive_verify(
 ) -> bool:
     """Return the ``verify`` flag for ``fn`` given its current trust hash.
 
+    With the master switch off (``settings.enabled``), always ``False``.
     Trusted (``verify=False``) iff the summary applies to the current hash, the
     static review passed, ``args`` and ``post`` passes (or ``tier0`` for
     ``safe_noop``) meet the class requirement after policy raises, enough
     distinct inputs were seen, no verdict for this hash failed, and the
     policy does not pin verification on forever.
     """
+    if not settings.enabled:
+        # The master switch outranks every per-function pin: off means the
+        # verification subsystem does not exist, not that it defaults low.
+        return False
     policy = _coerce_policy(fn.get("verification_policy"))
     if policy.always_verify:
         return True

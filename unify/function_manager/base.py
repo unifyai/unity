@@ -58,117 +58,64 @@ class BaseFunctionManager(BaseStateManager):
         """
         Validate, compile and persist one or more function implementations.
 
-        Signature
-        ---------
-        add_functions(
-            *,
-            implementations: str | list[str],
-            language: Literal["python", "bash", "zsh", "sh", "powershell"] = "python",
-            preconditions: dict[str, dict] | None = None,
-            contracts: dict[str, dict] | None = None,
-            fixtures: dict[str, list[dict]] | None = None,
-            overwrite: bool = False,
-            raise_on_error: bool = True,
-            venv_id: int | None = None,
-        ) -> dict[str, str]
-
         Parameters
         ----------
         implementations : str | list[str]
-            One or more function source strings. For Python, each string must
-            contain exactly one top‑level ``def`` (or ``async def``) starting at
-            column 0. For shell languages, the script should include metadata
-            comments at the top (see Notes).
-        language : Literal["python", "bash", "zsh", "sh", "powershell"], default ``"python"``
-            The language/interpreter for the function(s). All implementations
-            in a single call must be the same language.
-        preconditions : dict[str, dict] | None, default ``None``
-            Optional mapping from function name → precondition payload. The
-            payload is stored as the ``precondition`` field on the corresponding
-            ``Function`` record. The expected shape matches the
-            ``Function.precondition`` type (``dict[str, Any] | None``).
-        contracts : dict[str, dict] | None, default ``None``
-            Optional mapping from function name → contract additions. The only
-            authored key is ``postconditions``: a list of boolean Python
-            expressions over ``result`` (the return value) and ``kwargs`` (the
-            call's keyword arguments) that must hold after every call, e.g.
-            ``["isinstance(result, list)", "all(r['amount'] >= 0 for r in result)"]``.
-            Expressions may use only ``result``, ``kwargs``, comparison and
-            boolean operators, and the builtins ``len``, ``all``, ``any``,
-            ``isinstance``, ``min``, ``max``, ``sum``, ``abs``, ``round``,
-            ``sorted``, ``set``, ``list``, ``dict``, ``str``, ``int``,
-            ``float``, ``bool``; anything else is rejected. Input and output
-            JSON schemas are derived from the function's type hints, so hint
-            every parameter and the return type. Postconditions are kept
-            across ``overwrite=True`` unless a new ``contracts`` entry replaces
-            them.
-        fixtures : dict[str, list[dict]] | None, default ``None``
-            Optional mapping from function name → recorded ``{"args": {...},
-            "result": ...}`` pairs the function must reproduce. Only accepted
-            for pure functions (no I/O; effect class ``safe_noop``); each pair
-            must be JSON-serialisable and small. Fixtures are replayed against
-            the implementation whenever it changes; a mismatch rejects the
-            change with ``FixtureRegressionError`` naming the failing pair.
+            Function source strings. Python: exactly one top-level ``def`` /
+            ``async def`` per string, starting at column 0; signatures and
+            docstrings are extracted automatically. Shell (bash, zsh, sh,
+            powershell): metadata comes from leading comments — ``# @name:``
+            (required), ``# @args:`` and ``# @description:`` (optional).
+        language : default ``"python"``
+            Language/interpreter; one language per call.
+        preconditions : dict[str, dict] | None
+            Mapping of function name → precondition payload, stored as the
+            record's ``precondition`` field.
+        contracts : dict[str, dict] | None
+            Mapping of function name → ``{"postconditions": [...]}``: boolean
+            Python expressions over ``result`` (the return value) and
+            ``kwargs`` (the call's keyword arguments) checked after every
+            call, e.g. ``["isinstance(result, list)"]``. Only comparison /
+            boolean operators and basic builtins (``len``, ``all``, ``any``,
+            ``isinstance``, ``min``, ``max``, ``sum``, …) are allowed. Input
+            and output JSON schemas are derived from type hints, so hint
+            every parameter and the return type. Postconditions survive
+            ``overwrite=True`` unless a new ``contracts`` entry replaces them.
+        fixtures : dict[str, list[dict]] | None
+            Mapping of function name → recorded ``{"args": {...}, "result":
+            ...}`` pairs the function must reproduce. Pure functions only (no
+            I/O; effect class ``safe_noop``); replayed whenever the
+            implementation changes, and a mismatch rejects the change with
+            ``FixtureRegressionError`` naming the failing pair.
         overwrite : bool, default ``False``
-            If ``True``, a function whose name already exists is updated in
-            place, keeping its ``function_id`` stable so existing references
-            (e.g. task entrypoints, guidance links) keep resolving. If
-            ``False``, functions whose names already exist are skipped and
-            reported as duplicates. Always prefer ``overwrite=True`` over
-            delete-and-re-add when revising an existing function.
+            When ``True``, an existing name is updated in place with a stable
+            ``function_id`` so existing references (task entrypoints,
+            guidance links) keep resolving — always prefer this over
+            delete-and-re-add. When ``False``, existing names are skipped and
+            reported as duplicates.
         raise_on_error : bool, default ``True``
-            If ``True``, raises ``ValueError`` when any function fails to add
-            (parse error, validation error, etc.). If ``False``, errors are
-            returned in the result dictionary instead of raising.
-        venv_id : int | None, default ``None``
-            Virtual environment to associate with the stored functions.
-            **Required** when any function imports third-party packages (i.e.
-            packages not in the Python standard library or the execution
-            environment).  Create a venv first via ``add_venv`` and pass the
-            returned ID here.  If ``None`` and the function body contains
-            third-party imports, ``add_functions`` raises ``ValueError``.
+            Raise ``ValueError`` naming the failed functions and errors,
+            instead of reporting them in the result. Failures for one
+            function never block the rest of the batch.
+        venv_id : int | None
+            **Required** when a function imports third-party packages (beyond
+            the standard library and the execution environment); otherwise
+            ``ValueError`` is raised. Create a venv via ``add_venv`` first
+            and pass the returned ID.
 
         Returns
         -------
         dict[str, str]
-            Mapping of function name to status string, e.g.
-            ``{"my_func": "added"}`` or ``{"my_func": "error: <message>"}``.
-
-        Raises
-        ------
-        ValueError
-            If ``raise_on_error=True`` and any function fails to add. The
-            exception message contains the failed function names and errors.
-            Also raised when third-party imports are detected but no
-            ``venv_id`` is provided.
-
-        Notes
-        -----
-        - For Python functions: implementations are validated via AST parsing
-          and executed to extract signatures and docstrings automatically.
-        - For shell functions (bash, zsh, sh, powershell): metadata is extracted
-          from comments at the top of the script using these patterns::
-
-              # @name: my_function
-              # @args: (input_file output_file --verbose)
-              # @description: Brief description of what the function does
-
-          The ``@name`` comment is required for shell functions. ``@args`` and
-          ``@description`` are optional.
-        - Implementations should persist records that conform to the
-          ``Function`` model and ensure that failures for one function do not
-          prevent other valid functions in the same batch from being added.
+            Function name → status, e.g. ``{"my_func": "added"}`` or
+            ``{"my_func": "error: <message>"}``.
 
         Anti-patterns
         -------------
         - Silent early returns or empty/"ok" results with no ``PHASE`` /
-          ``SKIP`` / ``SOFT_FAIL`` trail — soft failures need logs, not just
-          stack traces.
-        - Putting diagnostic detail in user-facing notifications — use the
-          stdlib ``logging`` module with those markers for retrospective
-          forensics.
-        - Stripping PHASE/SKIP/SOFT_FAIL logging when distilling a live
-          trajectory into a stored function.
+          ``SKIP`` / ``SOFT_FAIL`` trail — soft failures need stdlib
+          ``logging`` calls with those markers (not user-facing
+          notifications), and the trail must survive distillation from a
+          live trajectory.
         - Nesting ``asyncio.run(...)`` inside sync helpers / entrypoints —
           offline Jobs and actor sandboxes already own a loop. Prefer
           ``async def`` + ``await``, or the injected ``run_coro_sync`` helper.
@@ -400,12 +347,33 @@ class BaseFunctionManager(BaseStateManager):
         query: str = "",
         n: int = 5,
         include_implementations: bool = True,
+        include_dormant: bool = False,
         _return_callable: bool = False,
         _namespace: Optional[Dict[str, Any]] = None,
         _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Search for functions by semantic similarity to a natural‑language query.
+
+        Results are ranked like memory, not just like an index: semantic
+        similarity dominates, and a function's *standing* — how often and
+        how recently it has actually been used, judged against its own
+        usage rhythm — acts as the tiebreaker. Functions whose standing has
+        fully lapsed drop out of results entirely (they still exist and
+        still run; ``filter_functions``/``list_functions`` always see the
+        whole store, and ``include_dormant=True`` brings them back here).
+        Freshly stored functions surface normally: creation counts as a
+        first use.
+
+        Every result carries the ranking components in the open:
+        ``_similarity`` (semantic match, 0–1), ``_standing`` (usage-based
+        memory strength, 0–1 — recency against the function's own rhythm ×
+        log-saturating call count), and ``_retrieval_score`` (the combined
+        rank, ``similarity × (floor + (1−floor) × standing)``), beside the
+        raw trace (``usage_calls``, ``usage_last_called_at``). Read them:
+        a highly similar result with near-zero standing is a plausible but
+        long-unexercised skill, while a moderate match with high standing
+        is a battle-tested recent workhorse.
 
         Each result conforms to the ``Function`` schema and includes a
         ``guidance_ids`` field — a list of identifiers for related guidance
@@ -423,6 +391,11 @@ class BaseFunctionManager(BaseStateManager):
             When ``True``, results include the full source code in the
             ``implementation`` field. When ``False``, implementations are
             omitted to reduce payload size.
+        include_dormant : bool, default ``False``
+            When ``True``, functions whose usage standing has fully lapsed
+            are ranked and returned like any other instead of being dropped
+            from the results. Use when hunting for a skill you believe was
+            stored long ago but has not been exercised recently.
         _return_callable : bool, default ``False``
             When ``True``, return Python callables instead of metadata dicts.
             Implementations SHOULD inject the resulting callables (and any of their

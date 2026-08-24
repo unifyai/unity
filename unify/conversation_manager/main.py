@@ -93,7 +93,12 @@ def _apply_test_mocks(cm: ConversationManager) -> None:
     assistant_jobs.log_job_startup = _sync_mock_success
     assistant_jobs.mark_job_done = _sync_mock_success
     managers_utils.log_message = _async_mock_success
-    managers_utils.publish_bus_events = _async_mock_success
+    # publish_bus_events is deliberately NOT stubbed: EventBus publishing has
+    # its own policy switch (EVENTBUS_PUBLISHING_ENABLED, default off), so
+    # with the flag off the call is already a no-op, and with the flag on the
+    # caller has asked for the Comms stream to persist — a harness that
+    # enables it (reboot-shaped benchmarks, a sandbox studying hydration)
+    # must actually get rows, or every later boot wakes amnesiac.
 
 
 def _populate_session_details_from_env() -> None:

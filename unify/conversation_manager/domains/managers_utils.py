@@ -149,13 +149,32 @@ _MESSAGE_PRODUCING_EVENTS = {
 }
 
 
-async def hydrate_global_thread(cm: "ConversationManager") -> None:
+async def run_boot_hydration(cm: "ConversationManager") -> int:
+    """Hydrate the global thread, then reopen the slow-brain render gate.
+
+    The gate must reopen on every outcome — restored history, an empty
+    store, or a failed search — because a turn held at the gate degrades to
+    the pre-hydration view after its bounded wait anyway; keeping the gate
+    closed past hydration buys nothing but latency.
+    """
+    try:
+        return await hydrate_global_thread(cm)
+    finally:
+        cm._hydration_gate.set()
+
+
+async def hydrate_global_thread(cm: "ConversationManager") -> int:
     """Populate the shared global deque from persisted EventBus Comms events.
 
     Called after initialization to restore conversation state from the previous
     session.  Hydrated (historical) messages are prepended to the global thread
     so that any messages that arrived during initialization keep their correct
     chronological position at the end.
+
+    Returns the number of messages restored — zero both when there is
+    genuinely no prior conversation and when the deployment does not persist
+    the Comms stream. The caller records it so the initialization-complete
+    notification can tell the brain the truth about what was loaded.
     """
     from unify.conversation_manager.domains.contact_index import ContactIndex
 
@@ -180,7 +199,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
         LOGGER.info(
             f"{ICONS['managers_worker']} [Hydration] No Comms events found, skipping hydration",
         )
-        return
+        return 0
 
     # Bus events come in descending order (most recent first), reverse for chronological
     bus_events.reverse()
@@ -891,6 +910,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
     LOGGER.info(
         f"{ICONS['managers_worker']} [Hydration] Restored {restored} messages from {len(bus_events)} Comms events",
     )
+    return restored
 
 
 async def publish_bus_events(event):
@@ -2182,6 +2202,42 @@ async def update_session_contacts(
 # Queueing operations that need managers
 
 _operations_queue = asyncio.Queue()
+_module_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _adopt_running_loop() -> None:
+    """Recreate module-level asyncio primitives when their owning loop died.
+
+    The queue and init lock are process-global, but they bind to the event
+    loop that first awaits them. An in-process reboot — a fresh
+    ConversationManager on a new loop over the same durable world — must not
+    inherit them: a bound queue makes the successor's operations listener die
+    on its first ``get`` (RuntimeError: bound to a different event loop),
+    after which every queued operation — EventBus persistence among them —
+    silently accumulates unprocessed; a lock held by a task frozen on the
+    dead loop blocks the successor's init outright. The predecessor's queued
+    operations die with it, exactly as they would with its process. A live
+    owning loop is never preempted.
+    """
+    global _operations_queue, _init_lock, _module_loop
+    loop = asyncio.get_running_loop()
+    owner = _module_loop
+    if owner is loop:
+        return
+    if owner is not None and owner.is_running() and not owner.is_closed():
+        return
+    if owner is not None:
+        _operations_queue = asyncio.Queue()
+        _init_lock = asyncio.Lock()
+    _module_loop = loop
+
+
+# A backlog this deep means nothing is consuming the queue: the listener
+# normally drains an operation in milliseconds, and producers enqueue one
+# per handled event. Growth past this line is a missing/dead
+# listen_to_operations, not load.
+_OPERATIONS_QUEUE_BACKLOG_WARN_AT = 50
+_operations_backlog_warned = False
 
 
 async def queue_operation(async_func: callable, *args, **kwargs) -> None:
@@ -2189,7 +2245,27 @@ async def queue_operation(async_func: callable, *args, **kwargs) -> None:
     Queue an async operation to be executed when managers are initialized.
     The operation will be processed by listen_to_operations().
     """
+    global _operations_backlog_warned
+    _adopt_running_loop()
     await _operations_queue.put((async_func, args, kwargs))
+    # An unbounded queue with no consumer fails silently: every enqueued
+    # operation — EventBus persistence among them — simply never happens,
+    # and nothing anywhere says so. Embedders that boot the CM without
+    # spawning listen_to_operations have lost whole conversation streams
+    # this way. One warning per backlog episode turns that black hole into
+    # a grep-able line.
+    depth = _operations_queue.qsize()
+    if depth >= _OPERATIONS_QUEUE_BACKLOG_WARN_AT:
+        if not _operations_backlog_warned:
+            _operations_backlog_warned = True
+            LOGGER.warning(
+                f"{ICONS['managers_worker']} [ManagersWorker] Operations "
+                f"queue backlog reached {depth} with nothing draining it — "
+                "is listen_to_operations running? Queued work (EventBus "
+                "persistence among it) is not being executed.",
+            )
+    elif depth < _OPERATIONS_QUEUE_BACKLOG_WARN_AT // 2:
+        _operations_backlog_warned = False
 
 
 async def wait_for_initialization(
@@ -2212,6 +2288,7 @@ async def listen_to_operations(cm: "ConversationManager") -> None:
     Worker loop that processes queued operations once initialized.
     Should be started as a background task alongside init_conv_manager.
     """
+    _adopt_running_loop()
     # Wait for initialization to complete
     await wait_for_initialization(cm)
     ensure_runtime_context()
@@ -2294,12 +2371,14 @@ def _init_managers(
 
     # 1b. Kick off hydration concurrently — it only needs unify.init() and
     # EventBus config (both done). Runs on the main event loop while the
-    # remaining managers initialize in this thread.
+    # remaining managers initialize in this thread. Completion reopens the
+    # slow-brain render gate ``init_conv_manager`` closed, releasing any
+    # turn held for a hydrated view without waiting for the rest of init.
     LOGGER.info(
         f"{ICONS['managers_worker']} [ManagersWorker] Starting concurrent hydration...",
     )
     cm._hydration_future = asyncio.run_coroutine_threadsafe(
-        hydrate_global_thread(cm),
+        run_boot_hydration(cm),
         loop,
     )
 
@@ -2712,6 +2791,7 @@ async def init_conv_manager(
     """
     LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Processing startup")
 
+    _adopt_running_loop()
     async with _init_lock:
         start_time = perf_counter()
         if cm.initialized:
@@ -2719,6 +2799,16 @@ async def init_conv_manager(
                 f"{ICONS['managers_worker']} [ManagersWorker] Already initialized, skipping",
             )
             return
+
+        # Close the slow-brain render gate for the boot window. An inbound
+        # that lands mid-boot still queues a turn, but that turn holds at
+        # render time until hydration resolves (see
+        # ``ConversationManager._run_llm``), so the first reply after a wake
+        # never answers from an empty conversation view while the history
+        # that would answer it is seconds from landing. ``run_boot_hydration``
+        # reopens it; the ``finally`` below covers boots that die before the
+        # hydration task ever gets created.
+        cm._hydration_gate.clear()
 
         try:
             # Get the main event loop to pass to managers that need it
@@ -2779,7 +2869,11 @@ async def init_conv_manager(
             if hydration_future is not None:
                 try:
                     _t0 = perf_counter()
-                    await asyncio.wrap_future(hydration_future)
+                    # The count feeds the initialization-complete notification:
+                    # "history has been loaded" is only said when it is true.
+                    cm._hydrated_history_count = int(
+                        await asyncio.wrap_future(hydration_future) or 0,
+                    )
                     log_startup_timing(
                         LOGGER,
                         "⏱️ [StartupTiming] managers.init_conv_manager.await_hydration duration=%.2fs",
@@ -2911,3 +3005,8 @@ async def init_conv_manager(
             # the pod instead.
             cm.unserviceable_reason = f"manager initialization failed: {e}"
             raise
+        finally:
+            # Idempotent: hydration completion normally reopened this long
+            # ago. Guarantees no path out of a boot — success or failure —
+            # leaves brain turns holding until their timeout.
+            cm._hydration_gate.set()

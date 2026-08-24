@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import builtins
+import concurrent.futures
 import dataclasses
 import hashlib
 from contextlib import contextmanager
@@ -54,9 +55,18 @@ from ..common.custom_sync import (
 )
 from ..common.sync_lease import exclusive_sync_lease
 from ..common.federated_search import (
+    SCORE_FIELD,
     FederatedSearchContext,
     federated_filter,
     federated_ranked_search,
+)
+from .activation import (
+    ActivationSettings,
+    activation,
+    in_scope,
+    merged_usage,
+    rank_score,
+    similarity_from_distance,
 )
 from ..common.builtins import builtins_project
 from .builtins_catalog import BUILTINS_PRIMITIVES_CONTEXT
@@ -160,10 +170,27 @@ FUNCTIONS_VERIFICATIONS_TABLE = "Functions/Verifications"
 # hand back callables (fixtures alone can run to tens of kilobytes).
 _LEDGER_INTERNAL_FIELDS = ("fixtures", "ledger", "static_review", "verified_hash")
 
+#: What a reader of the catalogue never acts on, minus the history a repairer
+#: cannot work without. A repair is asked to fix a function against a verdict;
+#: without the prior verdicts on the same function it cannot tell a fresh
+#: objection from one it has already answered, and cannot see that its last
+#: attempt is what produced the current complaint.
+_REPAIR_HIDDEN_FIELDS = ("fixtures", "verified_hash")
 
-def strip_ledger_internals(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return ``rows`` without the ledger state a reader of the catalogue never acts on."""
-    hidden = set(_LEDGER_INTERNAL_FIELDS)
+
+def strip_ledger_internals(
+    rows: List[Dict[str, Any]],
+    *,
+    keep_verdict_history: bool = False,
+) -> List[Dict[str, Any]]:
+    """Return ``rows`` without the ledger state a reader of the catalogue never acts on.
+
+    ``keep_verdict_history`` retains ``ledger`` and ``static_review`` for a
+    caller that is reasoning about the verdicts themselves.
+    """
+    hidden = set(
+        _REPAIR_HIDDEN_FIELDS if keep_verdict_history else _LEDGER_INTERNAL_FIELDS,
+    )
     return [
         (
             {k: v for k, v in row.items() if k not in hidden}
@@ -297,9 +324,19 @@ class _LineageTrackedFunction:
     (execution-site).
     """
 
-    def __init__(self, wrapped_callable: Callable[..., Any], function_name: str):
+    def __init__(
+        self,
+        wrapped_callable: Callable[..., Any],
+        function_name: str,
+        on_call: Optional[Callable[[], None]] = None,
+    ):
         self._wrapped = wrapped_callable
         self._function_name = function_name
+        # Usage-trace hook: this class is the one layer every boundary call
+        # already passes through, and its __getattr__ delegation keeps proxy
+        # identity intact — an OUTER wrapper broke remote-routing and venv
+        # cleanup introspection, which is why the trace records here.
+        self._on_call = on_call
 
         # Preserve introspection attributes.
         self.__name__ = function_name
@@ -311,6 +348,11 @@ class _LineageTrackedFunction:
         return getattr(self._wrapped, name)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if self._on_call is not None:
+            try:
+                self._on_call()
+            except Exception:  # noqa: BLE001 - metering must never break a call
+                pass
         # Local imports to avoid import-time cycles.
         from unify.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
         from unify.common.hierarchical_logger import log_boundary_event
@@ -2815,6 +2857,206 @@ class FunctionManager(BaseFunctionManager):
 
         return SETTINGS.function.verification
 
+    # ------------------------------------------------------------------ #
+    #  Activation: the usage trace behind memory-weighted retrieval       #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def activation_settings(self) -> "ActivationSettings":
+        from unify.settings import SETTINGS
+
+        return SETTINGS.function.activation
+
+    def _note_function_use(self, func_data: Dict[str, Any]) -> None:
+        """Record one invocation on the function's usage trace.
+
+        Fire-and-forget off the caller's loop: metering must never slow or
+        break execution, and a lost count only under-reports standing.
+        The read-modify-write can race a concurrent call and drop a count —
+        acceptable for a log-saturating signal. Primitives are platform
+        surface, not library memory, and are never traced. The owning
+        context comes from ``_federated_context`` (a team row's trace must
+        land on the team row — ``_context`` is never set; see the
+        verification-fields callers that inherited that trap).
+        """
+        settings = self.activation_settings
+        if not settings.enabled:
+            return
+        if func_data.get("is_primitive"):
+            return
+        fid = func_data.get("function_id")
+        if fid is None:
+            return
+        ctx = func_data.get("_federated_context") or self._compositional_ctx
+        now_iso = datetime.now(timezone.utc).isoformat()
+        kept = settings.recent_calls_kept
+
+        def _write() -> None:
+            logs = unisdk.get_logs(
+                context=ctx,
+                filter=f"function_id == {int(fid)}",
+                from_fields=["function_id", "usage_calls", "usage_recent_calls"],
+                limit=1,
+            )
+            if not logs:
+                return
+            entries = logs[0].entries or {}
+            recents = list(entries.get("usage_recent_calls") or [])
+            recents.append(now_iso)
+            unisdk.update_logs(
+                logs=[logs[0].id],
+                context=ctx,
+                entries={
+                    "usage_calls": int(entries.get("usage_calls") or 0) + 1,
+                    "usage_last_called_at": now_iso,
+                    "usage_recent_calls": recents[-kept:],
+                },
+                overwrite=True,
+            )
+
+        try:
+            self._write_off_loop(_write, what=f"usage:{func_data.get('name')}")
+        except Exception:  # noqa: BLE001 - metering must never break a call
+            pass
+
+    def _bump_search_hits(self, rows: List[Dict[str, Any]]) -> None:
+        """Retrieved-but-never-called is a signal of its own; count it."""
+        settings = self.activation_settings
+        if not settings.enabled:
+            return
+        for row in rows:
+            fid = row.get("function_id")
+            if fid is None or row.get("is_primitive"):
+                continue
+            ctx = row.get("_federated_context") or self._compositional_ctx
+
+            def _write(fid: int = int(fid), ctx: str = ctx) -> None:
+                logs = unisdk.get_logs(
+                    context=ctx,
+                    filter=f"function_id == {fid}",
+                    from_fields=["function_id", "usage_search_hits"],
+                    limit=1,
+                )
+                if not logs:
+                    return
+                entries = logs[0].entries or {}
+                unisdk.update_logs(
+                    logs=[logs[0].id],
+                    context=ctx,
+                    entries={
+                        "usage_search_hits": int(
+                            entries.get("usage_search_hits") or 0,
+                        )
+                        + 1,
+                    },
+                    overwrite=True,
+                )
+
+            try:
+                self._write_off_loop(_write, what=f"search_hit:{row.get('name')}")
+            except Exception:  # noqa: BLE001 - metering must never break search
+                pass
+
+    def _stamp_new_function_usage(
+        self,
+        entry_data: Dict[str, Any],
+        name: str,
+    ) -> None:
+        """Creation is the row's first activation event; a same-name
+        delete-then-add (the librarian's supersede flow) inherits the
+        deleted row's usage trace so the replacement stands where its
+        predecessor stood."""
+        entry_data["created_at"] = datetime.now(timezone.utc).isoformat()
+        inherited = self._take_usage_legacy(name)
+        if inherited:
+            entry_data.update(
+                {
+                    "usage_calls": int(inherited.get("calls") or 0),
+                    "usage_last_called_at": inherited.get("last_called_at"),
+                    "usage_recent_calls": inherited.get("recent_calls") or [],
+                    "usage_search_hits": int(inherited.get("search_hits") or 0),
+                },
+            )
+
+    def _stash_usage_legacy(
+        self,
+        name: object,
+        entries: Dict[str, Any],
+    ) -> None:
+        if not self.activation_settings.enabled or not name:
+            return
+        trace = {
+            "calls": entries.get("usage_calls"),
+            "last_called_at": entries.get("usage_last_called_at"),
+            "recent_calls": entries.get("usage_recent_calls"),
+            "search_hits": entries.get("usage_search_hits"),
+        }
+        if not any(v for v in trace.values()):
+            return
+        store: Dict[str, Dict[str, Any]] = getattr(self, "_usage_legacies", None) or {}
+        store[str(name)] = merged_usage(
+            store.get(str(name)),
+            trace,
+            self.activation_settings,
+        )
+        # Bounded, same-process-only memory: oldest entries fall off.
+        while len(store) > 64:
+            store.pop(next(iter(store)))
+        self._usage_legacies = store
+
+    def _take_usage_legacy(self, name: object) -> Optional[Dict[str, Any]]:
+        store = getattr(self, "_usage_legacies", None)
+        return store.pop(str(name), None) if store else None
+
+    def _activation_rank(
+        self,
+        rows: List[Dict[str, Any]],
+        *,
+        n: int,
+        include_dormant: bool,
+    ) -> List[Dict[str, Any]]:
+        """Order search results by similarity × standing; drop the lapsed.
+
+        Similarity dominates (the activation term is capped in settings) and
+        backfilled rows — which carry no score — keep their tail position.
+        Primitives never drop out of scope: platform surface is not memory.
+        Each surviving row is annotated with the components — ``_similarity``,
+        ``_standing``, ``_retrieval_score`` — so the querying model sees WHY
+        a result ranked where it did (relevant-but-lapsed reads differently
+        from mediocre-but-battle-tested) instead of re-deriving the math.
+        """
+        settings = self.activation_settings
+        if not settings.enabled:
+            return rows[:n]
+        now = datetime.now(timezone.utc)
+        ranked: List[tuple[float, int, Dict[str, Any]]] = []
+        for idx, row in enumerate(rows):
+            standing = activation(
+                now=now,
+                created_at=row.get("created_at"),
+                call_count=int(row.get("usage_calls") or 0),
+                recent_calls=row.get("usage_recent_calls") or [],
+                settings=settings,
+            )
+            if (
+                not include_dormant
+                and not row.get("is_primitive")
+                and not in_scope(standing, settings)
+            ):
+                continue
+            similarity = (
+                similarity_from_distance(row.get(SCORE_FIELD))
+                if SCORE_FIELD in row
+                else 0.0
+            )
+            score = rank_score(similarity, standing, settings)
+            row["_similarity"] = round(similarity, 4)
+            row["_standing"] = round(standing, 4)
+            row["_retrieval_score"] = round(score, 4)
+            ranked.append((-score, idx, row))
+        ranked.sort(key=lambda item: (item[0], item[1]))
+        return [row for _, _, row in ranked[:n]]
+
     def function_trust_hash(self, fn: Dict[str, Any]) -> str:
         """Trust hash of a compositional row: source, dependency closure, venv, language."""
         return _function_trust_hash(
@@ -3215,7 +3457,10 @@ class FunctionManager(BaseFunctionManager):
             if fn.get("verified_hash") != current and rows:
                 fn["verified_hash"] = current
             static = fn.get("static_review")
-            if isinstance(static, dict) and static.get("function_hash") != current:
+            stale_static = (
+                isinstance(static, dict) and static.get("function_hash") != current
+            )
+            if stale_static:
                 fn["static_review"] = None
             verify = derive_verify(
                 fn,
@@ -3225,9 +3470,13 @@ class FunctionManager(BaseFunctionManager):
             updates = {
                 "ledger": fn["ledger"],
                 "verified_hash": fn.get("verified_hash"),
-                "static_review": fn.get("static_review"),
                 "verify": verify,
             }
+            if stale_static:
+                # Written only to clear a stale cache: echoing the read value
+                # back would clobber a static-review persist landing between
+                # this fold's read and its write.
+                updates["static_review"] = None
             unisdk.update_logs(
                 logs=[log.id],
                 context=self._compositional_ctx,
@@ -3367,32 +3616,47 @@ class FunctionManager(BaseFunctionManager):
                 seed.add(int(entries["function_id"]))
         return self.invalidate_trust(seed) if seed else []
 
-    def _write_off_loop(self, fn: Callable[[], None], *, what: str) -> None:
+    def _write_off_loop(
+        self,
+        fn: Callable[[], None],
+        *,
+        what: str,
+    ) -> "concurrent.futures.Future[None]":
         """Run a ledger write without blocking the caller's event loop.
 
         Bounded retry: one immediate retry, then the failure is logged. A
-        lost row only delays trust; it never grants it.
+        lost row only delays trust; it never grants it. The returned future
+        resolves once the attempt (including its retry) has finished,
+        carrying the final failure if the write was lost; fire-and-forget
+        callers ignore it.
         """
+        done: "concurrent.futures.Future[None]" = concurrent.futures.Future()
 
         def _attempt() -> None:
             for attempt in (1, 2):
                 try:
                     fn()
+                    done.set_result(None)
                     return
                 except Exception as exc:
                     if attempt == 2:
                         logger.warning("%s failed after retry: %s", what, exc)
+                        done.set_exception(exc)
 
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             _attempt()
-            return
+            return done
         loop.run_in_executor(None, _attempt)
+        return done
 
-    def record_verification_nowait(self, row: VerificationRow) -> None:
+    def record_verification_nowait(
+        self,
+        row: VerificationRow,
+    ) -> "concurrent.futures.Future[None]":
         """Append a verdict row without awaiting the write."""
-        self._write_off_loop(
+        return self._write_off_loop(
             lambda: self.record_verification(row),
             what=f"Verification row write for function {row.function_id}",
         )
@@ -3401,11 +3665,11 @@ class FunctionManager(BaseFunctionManager):
         self,
         fn: Dict[str, Any],
         fields: Dict[str, Any],
-    ) -> None:
+    ) -> "concurrent.futures.Future[None]":
         """Persist captured fixtures for ``fn`` without awaiting the write."""
         function_id = int(fn["function_id"])
         context = fn.get("_context")
-        self._write_off_loop(
+        return self._write_off_loop(
             lambda: self._persist_verification_fields(
                 function_id=function_id,
                 fields=fields,
@@ -3418,11 +3682,11 @@ class FunctionManager(BaseFunctionManager):
         self,
         fn: Dict[str, Any],
         record: StaticReviewRecord,
-    ) -> None:
+    ) -> "concurrent.futures.Future[None]":
         """Persist a static-review verdict onto the row without awaiting the write."""
         function_id = int(fn["function_id"])
         context = fn.get("_context")
-        self._write_off_loop(
+        return self._write_off_loop(
             lambda: self._persist_verification_fields(
                 function_id=function_id,
                 fields={"static_review": record.model_dump(mode="json")},
@@ -3453,21 +3717,27 @@ class FunctionManager(BaseFunctionManager):
         name = str(func_data.get("name"))
         inner = raw
         if not isinstance(inner, _LineageTrackedFunction):
-            inner = _LineageTrackedFunction(raw, name)
+            inner = _LineageTrackedFunction(
+                raw,
+                name,
+                on_call=lambda: self._note_function_use(func_data),
+            )
         underlying = getattr(raw, "__wrapped__", raw)
         if isinstance(underlying, _VenvFunctionProxy):
             # Venv proxies carry no Python signature; derive one from the source.
-            return tier0_boundary(
+            guarded = tier0_boundary(
                 inner,
                 raw=None,
                 checker=self._tier0_checker(func_data),
                 signature=signature_from_source(func_data.get("implementation")),
             )
-        return tier0_boundary(
-            inner,
-            raw=underlying if callable(underlying) else None,
-            checker=self._tier0_checker(func_data),
-        )
+        else:
+            guarded = tier0_boundary(
+                inner,
+                raw=underlying if callable(underlying) else None,
+                checker=self._tier0_checker(func_data),
+            )
+        return guarded
 
     def list_verifications(
         self,
@@ -5469,6 +5739,7 @@ class FunctionManager(BaseFunctionManager):
                     # Create new function
                     entry_data["name"] = name
                     entry_data["guidance_ids"] = []
+                    self._stamp_new_function_usage(entry_data, name)
                     entries_to_create.append(entry_data)
                     results[name] = "added"
             except FixtureRegressionError as e:
@@ -5672,6 +5943,7 @@ class FunctionManager(BaseFunctionManager):
                     # Create new function
                     entry_data["name"] = name
                     entry_data["guidance_ids"] = []
+                    self._stamp_new_function_usage(entry_data, name)
                     entries_to_create.append(entry_data)
                     results[name] = "added"
 
@@ -6667,6 +6939,20 @@ class FunctionManager(BaseFunctionManager):
             ],
         )
 
+        # The librarian's supersede flow is delete-then-add: stash each
+        # deleted row's usage trace by name so a same-process replacement
+        # inherits its standing instead of restarting the popularity
+        # contest from zero. (A cross-process supersede loses the trace —
+        # the replacement simply starts as a newborn, which the grace
+        # already handles.)
+        for fid in ids_to_delete:
+            log = id_to_log.get(fid)
+            if log is not None:
+                self._stash_usage_legacy(
+                    id_to_name.get(fid),
+                    log.entries or {},
+                )
+
         # Batch delete all functions
         if log_ids_to_delete:
             unisdk.delete_logs(
@@ -6852,6 +7138,7 @@ class FunctionManager(BaseFunctionManager):
         query: str = "",
         n: int = 5,
         include_implementations: bool = True,
+        include_dormant: bool = False,
         _return_callable: bool = False,
         _namespace: Optional[Dict[str, Any]] = None,
         _also_return_metadata: bool = False,
@@ -6898,6 +7185,13 @@ class FunctionManager(BaseFunctionManager):
                 "venv_id",
                 "windows_os_required",
                 "custom_hash",
+                # The usage trace rides along so ranking can compute
+                # standing without a second read per row.
+                "created_at",
+                "usage_calls",
+                "usage_last_called_at",
+                "usage_recent_calls",
+                "usage_search_hits",
             ]
         )
         if not _return_callable and include_implementations:
@@ -6918,13 +7212,31 @@ class FunctionManager(BaseFunctionManager):
                 self._primitive_read_specs(allowed_fields=allowed_fields),
             )
 
+        # Overfetch so the activation pass has candidates to rank and drop:
+        # the federated cut to `limit` happens before standing is known, and
+        # a scope-filtered result set must still be able to fill n slots.
+        activation_settings = self.activation_settings
+        fetch_limit = (
+            min(
+                max(n + 4, n * activation_settings.search_overfetch_factor),
+                activation_settings.search_overfetch_cap,
+            )
+            if activation_settings.enabled
+            else n
+        )
         results = federated_ranked_search(
             contexts,
             {"embedding_text": query},
-            limit=n,
+            limit=fetch_limit,
             unique_id_field="function_id",
             backfill=True,
         )
+        results = self._activation_rank(
+            results,
+            n=n,
+            include_dormant=include_dormant,
+        )
+        self._bump_search_hits(results)
         if _return_callable:
             self._hydrate_verification_fields(results)
 
@@ -8205,6 +8517,10 @@ class FunctionManager(BaseFunctionManager):
 
         if func_data is None:
             raise ValueError(f"Function '{function_name}' not found")
+
+        # Direct executions (canvas actions, sub-agents, proxy re-entry)
+        # feed the usage trace here; primitives are filtered inside.
+        self._note_function_use(func_data)
 
         # Primitive execution: resolve callable and invoke directly.
         if func_data.get("is_primitive"):

@@ -56,6 +56,9 @@ from .messages import (
     is_loop_authored_message,
     loop_user_notice,
     extract_substantive_text,
+    compact_reviewed_messages,
+    strip_reasoning_payloads,
+    _rebaseline_watermark_hash,
 )
 from .tools_data import (
     ToolsData,
@@ -1723,8 +1726,44 @@ async def async_tool_loop_inner(
                 except asyncio.QueueEmpty:
                     break
                 _is_sentinel = isinstance(extra, dict) and (
-                    "_mirror" in extra or extra.get("_replay")
+                    "_mirror" in extra
+                    or "_transcript_note" in extra
+                    or "_compact_transcript" in extra
+                    or extra.get("_replay")
                 )
+                # Transcript-note sentinel: a background process (e.g. a
+                # storage review) leaves a loop-authored note in the
+                # transcript without granting an LLM turn — the model reads
+                # it whenever it next speaks.
+                if isinstance(extra, dict) and "_transcript_note" in extra:
+                    try:
+                        _note = str(
+                            (extra.get("_transcript_note") or {}).get("text") or "",
+                        )
+                        if _note:
+                            await _msg_dispatcher.append_msgs(
+                                [loop_user_notice(_note)],
+                            )
+                    except Exception:
+                        pass
+                    continue
+                # Transcript-compaction sentinel: a completed storage review
+                # has consolidated the covered turns, so their raw tool
+                # payloads shed their bulk. Processed only at drain points —
+                # never mid-dispatch.
+                if isinstance(extra, dict) and "_compact_transcript" in extra:
+                    try:
+                        _n = int(
+                            (extra.get("_compact_transcript") or {}).get(
+                                "reviewed_messages",
+                            )
+                            or 0,
+                        )
+                        if _n > 0:
+                            compact_reviewed_messages(client, _n)
+                    except Exception:
+                        pass
+                    continue
                 if not _is_sentinel:
                     if not _had_interjections:
                         _had_interjections = True
@@ -4194,10 +4233,15 @@ async def async_tool_loop_inner(
             # a substantive answer already sitting in the transcript — a
             # model that has nothing left to add after answering can still
             # return empty content on a later turn, and that must not erase
-            # the answer. Every consumer below (multi-handle, persist, the
-            # plain return) reads final_content after this point, so
-            # resolving it once here covers all of them.
-            if final_content is None:
+            # the answer. Multi-handle and the plain return read
+            # final_content after this point, so resolving it once here
+            # covers both. Persist mode is exempt: it never finalizes here —
+            # an empty turn surfaces nothing and re-enters the persist wait,
+            # and with response_format the turn's answer is the
+            # response-tool payload rather than text content, so the
+            # nudge/loud-fail below would inject spurious turns and then
+            # terminate a loop that only an explicit stop may end.
+            if final_content is None and not persist:
                 _substantive_content = None
                 for _hist_msg in reversed(client.messages):
                     _hist_role = _hist_msg.get("role")
@@ -4305,6 +4349,23 @@ async def async_tool_loop_inner(
                 _persist_response_content = None
                 _persist_response_emitted = False
 
+                # A parked turn's chain of thought is never consulted again:
+                # the next dispatch starts from a fresh user interjection, so
+                # provider reasoning payloads (encrypted blobs, reasoning
+                # summaries) on every completed assistant message are pure
+                # re-billed bulk from here on. Shed them now rather than
+                # waiting for a storage review to cover the span — reviews
+                # lag turns, and the lag is paid on every call in between.
+                try:
+                    _shed = 0
+                    for _m in client.messages or []:
+                        if isinstance(_m, dict) and _m.get("role") == "assistant":
+                            _shed += strip_reasoning_payloads(_m)
+                    if _shed:
+                        _rebaseline_watermark_hash(client)
+                except Exception:
+                    pass
+
                 logger.info(
                     "Persist mode: waiting for next interjection...",
                     prefix=ICONS["pause"],
@@ -4342,6 +4403,48 @@ async def async_tool_loop_inner(
                         continue
 
                     interjection = interject_waiter.result()
+
+                    # Transcript-note sentinels are transcript-only: append the
+                    # loop-authored note and stay in persist wait. The model
+                    # reads it on its next granted turn.
+                    if (
+                        isinstance(interjection, dict)
+                        and "_transcript_note" in interjection
+                    ):
+                        try:
+                            _note = str(
+                                (interjection.get("_transcript_note") or {}).get(
+                                    "text",
+                                )
+                                or "",
+                            )
+                            if _note:
+                                await _msg_dispatcher.append_msgs(
+                                    [loop_user_notice(_note)],
+                                )
+                        except Exception:
+                            pass
+                        continue
+
+                    # Transcript-compaction sentinels: the covered turns were
+                    # consolidated by a storage review; shed their raw tool
+                    # payloads and stay in persist wait.
+                    if (
+                        isinstance(interjection, dict)
+                        and "_compact_transcript" in interjection
+                    ):
+                        try:
+                            _n = int(
+                                (interjection.get("_compact_transcript") or {}).get(
+                                    "reviewed_messages",
+                                )
+                                or 0,
+                            )
+                            if _n > 0:
+                                compact_reviewed_messages(client, _n)
+                        except Exception:
+                            pass
+                        continue
 
                     # Mirror sentinels are transcript-only (no user message).
                     # Process them in-place and stay in persist wait — resuming

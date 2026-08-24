@@ -9,6 +9,7 @@ is untrusted, and kept on trusted ``read_only``/effectful functions when
 from __future__ import annotations
 
 import ast
+import concurrent.futures
 import functools
 import inspect
 import logging
@@ -43,7 +44,10 @@ class LedgerWriter(Protocol):
     @property
     def verification_settings(self) -> VerificationSettings: ...
 
-    def record_verification_nowait(self, row: VerificationRow) -> None: ...
+    def record_verification_nowait(
+        self,
+        row: VerificationRow,
+    ) -> concurrent.futures.Future[None]: ...
 
     def function_trust_hash(self, fn: Dict[str, Any]) -> str: ...
 
@@ -51,7 +55,7 @@ class LedgerWriter(Protocol):
         self,
         fn: Dict[str, Any],
         fixture_payload: dict,
-    ) -> None: ...
+    ) -> concurrent.futures.Future[None]: ...
 
 
 def _class_of(row: Mapping[str, Any]) -> SideEffectClass:

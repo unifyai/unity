@@ -121,6 +121,35 @@ def _inject_private_fields(entries: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+class MissingRowIdentityError(RuntimeError):
+    """A created row came back without its auto-counted identity column."""
+
+
+def assigned_row_id(log: unisdk.Log, column: str, *, context: str) -> int:
+    """Return the identity value the backend assigned to a freshly created row.
+
+    A context configured with unique-key auto-counting stamps *column* on
+    every insert and echoes it back on the created log. A missing echo means
+    the context is live without that configuration — it was created
+    implicitly by a row write reaching the backend before provisioning — so
+    the row can never be addressed by id. The orphan row is deleted so junk
+    does not accumulate, and the corruption is raised to the caller: no API
+    can retrofit the configuration, so the context must be deleted and
+    re-provisioned before further writes.
+    """
+    value = log.entries.get(column)
+    if value is not None:
+        return int(value)
+    unisdk.delete_logs(logs=log.id, context=context)
+    raise MissingRowIdentityError(
+        f"Context {context!r} accepted a row without assigning {column!r}: "
+        "the context is live without its unique-key/auto-counting "
+        "configuration, so rows written to it cannot be addressed by id. "
+        "The orphan row was deleted. Delete and re-provision the context "
+        "before writing again.",
+    )
+
+
 # EventBus metadata columns stored alongside an event's spread payload fields.
 _EVENT_META_KEYS = frozenset(
     {"row_id", "event_id", "calling_id", "event_timestamp", "payload_cls", "type"},

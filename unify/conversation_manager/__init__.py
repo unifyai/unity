@@ -97,8 +97,16 @@ async def stop_async(reason: str = "manual_stop") -> None:
     """
     Stop the ConversationManager.
 
+    An explicit stop is a retirement, not an idle timeout: it goes through
+    the same ``_request_shutdown`` sequence the inactivity route uses (record
+    the reason, log ``session_end``, set ``stop``, close the event broker),
+    then runs ``cleanup()`` — which discards in-flight actions rather than
+    waiting on them — and flushes buffered EventBus writes. The whole
+    sequence completes in seconds so an in-process successor can boot over
+    the same durable world immediately.
+
     Args:
-        reason: Reason for stopping (for logging)
+        reason: Reason for stopping (recorded as the shutdown reason)
     """
     global _conversation_manager, _shutdown_reason
 
@@ -112,11 +120,24 @@ async def stop_async(reason: str = "manual_stop") -> None:
     )
 
     try:
-        # Signal shutdown
-        _conversation_manager.stop.set()
+        if _conversation_manager.shutdown_reason is None:
+            await _conversation_manager._request_shutdown(
+                reason,
+                f"Explicit shutdown requested ({reason})",
+            )
+        else:
+            # An internal exit (idle timeout, drain, …) already ran the
+            # retirement sequence; don't overwrite its recorded reason.
+            _conversation_manager.stop.set()
 
-        # Clean up
         await _conversation_manager.cleanup()
+
+        # Mirror the subprocess exit path: buffered EventBus writes must not
+        # die with the session.
+        from unify.events.event_bus import EVENT_BUS
+
+        if EVENT_BUS:
+            EVENT_BUS.flush()
 
         LOGGER.debug(f"{ICONS['lifecycle']} ConversationManager stopped")
         _shutdown_reason = reason
@@ -124,6 +145,16 @@ async def stop_async(reason: str = "manual_stop") -> None:
         LOGGER.error(f"{ICONS['lifecycle']} Error stopping ConversationManager: {e}")
         _shutdown_reason = f"stop_error: {e}"
     finally:
+        # A successor must not inherit the retired session's machinery: the
+        # ConversationManager is a registry singleton (handing it back gives
+        # the next boot a session whose stop event is already set), and the
+        # broker singleton was just closed by the retirement sequence (a next
+        # boot that received it would publish into a void).
+        from unify.conversation_manager.event_broker import reset_event_broker
+        from unify.manager_registry import ManagerRegistry
+
+        ManagerRegistry.deregister_instance(type(_conversation_manager))
+        reset_event_broker()
         _conversation_manager = None
 
 

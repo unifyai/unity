@@ -171,8 +171,12 @@ def _stub_derived_ownership_binding(request):
 
     ``set_details`` re-derives team ownership from the platform's assistant
     record; conversation-manager tests configure identity directly and have
-    no record to serve. Tests that exercise the binding itself opt out via
-    ``@pytest.mark.real_ownership_binding``.
+    no record to serve. This stub covers tests that assign an ``agent_id``
+    and then drive ``set_details``; the boot lane inside module-scoped CM
+    fixtures (which runs before any function-scoped patch exists) never
+    binds because ``ensure_test_assistant_identity_env`` blanks
+    ``ASSISTANT_ID``, leaving ``agent_id`` None. Tests that exercise the
+    binding itself opt out via ``@pytest.mark.real_ownership_binding``.
     """
     if "real_ownership_binding" in request.keywords:
         yield

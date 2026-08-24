@@ -141,6 +141,11 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         Very large downloads and slow servers are cut off rather than allowed
         to run indefinitely.
 
+        Parameters
+        ----------
+        url : str
+            The public http or https address to download.
+
         Returns
         -------
         str

@@ -11,7 +11,11 @@ import threading
 
 import unisdk
 
-from ..common.log_utils import log as unity_log, create_logs as unity_create_logs
+from ..common.log_utils import (
+    assigned_row_id,
+    create_logs as unity_create_logs,
+    log as unity_log,
+)
 from ..common.authorship import strip_authoring_assistant_id
 from ..common.stale_reason import (
     StaleReason,
@@ -433,7 +437,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             mutable=True,
             stamp_authoring=True,
         )
-        knowledge_id = int(log.entries["knowledge_id"])
+        knowledge_id = assigned_row_id(log, "knowledge_id", context=context)
         self.reconcile_sources(
             knowledge_ids=[knowledge_id],
             destination=destination,
@@ -623,7 +627,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 mutable=True,
                 stamp_authoring=True,
             )
-            new_knowledge_id = int(log.entries["knowledge_id"])
+            new_knowledge_id = assigned_row_id(log, "knowledge_id", context=context)
         else:
             new_log_id = self._resolve_log_id(
                 knowledge_id=new_knowledge_id,

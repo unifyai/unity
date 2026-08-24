@@ -325,6 +325,17 @@ class ManagerRegistry:
             cls._instances[klass] = instance
 
     @classmethod
+    def deregister_instance(cls, klass: Type) -> None:
+        """Drop one cached singleton so the next construction builds fresh.
+
+        A retired instance must never be handed to a successor: an
+        in-process reboot that receives it back gets a session whose stop
+        event is already set and whose registries were already discarded.
+        """
+        with cls._lock:
+            cls._instances.pop(klass, None)
+
+    @classmethod
     def clear(cls) -> None:
         """Remove all cached singleton instances.
 

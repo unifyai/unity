@@ -207,6 +207,23 @@ def _usage_from_completion(completion: Any) -> PassUsage:
     )
 
 
+#: Reasons that mean "no verdict was obtained", as opposed to a judgement of
+#: UNSURE. A model that could not be reached, answered unparseably, or did not
+#: answer in time has said nothing about the function -- so these must not be
+#: recorded as evidence, and must not be read as the verifier declining to
+#: clear the call. They are faults in the channel, and the only honest
+#: responses to them are retry and, failing that, say so plainly.
+VERDICT_FAULT_REASONS = frozenset({"unparseable_verdict", "llm_error", "timeout"})
+
+
+def verdict_is_fault(verdict: Optional[Verdict]) -> bool:
+    """Whether *verdict* stands in for a verdict never obtained."""
+
+    if verdict is None:
+        return True
+    return verdict.verdict == "UNSURE" and verdict.reason in VERDICT_FAULT_REASONS
+
+
 def _parse_verdict(text: Any) -> Optional[Verdict]:
     if isinstance(text, Verdict):
         return text
@@ -414,6 +431,29 @@ class VerifierPasses:
         usage: PassUsage,
         wall_ms: int,
     ) -> VerificationRow:
+        if verdict_is_fault(verdict):
+            # A model that could not be reached or could not be parsed has
+            # said nothing about this function. Recording it would put a
+            # verdict nobody made into the evidence `derive_verify` reads,
+            # and every such row pushes the function further from trust for
+            # a reason that is not about the function at all.
+            logger.warning(
+                "Verifier %s pass produced no verdict (%s); not recorded",
+                kind,
+                verdict.reason,
+            )
+            return VerificationRow(
+                function_id=int(row["function_id"]),
+                function_hash=self.trust_hash(row),
+                kind=kind,
+                verdict=verdict.verdict,
+                reason=verdict.reason,
+                fault=verdict.fault,
+                call_site=call_site,
+                run_key=self.run_key,
+                task_id=self.task_id,
+                created_at=utcnow(),
+            )
         entry = VerificationRow(
             function_id=int(row["function_id"]),
             function_hash=self.trust_hash(row),
@@ -533,31 +573,52 @@ class VerifierPasses:
             sibling_results=sibling_results,
         )
         started = time.perf_counter()
-        client = self._client(f"Verifier.precondition({row.get('name')})")
-        client.set_system_message(prefix)
         usage = PassUsage()
-        try:
-            handle = start_async_tool_loop(
-                client=client,
-                message=f"{stable}\n\n{volatile}",
-                tools={"run_probe": run_probe},
-                loop_id=f"VerifierPrecondition({row.get('name')})",
-                max_consecutive_failures=1,
-                max_steps=max_steps,
-                response_format=Verdict,
-                log_steps=False,
-            )
-            outcome = await handle.result()
-            verdict = _parse_verdict(outcome)
-            if verdict is None:
-                verdict = Verdict(
-                    verdict="UNSURE",
-                    reason="unparseable_verdict",
-                    fault=None,
+        # Retried on an unreadable answer, for the same reason ``_judge``
+        # retries: a malformed reply is a fault in the channel, and holding a
+        # run on the first one throws away work over a formatting accident.
+        # This pass is the one that needed it most -- it is the only pass that
+        # declares a tool, which is exactly the shape providers most often
+        # answer in a call of their own naming.
+        verdict: Optional[Verdict] = None
+        for attempt in (1, 2):
+            client = self._client(f"Verifier.precondition({row.get('name')})")
+            client.set_system_message(prefix)
+            message = f"{stable}\n\n{volatile}"
+            if attempt == 2:
+                message += (
+                    "\n\nYour previous reply was not a readable verdict. Reply with "
+                    'exactly one JSON object of the form {"verdict": ..., '
+                    '"reason": ..., "fault": ...} and nothing else.'
                 )
-        except Exception as exc:
-            logger.warning("Precondition probe for %s failed: %s", row.get("name"), exc)
-            verdict = Verdict(verdict="UNSURE", reason="llm_error", fault=None)
+            try:
+                handle = start_async_tool_loop(
+                    client=client,
+                    message=message,
+                    tools={"run_probe": run_probe},
+                    loop_id=f"VerifierPrecondition({row.get('name')})",
+                    max_consecutive_failures=1,
+                    max_steps=max_steps,
+                    response_format=Verdict,
+                    log_steps=False,
+                )
+                verdict = _parse_verdict(await handle.result())
+            except Exception as exc:
+                logger.warning(
+                    "Precondition probe for %s failed: %s",
+                    row.get("name"),
+                    exc,
+                )
+                verdict = Verdict(verdict="UNSURE", reason="llm_error", fault=None)
+                break
+            if verdict is not None:
+                break
+        if verdict is None:
+            verdict = Verdict(
+                verdict="UNSURE",
+                reason="unparseable_verdict",
+                fault=None,
+            )
         self._record(
             row,
             kind=VerdictKind.precondition,
@@ -1212,7 +1273,7 @@ class RunVerificationSupervisor:
             )
         if verdict.verdict == "UNSURE":
             raise HoldRequested(
-                code="timeout" if verdict.reason == "timeout" else "unsure",
+                code=("verdict_unavailable" if verdict_is_fault(verdict) else "unsure"),
                 leaf_name=pending.frame.name,
                 reason=verdict.reason,
                 verdict=verdict,
@@ -1345,7 +1406,23 @@ class VerifiedCall:
         )
 
     def _needs_precondition(self) -> bool:
-        return self.effectful or self.row.get("precondition") is not None
+        """Whether this call needs the world checked before its effect runs.
+
+        Only when there is something to check. An effectful function with no
+        declared precondition used to be probed anyway, which asked a judge
+        to confirm a criterion nobody had written: the prompt substitutes
+        "(none declared -- judge from the goal, the source and the
+        arguments)", and for anything whose job is to go and read the world
+        that is unanswerable without doing the work. An inconclusive answer
+        then held the run, so a function was blocked by the absence of a
+        precondition rather than by anything about its state.
+
+        The other passes still cover it: static review reads the source,
+        args review reads the call, tier-0 checks the contract, and the post
+        pass checks what the effect produced.
+        """
+
+        return self.row.get("precondition") is not None
 
     def _tier0_input(
         self,
@@ -1505,7 +1582,7 @@ class VerifiedCall:
             )
         if verdict.verdict == "UNSURE":
             raise HoldRequested(
-                code="timeout" if verdict.reason == "timeout" else "unsure",
+                code=("verdict_unavailable" if verdict_is_fault(verdict) else "unsure"),
                 leaf_name=self.name,
                 reason=verdict.reason,
                 verdict=verdict,
@@ -2035,6 +2112,13 @@ def held_message(task_name: str, outcome: HeldOutcome) -> str:
         return (
             f"Holding {task_name}: {leaf} ran but could not be verified afterwards "
             f"({outcome.reason}). It was not repeated. Payload retained on the execution row."
+        )
+    if outcome.code == "verdict_unavailable":
+        return (
+            f"Holding {task_name}: the check on {leaf} did not return a readable "
+            f"result ({outcome.reason}), so nothing was sent or changed. This is a "
+            "fault in the check, not a judgement about the work. Payload retained "
+            "on the execution row."
         )
     if outcome.code == "exhausted":
         return (

@@ -11,14 +11,99 @@ from unify.actor.environments.base import (
 )
 from unify.function_manager.primitives import ComputerPrimitives, get_registry
 
+_NO_DESKTOP_ROUTES = (
+    "Routes that need no desktop and cover most of what a browser "
+    "would have been used for:\n"
+    "- `primitives.web.fetch(url)` -- download a public URL, "
+    "including a folder or file shared as 'anyone with the link', "
+    "and return a local path ready to parse or ingest.\n"
+    "- The connected workspace (Microsoft 365 / Google) for "
+    "anything the account can already see, including content "
+    "shared into it by another organisation.\n"
+    "- Connected integration apps for content held in them."
+)
+
+_USER_DESKTOP_RULES = (
+    "`primitives.computer.user_desktop` drives a **user's own physical "
+    "machine**: only on explicit request, clarify when unsure which "
+    "machine is meant, confirm before consequential actions, stop "
+    "immediately on `PermissionError` (control revoked), and never "
+    "modify their machine to work around an error.  Discover machines "
+    "with `user_desktop.list_linked()`; select with "
+    "`session(user_id=...)`.  The full rules of engagement are in "
+    'guidance -- search for "driving desktops and reading screens".'
+)
+
+_USER_DESKTOP_FILES_CONTRACT = (
+    "**Their files: use `primitives.computer.user_desktop.files` "
+    "(`list`/`pull`/`push`, bulk `sync`) -- it mirrors what you pull "
+    "into `~/Unity/Remote/<user_id>/` and returns local paths you can "
+    "parse.  Never harvest their files by running shell "
+    "`find`/`cat`/`tar`/`base64`/`cp`/`scp`/`rclone` on "
+    '`surface="user_desktop"`** -- that surface is only for commands '
+    "the user explicitly wants executed on their machine.  The full "
+    "lazy-read procedure is in guidance -- search for "
+    '"user desktop files".'
+)
+
+_PROGRESS_NOTIFICATIONS = (
+    "### Progress Notifications for Computer Actions\n\n"
+    "Notify once per **logical task**, not per API call.  A task like "
+    '"search Google for X" is one notification at the start and one at '
+    "completion -- the sub-steps (open browser, navigate, type query, "
+    "press Enter) are implementation details the user does not need to "
+    "hear individually.\n\n"
+    "Reserve intermediate notifications for genuinely long procedures "
+    "that span multiple unrelated sites or take more than ~30 seconds "
+    "(e.g., comparing prices across five stores).  For a single-site "
+    "interaction that completes in a few seconds, one kickoff + one "
+    "completion is sufficient."
+)
+
+_LATENCY_GUIDANCE = (
+    "### Latency: Act and Observe Concurrently\n\n"
+    "Computer actions are the biggest latency bottleneck in "
+    "interactive sessions.  **Never** follow a sequential observe → "
+    "act → observe pattern: act immediately on the likely state "
+    "(if the user says \"open Chrome\", call `act('Open Chrome')` "
+    "without a confirming screenshot first), observe after acting to "
+    "verify, and issue observe + act concurrently when you need "
+    "both.  One optimistic action + one verification beats observe → "
+    "plan → act → verify.  **Multi-step automated procedures are "
+    "different**: for loops, sequential extraction, and form-filling "
+    "pipelines, work incrementally — execute one iteration, verify, "
+    "then proceed."
+)
+
+
+def _viewing_state_section(example: str, coordinate_spaces: str) -> str:
+    """Render the Viewing Computer State section around a shape-appropriate
+    screenshot example and coordinate-space note."""
+    return (
+        "### Viewing Computer State\n\n"
+        "`get_screenshot()` returns a PIL Image; `display()` renders it "
+        "for the **user** to see:\n\n"
+        "```python\n"
+        f"{example}\n"
+        "```\n\n"
+        "To **interpret** a screen yourself, send it to the vision model "
+        "with `query_llm(prompt, images=[png_bytes_or_path])`.  "
+        "Coordinate spaces are NOT interchangeable: read `click(x, y)` "
+        "coordinates from the SAME session's `get_screenshot()` "
+        f"({coordinate_spaces}).  Observation-space "
+        "scaling and the full coordinate rules are in guidance -- search "
+        'for "driving desktops and reading screens".'
+    )
+
 
 class ComputerEnvironment(BaseEnvironment):
     """Computer control environment backed by ``ComputerPrimitives``.
 
-    Exposes two interfaces for generated plan code:
+    Exposes three interfaces for generated plan code:
 
     - ``primitives.computer.desktop.*``  -- singleton desktop control (mouse/keyboard)
     - ``primitives.computer.web.new_session(visible=...)``  -- factory for browser sessions
+    - ``primitives.computer.user_desktop.session(user_id=...)``  -- a user's own linked machine
 
     Lives under the unified ``primitives`` namespace alongside state managers
     and actor delegation.
@@ -166,34 +251,80 @@ class ComputerEnvironment(BaseEnvironment):
         """Generate prompt context with desktop + web factory guidance."""
         from unify.session_details import SESSION_DETAILS
 
+        entitled = SESSION_DETAILS.assistant.managed_desktop_entitled
+        linked = bool(SESSION_DETAILS.assistant.user_desktops)
+
         parts: list[str] = []
 
-        if not SESSION_DETAILS.assistant.managed_desktop_entitled:
-            # Say so before describing any of it. The methods below exist on the
-            # namespace whether or not a machine backs them, so an actor told
-            # only what they do will reach for one and be refused -- and it will
-            # read as a fault rather than as an add-on this assistant does not
-            # have. Naming the routes that do work is what stops it retrying.
-            parts.append(
+        if not entitled and not linked:
+            # Say so before describing any of it. The methods below exist on
+            # the namespace whether or not a machine backs them, so an actor
+            # told only what they do will reach for one and be refused -- and
+            # it will read as a fault rather than as an add-on this assistant
+            # does not have. Naming the routes that do work is what stops it
+            # retrying.
+            return (
                 "### Computer Control -- NOT AVAILABLE\n\n"
                 "This assistant has no managed desktop, so nothing under "
                 "`primitives.computer.desktop` or `primitives.computer.web` "
                 "can run: calls fail immediately rather than waiting.  Do not "
                 "attempt them, and do not treat this as a transient error.\n\n"
-                "Routes that need no desktop and cover most of what a browser "
-                "would have been used for:\n"
-                "- `primitives.web.fetch(url)` -- download a public URL, "
-                "including a folder or file shared as 'anyone with the link', "
-                "and return a local path ready to parse or ingest.\n"
-                "- The connected workspace (Microsoft 365 / Google) for "
-                "anything the account can already see, including content "
-                "shared into it by another organisation.\n"
-                "- Connected integration apps for content held in them.\n\n"
+                f"{_NO_DESKTOP_ROUTES}\n\n"
                 "If a task genuinely requires driving a graphical application, "
                 "say that the Desktop Computer add-on is needed rather than "
-                "attempting a workaround.",
+                "attempting a workaround."
             )
-            return "\n\n".join(parts)
+
+        if not entitled:
+            # No managed desktop, but a user has linked their own machine.
+            # `primitives.computer.user_desktop` is gated on links and
+            # per-user consent, never on the add-on -- so it must still be
+            # taught here, together with its rules of engagement; otherwise
+            # the actor holds a live, sensitive capability it was never shown
+            # the safety contract for.
+            parts.append(
+                "### Computer Control -- Managed Desktop NOT AVAILABLE\n\n"
+                "This assistant has no managed desktop of its own, so "
+                "nothing under `primitives.computer.desktop` or "
+                "`primitives.computer.web` can run: calls fail immediately "
+                "rather than waiting.  Do not attempt them, and do not treat "
+                "this as a transient error.  The one live computer-control "
+                "route is `primitives.computer.user_desktop` -- a user's own "
+                "linked machine, covered below.\n\n"
+                f"{_NO_DESKTOP_ROUTES}\n\n"
+                "If a task genuinely requires driving a graphical "
+                "application anywhere other than a machine a user has linked "
+                "and explicitly asked you onto, say that the Desktop "
+                "Computer add-on is needed rather than attempting a "
+                "workaround.",
+            )
+            parts.append(
+                "### A User's Linked Desktop\n\n"
+                f"{_USER_DESKTOP_RULES}  "
+                "Session handles expose the desktop method set (`act`, "
+                "`observe`, `query`, `type_text`, `click`, "
+                "`get_screenshot`, ...) -- read the full docs from inside "
+                "`execute_code` with `help(session.<method>)` / "
+                "`inspect.signature(...)` before any non-obvious call.\n\n"
+                f"{_USER_DESKTOP_FILES_CONTRACT}",
+            )
+            parts.append(
+                _viewing_state_section(
+                    "session = primitives.computer.user_desktop.session()\n"
+                    "display(await session.get_screenshot())",
+                    "each linked machine is its own display space",
+                ),
+            )
+            parts.append(_PROGRESS_NOTIFICATIONS)
+            parts.append(_LATENCY_GUIDANCE)
+            if self._allowed_methods is not None:
+                filtered_docs = build_filtered_method_docs(
+                    self._allowed_methods,
+                    self.NAMESPACE,
+                )
+                if filtered_docs:
+                    parts.append(filtered_docs)
+            return "\n\n".join(p for p in parts if p and p.strip())
 
         parts.append(
             "### Computer Control\n\n"
@@ -289,70 +420,21 @@ class ComputerEnvironment(BaseEnvironment):
             "`primitives.computer.desktop` and `primitives.computer.web` always "
             "drive **your own** managed desktop (the Console live view) -- the "
             "default workspace for every task.  "
-            "`primitives.computer.user_desktop` drives a **user's own physical "
-            "machine**: only on explicit request, clarify when unsure which "
-            "machine is meant, confirm before consequential actions, stop "
-            "immediately on `PermissionError` (control revoked), and never "
-            "modify their machine to work around an error.  Discover machines "
-            "with `user_desktop.list_linked()`; select with "
-            "`session(user_id=...)`.  The full rules of engagement are in "
-            'guidance -- search for "driving desktops and reading screens".\n\n'
-            "**Their files: use `primitives.computer.user_desktop.files` "
-            "(`list`/`pull`/`push`, bulk `sync`) -- it mirrors what you pull "
-            "into `~/Unity/Remote/<user_id>/` and returns local paths you can "
-            "parse.  Never harvest their files by running shell "
-            "`find`/`cat`/`tar`/`base64`/`cp`/`scp`/`rclone` on "
-            '`surface="user_desktop"`** -- that surface is only for commands '
-            "the user explicitly wants executed on their machine.  The full "
-            "lazy-read procedure is in guidance -- search for "
-            '"user desktop files".',
+            f"{_USER_DESKTOP_RULES}\n\n"
+            f"{_USER_DESKTOP_FILES_CONTRACT}",
         )
 
         parts.append(
-            "### Viewing Computer State\n\n"
-            "`get_screenshot()` returns a PIL Image; `display()` renders it "
-            "for the **user** to see:\n\n"
-            "```python\n"
-            "display(await primitives.computer.desktop.get_screenshot())\n"
-            "```\n\n"
-            "To **interpret** a screen yourself, send it to the vision model "
-            "with `query_llm(prompt, images=[png_bytes_or_path])`.  "
-            "Coordinate spaces are NOT interchangeable: read `click(x, y)` "
-            "coordinates from the SAME session's `get_screenshot()` (desktop "
-            "and visible web share the full-display space; headless "
-            "`visible=False` screenshots are viewport-only).  Observation-space "
-            "scaling and the full coordinate rules are in guidance -- search "
-            'for "driving desktops and reading screens".',
+            _viewing_state_section(
+                "display(await primitives.computer.desktop.get_screenshot())",
+                "desktop "
+                "and visible web share the full-display space; headless "
+                "`visible=False` screenshots are viewport-only",
+            ),
         )
 
-        parts.append(
-            "### Progress Notifications for Computer Actions\n\n"
-            "Notify once per **logical task**, not per API call.  A task like "
-            '"search Google for X" is one notification at the start and one at '
-            "completion -- the sub-steps (open browser, navigate, type query, "
-            "press Enter) are implementation details the user does not need to "
-            "hear individually.\n\n"
-            "Reserve intermediate notifications for genuinely long procedures "
-            "that span multiple unrelated sites or take more than ~30 seconds "
-            "(e.g., comparing prices across five stores).  For a single-site "
-            "interaction that completes in a few seconds, one kickoff + one "
-            "completion is sufficient.",
-        )
-
-        parts.append(
-            "### Latency: Act and Observe Concurrently\n\n"
-            "Computer actions are the biggest latency bottleneck in "
-            "interactive sessions.  **Never** follow a sequential observe → "
-            "act → observe pattern: act immediately on the likely state "
-            "(if the user says \"open Chrome\", call `act('Open Chrome')` "
-            "without a confirming screenshot first), observe after acting to "
-            "verify, and issue observe + act concurrently when you need "
-            "both.  One optimistic action + one verification beats observe → "
-            "plan → act → verify.  **Multi-step automated procedures are "
-            "different**: for loops, sequential extraction, and form-filling "
-            "pipelines, work incrementally — execute one iteration, verify, "
-            "then proceed.",
-        )
+        parts.append(_PROGRESS_NOTIFICATIONS)
+        parts.append(_LATENCY_GUIDANCE)
 
         if self._allowed_methods is not None:
             filtered_docs = build_filtered_method_docs(
