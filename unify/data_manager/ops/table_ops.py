@@ -59,12 +59,24 @@ def create_table_impl(
     """
     logger.debug("Creating table context: %s", context)
 
-    unisdk.create_context(
-        context,
-        description=description,
-        unique_keys=unique_keys,
-        auto_counting=auto_counting,
-    )
+    try:
+        unisdk.create_context(
+            context,
+            description=description,
+            unique_keys=unique_keys,
+            auto_counting=auto_counting,
+        )
+    except Exception:
+        # Name the context in the failure. The backend rejects a malformed name
+        # by stating the rule it broke and never the value that broke it, so a
+        # worker log carried "Invalid context name ... Consecutive slashes are
+        # not allowed" with no way to tell which of fifteen destinations was at
+        # fault -- and the name above is logged at DEBUG, which pods do not
+        # emit. Logging rather than re-wrapping keeps the original exception
+        # type intact: callers classify on it, and several provider errors
+        # cannot be reconstructed from a message alone.
+        logger.error("Creating table context %r failed", context)
+        raise
 
     if is_shared_authored_context(context):
         fields = fields_with_authoring(fields)

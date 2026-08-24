@@ -58,7 +58,7 @@ Items that exhaust their retries are parked rather than dropped, and
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from unify.ingestion_manager.types.request import (
     EmbedSpec,
@@ -143,6 +143,27 @@ class BaseIngestionManager(ABC):
         """
 
     # ── observing ─────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def reconcile(self, run_id: str) -> List["TableReconciliation"]:
+        """Check what landed against what the source held, per table.
+
+        The honest closing step of an ingestion, and the one a row count cannot
+        perform alone: a run can report every row committed while each row holds
+        no values, in which case the count agrees with a table that is useless.
+        So this reports both how many rows are stored and which columns are
+        blank in every row sampled.
+
+        Use it after a run reaches a terminal state, and before telling anyone
+        the data is ready. ``complete`` on each result is the single question --
+        it is false both when rows are missing and when the rows that arrived
+        came without their values.
+
+        Parameters
+        ----------
+        run_id : str
+            The handle returned by ``submit``.
+        """
 
     @abstractmethod
     def get_status(self, run_id: str) -> RunStatus:
@@ -248,7 +269,13 @@ class BaseIngestionManager(ABC):
     # ── recovering ────────────────────────────────────────────────────────
 
     @abstractmethod
-    def retry(self, run_id: str, *, only: RetryScope = "dlq") -> RetryResult:
+    def retry(
+        self,
+        run_id: str,
+        *,
+        only: RetryScope = "dlq",
+        files: Optional[Sequence[str]] = None,
+    ) -> RetryResult:
         """Re-attempt part of a run.
 
         ``only="dlq"`` re-attempts just the items that exhausted their retries and
@@ -257,15 +284,32 @@ class BaseIngestionManager(ABC):
 
         ``only="stale"`` re-attempts items claimed by a worker that then stopped
         reporting, which recovers a crashed worker's share without disturbing
-        healthy work.
+        healthy work. It is the one scope that applies to a run still marked
+        running, because that is the state a stalled run sits in: a stuck
+        attempt never reaches a terminal state on its own, so requiring one
+        would leave waiting forever or cancelling as the only options. It
+        refuses while any targeted attempt is still renewing its lease, and
+        says which of the two it found.
 
         ``only="all"`` re-attempts everything, including items that succeeded. Only
         appropriate when the target was emptied or the way the data is parsed
         changed, since it will re-write rows that were already correct.
 
-        Only a finished run can be retried. A queued or running run already has a
-        live attempt, and a paused one is continued with ``resume`` — asking here
-        returns zero requeued items and says which verb applies.
+        Otherwise only a finished run can be retried. A queued or running run
+        already has a live attempt, and a paused one is continued with
+        ``resume`` — asking here returns zero requeued items and says which verb
+        applies.
+
+        ``files`` narrows any of those scopes to named source files, for the case
+        where fourteen of fifteen landed and one did not. Rows that already
+        committed are skipped on the way back to where the file stopped, so
+        retrying a file that partly succeeded does not duplicate its rows — and
+        with ``only="all"`` only that file's progress marks are discarded, never
+        the batch's.
+
+        A file the run does not hold is refused, and the refusal lists what it
+        does hold. A mistyped path would otherwise select nothing and report
+        success, which is indistinguishable from having worked.
 
         A result of zero requeued items is an answer, not a failure: there was
         nothing in that scope to retry.
@@ -278,6 +322,8 @@ class BaseIngestionManager(ABC):
             The scope to re-attempt: parked items only (the safe default),
             items whose worker stopped reporting, or everything including
             work that already succeeded.
+        files : sequence of str, optional
+            Source files to aim the retry at. Omit for the whole run.
         """
 
     @abstractmethod

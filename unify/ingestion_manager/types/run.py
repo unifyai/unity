@@ -52,6 +52,193 @@ TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"}
 RetryScope = Literal["dlq", "stale", "all"]
 
 
+class TableReconciliation(BaseModel):
+    """Whether what landed in a table matches what the source held.
+
+    Row counts alone were not enough to catch the failure this exists for: a
+    run reported 13,000 rows committed and every data column in every one of
+    them held the string "None". The count was right and the table was useless,
+    so a check that only counts agrees with a run that wrote nothing.
+
+    Hence ``empty_columns``: a column that is blank in every sampled row is
+    reported, because a table whose columns are uniformly blank did not ingest
+    its data whatever its row count says.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    context: str = Field(description="Table that was checked.")
+    source_rows: Optional[int] = Field(
+        default=None,
+        description="Rows the source was measured to hold, when known.",
+    )
+    stored_rows: int = Field(default=0, description="Rows now in the table.")
+    empty_columns: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Columns blank in every sampled row. Non-empty here means the rows "
+            "arrived without their values, which a row count cannot detect."
+        ),
+    )
+    sampled_rows: int = Field(
+        default=0,
+        description="Rows inspected to judge column population.",
+    )
+
+    @property
+    def complete(self) -> bool:
+        """Whether the table holds what the source did, with data in it."""
+        if self.empty_columns:
+            return False
+        if self.source_rows is None:
+            return self.stored_rows > 0
+        return self.stored_rows >= self.source_rows
+
+    @property
+    def summary(self) -> str:
+        """One line a person or an actor can act on."""
+        if self.empty_columns:
+            shown = ", ".join(self.empty_columns[:5])
+            return (
+                f"{self.context}: {self.stored_rows} row(s) stored but "
+                f"{len(self.empty_columns)} column(s) are blank in every row "
+                f"sampled ({shown}). The rows arrived without their values, so "
+                "the count is not evidence of a successful ingest."
+            )
+        if self.source_rows is None:
+            return f"{self.context}: {self.stored_rows} row(s) stored."
+        if self.stored_rows >= self.source_rows:
+            return (
+                f"{self.context}: complete -- {self.stored_rows} of "
+                f"{self.source_rows} row(s)."
+            )
+        missing = self.source_rows - self.stored_rows
+        return (
+            f"{self.context}: {self.stored_rows} of {self.source_rows} row(s), "
+            f"{missing} missing."
+        )
+
+
+class AttemptState(BaseModel):
+    """Whether an attempt still holds a file, and whether it can be taken over.
+
+    A stalled run and a slow one look identical from progress alone: both sit at
+    the same row count with a terminal-looking silence. The difference is whether
+    the lease behind the work is still being renewed, which is the only fact that
+    distinguishes "working, be patient" from "dead, take it over".
+
+    Deliberately carries no worker or pod identity. ``attempt_id`` is an opaque
+    handle the engine generates; naming the machine holding a lease would widen
+    what a prompt injection can reach for no diagnostic gain, since the
+    actionable question is only whether takeover is safe.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    attempt_id: str = Field(description="Opaque handle for the holding attempt.")
+    heartbeat_age_s: Optional[float] = Field(
+        default=None,
+        description=(
+            "Seconds since the holder last renewed. Growing past the lease TTL "
+            "is what makes an attempt recoverable."
+        ),
+    )
+    expired: bool = Field(
+        default=False,
+        description=(
+            "Whether the lease has lapsed. True means no live writer owns this "
+            "work and a retry can take it over without contending."
+        ),
+    )
+    takeover_count: int = Field(
+        default=0,
+        description=(
+            "Times this work has already changed hands. Repeated takeovers mean "
+            "attempts are dying rather than the work being slow."
+        ),
+    )
+
+
+class FileProgress(BaseModel):
+    """How one file within a run is doing.
+
+    A run's stage counters say two of fifteen files have parsed; they do not say
+    *which* two, how far either has got, or where a stuck one stopped. Splitting
+    a batch into one run per file was the only way to recover that, which traded
+    away the single handle that made the batch observable at all.
+
+    Built from the checkpoints the dispatched path already writes, so this
+    surfaces what was measured rather than measuring anything new.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(description="Source file this describes.")
+    observed: bool = Field(
+        default=True,
+        description=(
+            "Whether anything actually measured this file. False means only the "
+            "path is known and every other field is unset -- the case for a run "
+            "executing on the worker fleet, which does not report per file. "
+            "False is not 'queued': absence of a measurement is not evidence "
+            "that no work happened."
+        ),
+    )
+    state: Optional[RunState] = Field(
+        default=None,
+        description="Where this file has got to, or null when not observed.",
+    )
+    claimed: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Whether a worker has taken this file up, or null when not "
+            "observed. A file that is queued and unclaimed is waiting for "
+            "capacity; one that is queued and claimed is working and has "
+            "simply not committed yet. Only the first is a reason to look for "
+            "a cause -- and only when it was actually observed."
+        ),
+    )
+    rows_written: int = Field(default=0, description="Rows committed so far.")
+    declared_rows: Optional[int] = Field(
+        default=None,
+        description="Rows the source was measured to hold, when known.",
+    )
+    context: Optional[str] = Field(
+        default=None,
+        description="Destination this file's rows are landing in.",
+    )
+    parked: int = Field(
+        default=0,
+        description="Records set aside after exhausting retries.",
+    )
+    error: Optional[str] = None
+    attempts: List[AttemptState] = Field(
+        default_factory=list,
+        description=(
+            "Leases currently recorded against this file's tables. Empty means "
+            "nothing holds it. An entry with expired=True is recoverable; one "
+            "without is being actively worked and must not be disturbed."
+        ),
+    )
+
+    @property
+    def recoverable(self) -> bool:
+        """Whether a retry could take this file over without contending.
+
+        True only when something holds it and everything holding it has lapsed.
+        A file nothing holds is not 'recoverable' -- there is nothing to
+        recover, and reporting it as such invites a retry that fixes nothing.
+        """
+        return bool(self.attempts) and all(a.expired for a in self.attempts)
+
+    @property
+    def fraction(self) -> Optional[float]:
+        """Committed over declared, or ``None`` when the total is not yet known."""
+        if not self.declared_rows:
+            return None
+        return min(self.rows_written / self.declared_rows, 1.0)
+
+
 class StageProgress(BaseModel):
     """How one stage of a run is doing.
 
@@ -103,6 +290,13 @@ class IngestionEventRow(AuthoredRow):
     state: Optional[str] = None
     done: Optional[int] = None
     total: Optional[int] = None
+    # Per-file identity and measurement. Without these an event records that a
+    # run committed rows and never which file they came from -- which is what
+    # left a fifteen-file batch reporting one aggregate and nothing else.
+    source_path: Optional[str] = None
+    context: Optional[str] = None
+    rows_written: Optional[int] = None
+    declared_rows: Optional[int] = None
 
 
 class IngestionRunRecord(AuthoredRow):
@@ -187,6 +381,13 @@ class RunStatus(BaseModel):
     executed_as: Optional[Literal["inline", "dispatched"]] = None
 
     stages: List[StageProgress] = Field(default_factory=list)
+    files: List[FileProgress] = Field(
+        default_factory=list,
+        description=(
+            "One entry per source file, so a batch stays one run without losing "
+            "the per-file detail that would otherwise require one run each."
+        ),
+    )
     contexts: List[str] = Field(default_factory=list)
     rows_written: int = 0
     files_processed: int = 0
@@ -222,6 +423,14 @@ class RetryResult(BaseModel):
     requeued: int = 0
     state: RunState = "queued"
     detail: Optional[str] = None
+    files: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Files this retry was aimed at. Empty means the whole run. Echoed "
+            "back because a retry that silently matched nothing is "
+            "indistinguishable from one that worked."
+        ),
+    )
 
 
 class IngestionSummary(BaseModel):

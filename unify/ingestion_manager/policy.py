@@ -77,6 +77,8 @@ def next_step(
     error: Optional[str],
     executed_as: Optional[str],
     contexts: List[str],
+    files_claimed: Optional[int] = None,
+    files_total: Optional[int] = None,
 ) -> str:
     """State the one action that makes sense for a run in this condition.
 
@@ -87,6 +89,21 @@ def next_step(
     """
     if state == "queued":
         where = "on the worker fleet" if executed_as == "dispatched" else "in process"
+        # "Queued" covers two conditions that need different responses, and
+        # collapsing them made a starved batch indistinguishable from a slow one:
+        # polling is right for work that has been taken up, and useless for work
+        # nothing has claimed, where the answer is that capacity is held
+        # elsewhere.
+        if files_total and files_claimed is not None and files_claimed < files_total:
+            waiting = files_total - files_claimed
+            return (
+                f"Queued {where}: {files_claimed} of {files_total} file(s) taken "
+                f"up by a worker, {waiting} still unclaimed. Unclaimed work is "
+                "waiting on capacity rather than making slow progress, so "
+                "polling will not change it -- check whether other runs are "
+                "holding the fleet before resubmitting anything. Per-file state "
+                "is in status.files."
+            )
         return f"Nothing yet -- this is queued to run {where}. Poll get_status again."
 
     if state == "running":

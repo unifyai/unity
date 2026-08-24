@@ -209,10 +209,19 @@ class TableTarget(BaseModel):
 
 
 class CollectionTarget(BaseModel):
-    """A named group of files, kept as documents.
+    """A named group of files, each keeping its own identity.
 
-    Use this when the point is to *keep documents whole* -- read them, search
-    them, cite them -- rather than to query one flat table. The file pipeline
+    Two jobs, and the second is easy to miss. It keeps documents whole -- read
+    them, search them, cite them. It is also **the way to ingest many files as
+    one run**: with ``extract_tables`` on, every table inside every file becomes
+    its own queryable context, so fifteen spreadsheets become fifteen queryable
+    tables under one handle.
+
+    Prefer it over one ``TableTarget`` per file whenever the files are a set.
+    ``TableTarget`` names a single context, so N tables means N runs, and that
+    trades away the single run id that makes the batch observable -- per-file
+    state, rows and destinations all live on one status
+    (``status.files``) when the batch is one run. The file pipeline
     writes the parsed content and each extracted table beneath the collection,
     and the run reports the exact context paths it produced, so a canvas can bind
     to a table out of a spreadsheet without anyone hardcoding the layout.

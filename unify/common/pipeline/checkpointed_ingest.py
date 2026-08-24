@@ -30,7 +30,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ._utils import utc_now_iso
 from .artifact_store import (
@@ -84,8 +84,17 @@ class TableWork:
     context: str
     handle: TableInputHandle
     declared_rows: int
+    # The source file this table was extracted from. Reporting only: the
+    # engine never reads it, but a progress number is meaningless to a
+    # caller who cannot tell which of fifteen files it belongs to.
+    source_path: str = ""
     columns: List[str] = field(default_factory=list)
     chunk_size: int = 500
+    # Rows are the wrong unit for a payload limit: the same count carries wildly
+    # different bytes depending on how wide the table is, so one number is
+    # either wasteful on a 6-column table or oversized on a 50-column one. When
+    # a sample is available the size is derived from it instead; this stays as
+    # the floor for the case where nothing has been measured yet.
     description: Optional[str] = None
     column_descriptions: Optional[Dict[str, str]] = None
     # Caller-declared row identity. When set, these columns are the unique keys
@@ -458,7 +467,11 @@ class CheckpointedIngest:
             fields=payload["fields"],
             unique_keys=entry.unique_keys or {INGEST_KEY_COLUMN: "str"},
             infer_untyped_fields=entry.infer_untyped_fields,
-            chunk_size=entry.chunk_size,
+            # Sized from the rows actually present rather than a fixed count.
+            # The same row count is a modest payload on a six-column table and
+            # an unbounded one on a fifty-column table, which is why raising the
+            # count alone was the wrong lever.
+            chunk_size=_effective_chunk_size(entry),
             embed_columns=entry.embed_columns,
             embed_strategy=entry.embed_strategy,
             post_ingest=entry.post_ingest,
@@ -650,3 +663,70 @@ def wait_for_lease_release(
             return True
         time.sleep(poll_s)
     return False
+
+
+def _effective_chunk_size(entry: "TableWork") -> int:
+    """Chunk size for one table, scaled by how wide it is.
+
+    Estimated from the column count rather than measured from rows: a handle is
+    a stream, and reading it twice to size the writes that consume it would risk
+    losing a row to save a request. Width is the part of payload size knowable
+    without touching the data.
+
+    It is an estimate and named as one -- a table of long free text and a table
+    of integers with the same column count do not weigh the same. It is still a
+    better unit than a fixed row count, which is a modest payload on six columns
+    and an unbounded one on fifty.
+    """
+    columns = len(entry.columns or [])
+    if columns <= 0:
+        return entry.chunk_size
+    projected_row_bytes = max(columns * EST_BYTES_PER_FIELD, 1)
+    return max(
+        CHUNK_ROWS_MIN,
+        min(CHUNK_ROWS_MAX, int(CHUNK_TARGET_BYTES / projected_row_bytes)),
+    )
+
+
+# ── payload-sized chunking ───────────────────────────────────────────────────
+
+# A write is bounded by the bytes it carries, not the rows. The backend caps a
+# single call at 1000 rows, so that stays the ceiling; the floor keeps a very
+# wide table from degenerating into one row per call.
+CHUNK_ROWS_MAX = 1000
+CHUNK_ROWS_MIN = 25
+# Target serialised payload per call. Chosen to sit well inside a request the
+# backend accepts comfortably rather than at its limit, because the sample is an
+# estimate and later rows can be wider than the ones measured.
+CHUNK_TARGET_BYTES = 2 * 1024 * 1024
+# Rough mean serialised size of one field including its key and punctuation.
+# Deliberately generous: over-estimating shrinks the request, which is the safe
+# direction, while under-estimating grows it toward the limit the estimate
+# exists to stay inside.
+EST_BYTES_PER_FIELD = 120
+
+
+def chunk_rows_for(
+    sample: Sequence[dict],
+    *,
+    target_bytes: int = CHUNK_TARGET_BYTES,
+) -> int:
+    """Rows per commit for a table shaped like *sample*.
+
+    Derived from measured row size so a 6-column table and a 50-column one both
+    send a similar payload, instead of one number being wasteful for the first
+    and oversized for the second. Raising the row count alone was rejected for
+    exactly that reason: the same 10,000 rows is a modest request for a narrow
+    table and an unbounded one for a wide one.
+
+    Falls back to the declared default when there is nothing to measure, and
+    clamps to the backend's per-call ceiling either way.
+    """
+    import json
+
+    rows = [r for r in list(sample)[:50] if isinstance(r, dict)]
+    if not rows:
+        return 500
+    measured = sum(len(json.dumps(r, default=str).encode()) for r in rows)
+    mean = max(measured / len(rows), 1.0)
+    return max(CHUNK_ROWS_MIN, min(CHUNK_ROWS_MAX, int(target_bytes / mean)))

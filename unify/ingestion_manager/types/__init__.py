@@ -14,6 +14,7 @@ from unify.ingestion_manager.types.request import (
 )
 from unify.ingestion_manager.types.run import (
     TERMINAL_STATES,
+    AttemptState,
     IngestionEventRow,
     IngestionRun,
     IngestionRunRecord,
@@ -22,11 +23,14 @@ from unify.ingestion_manager.types.run import (
     RetryResult,
     RetryScope,
     RunState,
+    FileProgress,
+    TableReconciliation,
     RunStatus,
     StageProgress,
 )
 
 __all__ = [
+    "AttemptState",
     # Request vocabulary
     "RowsSource",
     "FilesSource",
@@ -42,6 +46,8 @@ __all__ = [
     "RunState",
     "TERMINAL_STATES",
     "RetryScope",
+    "FileProgress",
+    "TableReconciliation",
     "StageProgress",
     "LogEntry",
     "IngestionEventRow",

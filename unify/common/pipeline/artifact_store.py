@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional, Protocol
+from typing import Any, Iterable, Iterator, Optional, Protocol, Sequence
 
 from .types import (
     IngestCheckpoint,
@@ -317,8 +317,18 @@ class ArtifactStore(Protocol):
         """
         ...
 
-    def delete_checkpoints(self, job_id: str) -> None:
-        """Discard every recorded checkpoint for one job (no-op if absent).
+    def delete_checkpoints(
+        self,
+        job_id: str,
+        *,
+        artifact_ids: Optional[Sequence[str]] = None,
+    ) -> None:
+        """Discard recorded checkpoints for one job (no-op if absent).
+
+        ``artifact_ids`` narrows the discard to those tables. Re-attempting one
+        file in a batch must not clear the marks belonging to the other
+        fourteen: those describe rows that were committed correctly, and losing
+        them turns a one-file retry into a re-ingest of everything.
 
         The one legitimate caller is a full re-run: re-attempting everything
         means the committed marks no longer describe the work, and leaving any
@@ -704,11 +714,22 @@ class LocalArtifactStore:
             return None
         return IngestCheckpoint.model_validate(data)
 
-    def delete_checkpoints(self, job_id: str) -> None:
+    def delete_checkpoints(
+        self,
+        job_id: str,
+        *,
+        artifact_ids: Optional[Sequence[str]] = None,
+    ) -> None:
         import shutil
 
-        directory = self._key_path(f"jobs/{_safe_fragment(job_id)}/checkpoints")
-        shutil.rmtree(directory, ignore_errors=True)
+        if artifact_ids is None:
+            directory = self._key_path(f"jobs/{_safe_fragment(job_id)}/checkpoints")
+            shutil.rmtree(directory, ignore_errors=True)
+            return
+        for artifact_id in artifact_ids:
+            self._key_path(_checkpoint_key(job_id, artifact_id)).unlink(
+                missing_ok=True,
+            )
 
     # -- internal helpers ---------------------------------------------------
 

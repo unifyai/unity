@@ -97,7 +97,55 @@ class ResilientRequestPolicy:
         return max(delay + jitter, 0.0)
 
 
+def _status_code_of(exc: BaseException) -> int | None:
+    """The HTTP status an exception carries, if it carries one.
+
+    Read from the exception rather than from its rendered message. Several
+    client libraries expose it under different names, and a response object is
+    the most reliable of them, so all three are tried before giving up.
+    """
+    for attribute in ("status_code", "status", "code"):
+        value = getattr(exc, attribute, None)
+        if isinstance(value, int) and 100 <= value <= 599:
+            return value
+    response = getattr(exc, "response", None)
+    if response is not None:
+        value = getattr(response, "status_code", None)
+        if isinstance(value, int) and 100 <= value <= 599:
+            return value
+    return None
+
+
 def is_retryable_exception(exc: BaseException) -> bool:
+    """Whether retrying *exc* could plausibly succeed.
+
+    Decided from the exception's type and status where either is available, and
+    only then from its text. Reading the status matters because the two answers
+    disagree in both directions: a deterministic 400 was retried to the cap
+    because no token in its message looked permanent, while any error whose text
+    merely contained "500" -- a URL, a row count, an id -- was retried as though
+    the server had faulted.
+
+    A refusal the caller caused will refuse identically every time. Retrying it
+    is not merely wasted work: the message is never acked, so it is redelivered,
+    and one bad request can occupy a worker fleet indefinitely.
+    """
+    # A live-attempt collision is neither a fault nor retryable work: another
+    # attempt already holds the lease and is making progress. Retrying into it
+    # only contends, and treating it as a permanent failure discards work that is
+    # about to succeed -- so it is reported as its own thing and the caller
+    # yields.
+    if type(exc).__name__ == "DuplicateLiveAttempt":
+        return False
+
+    status = _status_code_of(exc)
+    if status is not None:
+        # 408 and 429 are the two client-side codes worth retrying; every other
+        # 4xx states something about the request that a repeat cannot change.
+        if 400 <= status < 500:
+            return status in (408, 429)
+        return status >= 500
+
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return True
     if isinstance(exc, OSError):
@@ -120,11 +168,14 @@ def is_retryable_exception(exc: BaseException) -> bool:
             "broken pipe",
             "rate limit",
             "too many requests",
-            "429",
-            "408",
-            "500",
-            "502",
-            "503",
-            "504",
+            "service unavailable",
+            "bad gateway",
+            "gateway timeout",
+            "internal server error",
         )
     )
+    # Bare status numbers used to live in this list. They were the only way to
+    # spot a server fault before the status was read from the exception, and
+    # they matched anything else that happened to contain the digits -- a row
+    # count of 500, an id ending 502, a URL with a port. Phrases cannot collide
+    # that way, and the status check above is now the reliable path.

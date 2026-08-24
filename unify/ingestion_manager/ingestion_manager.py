@@ -35,10 +35,12 @@ import secrets
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
+from unify.common.context_names import assert_all_valid
 from unify.common.context_registry import ContextRegistry, TableContext
 from unify.common.model_to_fields import model_to_fields
 from unify.common.pipeline import (
@@ -61,6 +63,9 @@ from unify.ingestion_manager.types.request import (
     IngestionTarget,
 )
 from unify.ingestion_manager.types.run import (
+    AttemptState,
+    FileProgress,
+    TableReconciliation,
     TERMINAL_STATES,
     IngestionEventRow,
     IngestionRun,
@@ -74,6 +79,27 @@ from unify.ingestion_manager.types.run import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Rows inspected per table when judging whether a column carries data. Enough
+# for a column that is populated to show it, small enough to cost one read.
+_RECONCILE_SAMPLE = 25
+# Bookkeeping columns that are legitimately absent from source data, so their
+# emptiness says nothing about whether the ingest worked.
+_RECONCILE_IGNORED = frozenset({"row_id", "authoring_assistant_id"})
+
+
+def _is_blank(value: Any) -> bool:
+    """Whether a stored value carries nothing.
+
+    The string ``"None"`` counts. A row whose columns hold the four characters
+    of Python's ``str(None)`` is as empty as one holding nulls, and treating it
+    as populated is what let a table of 13,000 valueless rows read as complete.
+    """
+    if value is None:
+        return True
+    text = str(value).strip()
+    return text in ("", "-", "None", "null", "NaN")
+
 
 RUNS_TABLE = "Ingestion/Runs"
 EVENTS_TABLE = "Ingestion/Events"
@@ -96,6 +122,64 @@ def _run_key() -> str:
 # numeric row id. Anything else cannot match a run, and rejecting it here keeps
 # the value out of the filter expression it would otherwise be spliced into.
 _RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
+
+
+@dataclass(frozen=True)
+class _StaleSummary:
+    """Live versus lapsed attempts, for deciding whether takeover is safe."""
+
+    live: int
+    lapsed: int
+
+    @property
+    def recoverable(self) -> bool:
+        """Something has lapsed and nothing is still renewing.
+
+        Both halves matter: taking over while a writer is live contends for the
+        lease, and 'taking over' when nothing holds anything fixes nothing while
+        reporting that it did.
+        """
+        return self.lapsed > 0 and self.live == 0
+
+
+def _age_seconds(stamp: Any) -> Optional[float]:
+    """Seconds since *stamp*, or ``None`` when it cannot be read.
+
+    An unreadable timestamp must not read as "just renewed": that would present
+    a dead attempt as healthy, which is the direction that strands work.
+    """
+    moment = _parse_moment(stamp)
+    if moment is None:
+        return None
+    return max((_utcnow() - moment).total_seconds(), 0.0)
+
+
+def _is_past(stamp: Any) -> bool:
+    """Whether *stamp* has passed. An unreadable expiry counts as passed.
+
+    A lease whose expiry cannot be parsed cannot be honoured, and treating it as
+    live would strand the work permanently; expired is the recoverable reading.
+    """
+    moment = _parse_moment(stamp)
+    if moment is None:
+        return True
+    return _utcnow() >= moment
+
+
+def _parse_moment(stamp: Any) -> Optional[datetime]:
+    if not stamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(stamp))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _safe_id(value: str) -> str:
@@ -213,6 +297,25 @@ class IngestionManager(BaseIngestionManager):
 
         return ManagerRegistry.get_file_manager()
 
+    def _destinations_for(self, request: IngestionRequest) -> List[str]:
+        """Every context path this request will try to create.
+
+        A table target names one path outright. A collection derives one per
+        file, so the names are only knowable here -- which is exactly why they
+        have to be checked here rather than trusted downstream.
+        """
+        names: List[str] = []
+        target = request.target
+        if getattr(target, "kind", "") == "table":
+            names.append(str(target.context))
+        elif getattr(target, "kind", "") == "collection" and target.name:
+            names.append(str(target.name))
+        # The run's own bookkeeping contexts are created by the same rule, and a
+        # bad ``destination`` would fail there first with a less obvious message.
+        names.append(self._write_table(RUNS_TABLE, request.destination))
+        names.append(self._write_table(EVENTS_TABLE, request.destination))
+        return names
+
     def _write_table(self, table: str, destination: Optional[str]) -> str:
         root = ContextRegistry.write_root(self, table, destination=destination)
         return f"{root.strip('/')}/{table}"
@@ -252,6 +355,10 @@ class IngestionManager(BaseIngestionManager):
         state: Optional[str] = None,
         done: Optional[int] = None,
         total: Optional[int] = None,
+        source_path: Optional[str] = None,
+        context: Optional[str] = None,
+        rows_written: Optional[int] = None,
+        declared_rows: Optional[int] = None,
     ) -> None:
         row = IngestionEventRow(
             run_key=run_key,
@@ -262,6 +369,10 @@ class IngestionManager(BaseIngestionManager):
             state=state,
             done=done,
             total=total,
+            source_path=source_path,
+            context=context,
+            rows_written=rows_written,
+            declared_rows=declared_rows,
         )
         self._get_dm().insert_rows(
             self._write_table(EVENTS_TABLE, destination),
@@ -298,6 +409,14 @@ class IngestionManager(BaseIngestionManager):
             post_ingest=post_ingest,
             destination=destination,
         )
+
+        # Every destination this run will create, checked against the backend's
+        # own naming rule before anything is published. The backend reports a
+        # violation by naming the rule and not the value, from a worker pod the
+        # caller cannot read, four retries into a dispatch -- so an unacceptable
+        # name became a poison message the fleet retried indefinitely rather
+        # than a refusal at the call that named it.
+        assert_all_valid(self._destinations_for(request), what="destination")
 
         # Counted before the tier is chosen, so the decision rests on a
         # measurement. A stored table is counted by one server-side aggregate
@@ -694,6 +813,7 @@ class IngestionManager(BaseIngestionManager):
             handle=handle,
             declared=int(declared or handle.row_count or 0),
             request=request,
+            source_path=getattr(handle, "logical_path", "") or target.context,
         )
         return self._run_engine(run_key, [work], request=request, control=control)
 
@@ -705,6 +825,7 @@ class IngestionManager(BaseIngestionManager):
         handle: Any,
         declared: int,
         request: IngestionRequest,
+        source_path: str = "",
     ) -> TableWork:
         """One unit of engine work, carrying the target's declared identity.
 
@@ -720,6 +841,7 @@ class IngestionManager(BaseIngestionManager):
             context=target.context,
             handle=handle,
             declared_rows=declared,
+            source_path=source_path,
             columns=list(handle.columns or []),
             chunk_size=500,
             description=target.description,
@@ -745,6 +867,27 @@ class IngestionManager(BaseIngestionManager):
             lease_ttl_seconds=self._settings.LEASE_TTL_SECONDS,
             lease_steal_after_seconds=self._settings.LEASE_STEAL_AFTER_SECONDS,
         )
+        # Progress arrives keyed by table, and a table id means nothing to a
+        # caller. Resolving it back to the file here is what lets a batch report
+        # per-file numbers instead of one aggregate.
+        by_table = {unit.table_id: unit for unit in work}
+
+        def _progress(table_id: str, done: int, total: int) -> None:
+            unit = by_table.get(table_id)
+            self._record_event(
+                run_key,
+                destination=request.destination,
+                stage="ingest",
+                state="running",
+                done=done,
+                total=total or None,
+                message=f"Committed {done} row(s).",
+                source_path=(unit.source_path or unit.label) if unit else None,
+                context=unit.context if unit else None,
+                rows_written=done,
+                declared_rows=(unit.declared_rows or None) if unit else (total or None),
+            )
+
         return engine.run(
             work,
             dm=self._get_dm(),
@@ -754,15 +897,7 @@ class IngestionManager(BaseIngestionManager):
             # at the checkpoint so resume() re-does at most one chunk.
             is_cancelled=lambda: control["cancel"],
             should_surrender=lambda: control["pause"],
-            on_progress=lambda table_id, done, total: self._record_event(
-                run_key,
-                destination=request.destination,
-                stage="ingest",
-                state="running",
-                done=done,
-                total=total or None,
-                message=f"Committed {done} row(s).",
-            ),
+            on_progress=_progress,
         )
 
     def _ingest_files_inline(
@@ -955,6 +1090,7 @@ class IngestionManager(BaseIngestionManager):
                         handle=handle,
                         declared=int(declared),
                         request=request,
+                        source_path=path,
                     ),
                 )
 
@@ -1211,6 +1347,149 @@ class IngestionManager(BaseIngestionManager):
 
     # ── observing ─────────────────────────────────────────────────────────
 
+    def _attempt_states(self, run_key: str) -> Dict[str, List[AttemptState]]:
+        """Leases recorded against this run, grouped by checkpoint fragment.
+
+        Read from the lease store rather than inferred from progress, because
+        progress cannot tell a stalled attempt from a slow one: both sit at the
+        same row count. Only whether the lease is still being renewed
+        distinguishes them.
+        """
+        states: Dict[str, List[AttemptState]] = {}
+        for key in self._store.list_keys(f"jobs/{run_key}/leases/"):
+            table_id = key.rsplit("/", 1)[-1]
+            try:
+                data = self._store.get_json(key)
+            except Exception:  # noqa: BLE001 -- a vanished lease is not held
+                continue
+            heartbeat_age = _age_seconds(data.get("heartbeat_at"))
+            states.setdefault(table_id, []).append(
+                AttemptState(
+                    attempt_id=str(data.get("attempt_id") or ""),
+                    heartbeat_age_s=heartbeat_age,
+                    expired=_is_past(data.get("expires_at")),
+                    takeover_count=int(data.get("takeover_count") or 0),
+                ),
+            )
+        return states
+
+    def _files_for(
+        self,
+        row: Dict[str, Any],
+        events: List[Dict[str, Any]],
+    ) -> List[FileProgress]:
+        """Per-file progress, assembled from what the run already recorded.
+
+        The stage counters say two of fifteen files parsed; they never said
+        which two. Everything needed to answer that is already written -- the
+        staged request names the files, and per-file events carry state, rows
+        and destination -- so this reads rather than measures.
+
+        On the in-process tier a file with no event yet is genuinely queued and
+        unclaimed: the same process writes those events, so their absence is
+        evidence. Unclaimed means waiting for capacity and claimed-but-
+        uncommitted means working, and collapsing the two is what made a starved
+        batch indistinguishable from a slow one.
+
+        On the dispatched tier absence of an event is **not** evidence -- the
+        fleet executes the work and does not write per-file events, so nothing
+        here measured the file at all. Those are reported ``observed=False``
+        with every measurement left unset, rather than as "queued": claiming a
+        file is waiting when nobody looked is the more expensive error of the
+        two, because it reads as a finding.
+        """
+        # A dispatched run's per-file truth lives with the fleet, which reports
+        # only aggregates back. Until it emits per-file events, the honest answer
+        # here is that these were not observed.
+        dispatched = bool(row.get("dispatch_id"))
+        paths = [str(p) for p in (row.get("source_paths") or [])]
+        attempts = self._attempt_states(str(row.get("run_key") or ""))
+        by_path: Dict[str, Dict[str, Any]] = {}
+        for event in events:
+            path = str(event.get("source_path") or "")
+            if not path:
+                continue
+            # Later events supersede earlier ones for the same file.
+            by_path[path] = event
+
+        progress: List[FileProgress] = []
+        for path in paths or sorted(by_path):
+            event = by_path.get(path) or {}
+            if not event and dispatched:
+                progress.append(FileProgress(path=path, observed=False))
+                continue
+            rows_written = int(event.get("rows_written") or 0)
+            has_event = bool(event)
+            progress.append(
+                FileProgress(
+                    path=path,
+                    observed=True,
+                    state=str(  # type: ignore[arg-type]
+                        event.get("state")
+                        or ("queued" if not has_event else "running"),
+                    ),
+                    # A committed row proves a worker took it up. An event
+                    # without rows still proves a claim; no event at all does
+                    # not.
+                    claimed=has_event or rows_written > 0,
+                    rows_written=rows_written,
+                    declared_rows=(
+                        int(event["declared_rows"])
+                        if event.get("declared_rows") is not None
+                        else None
+                    ),
+                    context=event.get("context") or None,
+                    parked=int(event.get("parked") or 0),
+                    error=event.get("error") or None,
+                    attempts=[
+                        state
+                        for fragment, states in attempts.items()
+                        if _safe_id(path) in fragment
+                        for state in states
+                    ],
+                ),
+            )
+        return progress
+
+    @functools.wraps(BaseIngestionManager.reconcile, updated=())
+    def reconcile(self, run_id: str) -> List[TableReconciliation]:
+        status = self.get_status(run_id)
+        dm = self._get_dm()
+        expected = {f.context: f.declared_rows for f in status.files if f.context}
+
+        results: List[TableReconciliation] = []
+        for context in status.contexts:
+            stored = int(dm.reduce(context, metric="count") or 0)
+            sample = dm.filter(context, limit=_RECONCILE_SAMPLE) or []
+
+            # Which columns carry nothing in any sampled row. A count alone
+            # cannot see this, and the failure it exists for looked healthy by
+            # count: a run reported every row committed while each row held the
+            # string "None" in every data column.
+            seen: Dict[str, bool] = {}
+            for row in sample:
+                values = {
+                    **(row.get("entries") or {}),
+                    **(row.get("derived_entries") or {}),
+                }
+                for name, value in values.items():
+                    if name.startswith("_") or name in _RECONCILE_IGNORED:
+                        continue
+                    seen[name] = seen.get(name, False) or not _is_blank(value)
+
+            results.append(
+                TableReconciliation(
+                    context=context,
+                    source_rows=expected.get(context),
+                    stored_rows=stored,
+                    empty_columns=sorted(
+                        n for n, populated in seen.items() if not populated
+                    ),
+                    sampled_rows=len(sample),
+                ),
+            )
+        return results
+
     @functools.wraps(BaseIngestionManager.get_status, updated=())
     def get_status(self, run_id: str) -> RunStatus:
         row, runs_context = self._find_run(run_id)
@@ -1222,6 +1501,7 @@ class IngestionManager(BaseIngestionManager):
         contexts = row.get("contexts") or []
         parked = int(row.get("parked") or 0)
         state = row.get("state") or "queued"
+        files = self._files_for(row, events)
 
         return RunStatus(
             # The key the caller was handed, never the row's auto-counted id.
@@ -1231,6 +1511,7 @@ class IngestionManager(BaseIngestionManager):
             # names an identifier that appears nowhere else in the plan.
             run_id=str(row["run_key"]),
             state=state,  # type: ignore[arg-type]
+            files=files,
             executed_as=row.get("executed_as"),
             stages=stages_from_events(events, run_state=state),
             contexts=contexts,
@@ -1247,6 +1528,8 @@ class IngestionManager(BaseIngestionManager):
                 error=row.get("error"),
                 executed_as=row.get("executed_as"),
                 contexts=contexts,
+                files_claimed=sum(1 for f in files if f.claimed),
+                files_total=len(files) or None,
             ),
         )
 
@@ -1463,10 +1746,18 @@ class IngestionManager(BaseIngestionManager):
     # ── recovering ────────────────────────────────────────────────────────
 
     @functools.wraps(BaseIngestionManager.retry, updated=())
-    def retry(self, run_id: str, *, only: RetryScope = "dlq") -> RetryResult:
+    def retry(
+        self,
+        run_id: str,
+        *,
+        only: RetryScope = "dlq",
+        files: Optional[Sequence[str]] = None,
+    ) -> RetryResult:
         row, runs_context = self._find_run(run_id)
         if row is None:
             raise ValueError(f"No ingestion run {run_id!r}.")
+
+        targeted = self._resolve_retry_files(row, files)
 
         state = row.get("state") or "queued"
         if state not in TERMINAL_STATES:
@@ -1474,14 +1765,37 @@ class IngestionManager(BaseIngestionManager):
             # contends for the lease at best, and a scope of "all" would clear
             # the checkpoints out from under the live writer. Paused runs have
             # their own verb.
-            action = "resume()" if state == "paused" else "wait for it, or cancel()"
-            return RetryResult(
-                run_id=run_id,
-                scope=only,
-                requeued=0,
-                state=state,  # type: ignore[arg-type]
-                detail=f"This run is {state}; to continue it, {action}.",
-            )
+            #
+            # The exception is a stale takeover, which exists precisely for a
+            # run that is nominally running and has actually stopped. Requiring
+            # a terminal state there made the one case the scope is for
+            # unreachable: a stuck run never becomes terminal on its own, so the
+            # only options left were waiting forever or cancelling and losing
+            # the committed work.
+            stale = self._stale_attempt_summary(row, targeted)
+            if only != "stale" or not stale.recoverable:
+                action = "resume()" if state == "paused" else "wait for it, or cancel()"
+                detail = f"This run is {state}; to continue it, {action}."
+                if only == "stale" and stale.live:
+                    detail = (
+                        f"This run is {state} and {stale.live} attempt(s) are "
+                        "still renewing their lease, so the work is progressing "
+                        "rather than stuck. Taking it over would contend with a "
+                        "live writer; wait, or cancel() to stop it."
+                    )
+                elif only == "stale":
+                    detail = (
+                        f"This run is {state} and nothing holds a lapsed lease, "
+                        "so there is no stalled attempt to take over."
+                    )
+                return RetryResult(
+                    run_id=run_id,
+                    scope=only,
+                    requeued=0,
+                    state=state,  # type: ignore[arg-type]
+                    detail=detail,
+                    files=list(targeted),
+                )
 
         parked = int(row.get("parked") or 0)
         if only == "dlq" and parked == 0:
@@ -1493,6 +1807,7 @@ class IngestionManager(BaseIngestionManager):
                 requeued=0,
                 state=row.get("state") or "queued",  # type: ignore[arg-type]
                 detail="Nothing is parked on this run, so there was nothing to retry.",
+                files=list(targeted),
             )
 
         request = self._load_request(row)
@@ -1503,18 +1818,31 @@ class IngestionManager(BaseIngestionManager):
             # rewrites rows that were already correct. A dispatched run's
             # checkpoints live on the fleet's store; the control plane owns
             # clearing those as part of the retry it serialises.
-            self._store.delete_checkpoints(row["run_key"])
+            #
+            # Narrowed to the named files when there are any: the other
+            # fourteen files' marks describe rows that committed correctly, and
+            # discarding them would turn a one-file retry into a re-ingest of
+            # the batch.
+            self._store.delete_checkpoints(
+                row["run_key"],
+                artifact_ids=(
+                    self._checkpoint_ids_for(row["run_key"], targeted)
+                    if targeted
+                    else None
+                ),
+            )
 
         self._update_run(
             row["run_key"],
             runs_context,
             {"state": "queued", "error": None, "parked": 0},
         )
+        aimed = f" for {len(targeted)} file(s)" if targeted else ""
         self._record_event(
             row["run_key"],
             destination=request.destination,
             stage="ingest",
-            message=f"Retrying ({only}).",
+            message=f"Retrying ({only}){aimed}.",
             state="queued",
         )
 
@@ -1529,6 +1857,7 @@ class IngestionManager(BaseIngestionManager):
                 base_url=self._require_pipeline_url(dispatch_id),
                 dispatch_id=dispatch_id,
                 scope=only,
+                files=list(targeted) or None,
             )
         else:
             self._start(
@@ -1542,9 +1871,83 @@ class IngestionManager(BaseIngestionManager):
         return RetryResult(
             run_id=run_id,
             scope=only,
-            requeued=max(parked, 1),
+            # Files when they were named, else the parked count. The old
+            # max(parked, 1) reported one requeued item for a scope that had
+            # asked for none, which reads as success.
+            requeued=len(targeted) or parked or 1,
             state="queued",
+            files=list(targeted),
         )
+
+    def _stale_attempt_summary(
+        self,
+        row: Dict[str, Any],
+        targeted: Sequence[str],
+    ) -> _StaleSummary:
+        """How many attempts on this run are lapsed versus still renewing.
+
+        Scoped to *targeted* when files were named, so one stuck file can be
+        taken over while the rest of a batch keeps working -- the whole point of
+        aiming a retry at a file.
+        """
+        attempts = self._attempt_states(str(row.get("run_key") or ""))
+        fragments = [_safe_id(path) for path in targeted]
+        live = 0
+        lapsed = 0
+        for fragment, states in attempts.items():
+            if fragments and not any(f and f in fragment for f in fragments):
+                continue
+            for state in states:
+                if state.expired:
+                    lapsed += 1
+                else:
+                    live += 1
+        return _StaleSummary(live=live, lapsed=lapsed)
+
+    def _resolve_retry_files(
+        self,
+        row: Dict[str, Any],
+        files: Optional[Sequence[str]],
+    ) -> List[str]:
+        """The run's own paths matching *files*, refusing any that do not.
+
+        A path with a typo would otherwise select nothing and retry the whole
+        run, or retry nothing at all and report success either way. Refusing and
+        naming what the run does hold is the only outcome a caller can act on.
+        """
+        if files is None:
+            return []
+        known = [str(p) for p in (row.get("source_paths") or [])]
+        requested = [str(f) for f in files]
+        if not requested:
+            raise ValueError(
+                "files=[] would retry nothing. Omit the argument to retry the "
+                "whole run.",
+            )
+        unknown = [f for f in requested if f not in known]
+        if unknown:
+            listed = ", ".join(repr(k) for k in known[:10]) or "none recorded"
+            raise ValueError(
+                f"This run has no file(s) {', '.join(repr(u) for u in unknown)}. "
+                f"It holds: {listed}.",
+            )
+        return requested
+
+    def _checkpoint_ids_for(self, run_key: str, paths: Sequence[str]) -> List[str]:
+        """Checkpoint ids belonging to *paths*.
+
+        One file can yield several tables, so the mapping is discovered from the
+        stored keys rather than reconstructed -- which would mean re-parsing the
+        file to learn what tables it produced.
+        """
+        prefix = f"jobs/{run_key}/checkpoints/"
+        fragments = [_safe_id(path) for path in paths]
+        ids: List[str] = []
+        for key in self._store.list_keys(prefix):
+            artifact_id = key.rsplit("/", 1)[-1]
+            if any(fragment and fragment in artifact_id for fragment in fragments):
+                ids.append(artifact_id)
+        return ids
 
     def _require_pipeline_url(self, dispatch_id: Any) -> str:
         """The control plane URL, or a plain refusal when none is configured.

@@ -435,6 +435,10 @@ class TestActorSurface:
             "cancel",
             "pause",
             "resume",
+            # The closing step of a run: rows landed against rows expected, plus
+            # the columns that came back blank. A count alone agreed with a run
+            # that committed 449,287 valueless rows.
+            "reconcile",
         }
 
     def test_a_default_primitives_instance_exposes_it(self):

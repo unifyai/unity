@@ -294,6 +294,7 @@ def request_retry(
     base_url: str,
     dispatch_id: str,
     scope: RetryScope,
+    files: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Ask the fleet to re-attempt part of a dispatch.
 
@@ -304,15 +305,17 @@ def request_retry(
     takes a per-job recovery lease, so one owner of the transition removes that
     race instead of a flag warning operators not to cause it.
     """
-    return _post(
-        base_url,
-        "retry",
-        {
-            "assistant_id": _assistant_id(),
-            "dispatch_id": dispatch_id,
-            "scope": scope,
-        },
-    )
+    payload: Dict[str, Any] = {
+        "assistant_id": _assistant_id(),
+        "dispatch_id": dispatch_id,
+        "scope": scope,
+    }
+    if files:
+        # Omitted entirely when absent, so a plane that does not know the key
+        # keeps its whole-dispatch behaviour rather than receiving null and
+        # having to interpret it.
+        payload["files"] = list(files)
+    return _post(base_url, "retry", payload)
 
 
 def request_cancel(*, base_url: str, dispatch_id: str) -> Dict[str, Any]:

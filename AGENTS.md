@@ -999,7 +999,8 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
   - Never use `TaskScheduler.update` to start work; always use `execute`.
 - **Storing new data or files (any source)**
   - Rows from an API / connected app / user input, specific files, whole folders, or a reshape of a stored table → `primitives.ingestion.submit(source, target)`. One verb for every source/target pairing; returns a run handle immediately.
-  - Observe and recover with `primitives.ingestion.get_status` / `get_logs` / `wait` / `retry` / `cancel` / `pause` / `resume`. `status.next_step` states the one action that makes sense.
+  - Observe and recover with `primitives.ingestion.get_status` / `get_logs` / `wait` / `retry` / `cancel` / `pause` / `resume`. `status.next_step` states the one action that makes sense. `status.files` breaks a batch down per file; `retry(files=[...])` aims at one of them, and `only="stale"` takes over an attempt whose lease lapsed.
+  - Close a run with `primitives.ingestion.reconcile` before calling the data ready: it reports rows landed against rows expected **and** the columns that are blank in every row sampled. A row count alone once agreed with a run that committed 449,287 rows holding no values.
   - There is no `primitives.data.ingest` — a direct ingest blocked the plan for the length of the write and left nothing to inspect if it died part-way.
 - **Generative UI (canvases)**
   - Author, revise and inspect interactive views → `primitives.canvas.*` (`create_view`, `update_view`, `refresh_props`, `preview`, `list_invocations`, …). Bind live data to stored tables (including ones an ingestion run just produced via `status.contexts`), never to a provider call.
@@ -1074,7 +1075,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 
 ### IngestionManager
 - **Role**: The one verb for storing data and files from anywhere — `submit(source, target)` — with a resumable, checkpointed engine behind it that in-process and worker-fleet execution share.
-- **Scope**: `submit`, `get_status`, `get_logs`, `wait`, `list_runs`, `retry`, `cancel`, `pause`, `resume` via `primitives.ingestion.*`. Sources: `RowsSource` (anything in hand), `FilesSource` / `FolderSource` (parse via the file pipeline), `TableSource` (reshape stored rows). Targets: `TableTarget` (one queryable context) or `CollectionTarget` (documents kept whole, inner tables extracted). Runs and their events are rows in `Ingestion/Runs` + `Ingestion/Events`.
+- **Scope**: `submit`, `get_status`, `get_logs`, `wait`, `list_runs`, `retry`, `cancel`, `pause`, `resume`, `reconcile` via `primitives.ingestion.*`. Sources: `RowsSource` (anything in hand), `FilesSource` / `FolderSource` (parse via the file pipeline), `TableSource` (reshape stored rows). Targets: `TableTarget` (one queryable context) or `CollectionTarget` (documents kept whole, inner tables extracted). Runs and their events are rows in `Ingestion/Runs` + `Ingestion/Events`.
 - **Tiering**: never a caller's choice. Files parse off the assistant's process whenever a worker fleet is reachable; rows and tables run in process only under a measured row ceiling. Both tiers write the same artifacts, leases and checkpoints, so the tier affects latency and nothing else.
 - **Negative scope**: does not query or reshape-in-place (DataManager), does not answer questions about file contents (FileManager `ask`), does not own provider fetches (integrations fetch, ingestion stores).
 - **Connections**:
