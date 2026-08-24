@@ -170,10 +170,27 @@ FUNCTIONS_VERIFICATIONS_TABLE = "Functions/Verifications"
 # hand back callables (fixtures alone can run to tens of kilobytes).
 _LEDGER_INTERNAL_FIELDS = ("fixtures", "ledger", "static_review", "verified_hash")
 
+#: What a reader of the catalogue never acts on, minus the history a repairer
+#: cannot work without. A repair is asked to fix a function against a verdict;
+#: without the prior verdicts on the same function it cannot tell a fresh
+#: objection from one it has already answered, and cannot see that its last
+#: attempt is what produced the current complaint.
+_REPAIR_HIDDEN_FIELDS = ("fixtures", "verified_hash")
 
-def strip_ledger_internals(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return ``rows`` without the ledger state a reader of the catalogue never acts on."""
-    hidden = set(_LEDGER_INTERNAL_FIELDS)
+
+def strip_ledger_internals(
+    rows: List[Dict[str, Any]],
+    *,
+    keep_verdict_history: bool = False,
+) -> List[Dict[str, Any]]:
+    """Return ``rows`` without the ledger state a reader of the catalogue never acts on.
+
+    ``keep_verdict_history`` retains ``ledger`` and ``static_review`` for a
+    caller that is reasoning about the verdicts themselves.
+    """
+    hidden = set(
+        _REPAIR_HIDDEN_FIELDS if keep_verdict_history else _LEDGER_INTERNAL_FIELDS,
+    )
     return [
         (
             {k: v for k, v in row.items() if k not in hidden}

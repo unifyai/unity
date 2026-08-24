@@ -5421,8 +5421,13 @@ class CodeActActor(BaseCodeActActor):
                     "deployment-owned (custom_hash set); refusing repair. Fix the "
                     "bundle source and re-sync via deployment reconcile.",
                 )
+        # The repairer keeps the verdict history: it is being asked to answer
+        # a verdict, and the prior ones on the same function are what tell it
+        # whether this objection is new or whether its own last attempt
+        # caused it.
         snapshot_for_prompt = strip_ledger_internals(
             [row for row in (function_snapshot or []) if isinstance(row, dict)],
+            keep_verdict_history=True,
         )
         tools = methods_to_tool_dict(
             fm.search_functions,

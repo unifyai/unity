@@ -189,6 +189,19 @@ def _localize_repeat(
             localized.append(pattern)
             continue
         if pattern.get("time_of_day") and not pattern.get("timezone"):
+            if zone.upper() == "UTC":
+                # Stamping UTC is indistinguishable from not stamping at all,
+                # and for a bundle slot it is almost certainly wrong: the
+                # manifest wrote a human hour and this is the moment that
+                # becomes a real instant. Said out loud, because the symptom
+                # otherwise appears days later as a task firing at a sensible
+                # hour in the wrong place.
+                logger.warning(
+                    "Anchoring %s to UTC: the assistant declares no local "
+                    "timezone, so every bare wall-clock slot in this source "
+                    "means UTC's hour rather than the installer's.",
+                    pattern.get("time_of_day"),
+                )
             pattern = {**pattern, "timezone": zone}
         localized.append(pattern)
     return localized
