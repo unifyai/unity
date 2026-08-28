@@ -14,6 +14,7 @@ change.
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 from typing import Optional
 from urllib.parse import quote
@@ -321,13 +322,16 @@ async def upload_file(request: Request, user_email: str, drive_id: str):
                 detail="Missing required fields: path, content",
             )
 
+        try:
+            file_bytes = base64.b64decode(content, validate=True)
+        except (binascii.Error, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="content must be valid base64",
+            ) from exc
+
         graph = await get_graph_client(user_email)
         drive_id, drive = await _drive_ref(graph, drive_id)
-
-        try:
-            file_bytes = base64.b64decode(content)
-        except Exception:
-            file_bytes = content.encode("utf-8")
 
         result = (
             await drive.items.by_drive_item_id("root")

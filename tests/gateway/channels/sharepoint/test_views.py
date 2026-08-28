@@ -393,12 +393,36 @@ def test_upload_decodes_base64_content(client: TestClient) -> None:
     )
 
 
-def test_upload_falls_back_to_plain_text_when_not_base64(
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not-real-base64-content!!",
+        {"unexpected": "object"},
+    ],
+)
+def test_upload_rejects_invalid_base64_before_graph_lookup(
     client: TestClient,
+    content: object,
 ) -> None:
-    """Non-base64 content is encoded as UTF-8 plain text."""
+    get_graph_client = AsyncMock()
+    with patch(
+        "unify.gateway.channels.sharepoint.views.get_graph_client",
+        new=get_graph_client,
+    ):
+        resp = client.put(
+            "/sharepoint/drives/me/upload",
+            params={"user_email": "u@x.com"},
+            json={"path": "x.txt", "content": content},
+        )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "content must be valid base64"
+    get_graph_client.assert_not_awaited()
+
+
+def test_upload_accepts_empty_base64_content(client: TestClient) -> None:
     fake_graph = _make_graph_mock()
-    uploaded = MagicMock(id="u-1", name="x.txt", web_url="x", size=5)
+    uploaded = MagicMock(id="u-1", name="empty.txt", web_url="x", size=0)
     captured: dict = {}
 
     async def _capture(payload):
@@ -417,17 +441,11 @@ def test_upload_falls_back_to_plain_text_when_not_base64(
         resp = client.put(
             "/sharepoint/drives/me/upload",
             params={"user_email": "u@x.com"},
-            # base64.b64decode("not-real-base64-content!!") may succeed in
-            # tolerant mode; use a clearly non-b64 payload that errors out
-            # so the fallback path triggers.
-            json={"path": "x.txt", "content": "hello"},
+            json={"path": "empty.txt", "content": ""},
         )
+
     assert resp.status_code == 200
-    # The fallback either decoded "hello" as base64 (resulting in random
-    # bytes) or fell through to UTF-8 encode. Either way the upload
-    # succeeded; the important contract is that put() was called with
-    # bytes (not a string).
-    assert isinstance(captured["bytes"], bytes)
+    assert captured["bytes"] == b""
 
 
 def test_create_folder_missing_name_returns_400(client: TestClient) -> None:
