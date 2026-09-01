@@ -226,7 +226,7 @@ jobs:
       ORCHESTRA_ADMIN_KEY: local-admin-key
       PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unisdk
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 1
 
@@ -255,7 +255,7 @@ jobs:
         repositories: orchestra
 
     - name: Clone orchestra repo for local deployment
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: unifyai/orchestra
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
@@ -264,7 +264,7 @@ jobs:
         fetch-depth: 1
 
     - name: Clone unify repo
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: unifyai/unisdk
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
@@ -272,7 +272,7 @@ jobs:
         fetch-depth: 1
 
     - name: Clone unillm repo
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: unifyai/unillm
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}

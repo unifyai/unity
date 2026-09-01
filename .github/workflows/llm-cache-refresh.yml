@@ -134,7 +134,7 @@ jobs:
     outputs:
       test_dirs: ${{ steps.set-matrix.outputs.test_dirs }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 1
 
@@ -247,7 +247,7 @@ jobs:
       ORCHESTRA_ADMIN_KEY: local-admin-key
       PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unisdk
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 1
 
@@ -273,7 +273,7 @@ jobs:
         repositories: orchestra
 
     - name: Clone orchestra repo for local deployment
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: unifyai/orchestra
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
@@ -282,7 +282,7 @@ jobs:
         fetch-depth: 1
 
     - name: Clone unisdk repo
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: unifyai/unisdk
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
@@ -290,7 +290,7 @@ jobs:
         fetch-depth: 1
 
     - name: Clone unillm repo
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: unifyai/unillm
         ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
@@ -420,7 +420,7 @@ jobs:
     if: inputs.test_path == 'EXPORT_CACHE'
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 1
 
@@ -568,7 +568,7 @@ jobs:
     if: always() && needs.validate.result == 'success' && inputs.cache_mode == 'write-misses' && inputs.test_path != 'EXPORT_CACHE'
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 1
 

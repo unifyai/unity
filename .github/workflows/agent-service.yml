@@ -29,10 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Clone magnitude, unbuilt — only its dependency links are needed
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: unifyai/magnitude
         ref: main
